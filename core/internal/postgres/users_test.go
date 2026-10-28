@@ -182,3 +182,56 @@ func TestConcurrentDisableNeverLeavesActiveSession(t *testing.T) {
 		}
 	}
 }
+
+func TestReplacePasswordIsCompareAndSwapAndRevokesSessions(t *testing.T) {
+	s := migratedStore(t)
+	ctx := context.Background()
+	user, err := s.CreateUser(ctx, "alice", testHash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := s.CreateUser(ctx, "bob", testHash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	digests := make([][32]byte, 3)
+	for i, owner := range []string{user.ID, user.ID, other.ID} {
+		_, digests[i], _ = users.NewSessionToken()
+		if _, err := s.CreateSession(ctx, owner, digests[i], users.SessionTTL); err != nil {
+			t.Fatal(err)
+		}
+	}
+	newHash := strings.Replace(testHash, "aGFzaGhhc2g", "bmV3aGFzaGg", 1)
+	if err := s.ReplacePassword(ctx, user.ID, newHash, testHash); !errors.Is(err, users.ErrNotFound) {
+		t.Fatalf("stale current hash accepted: %v", err)
+	}
+	if err := s.ReplacePassword(ctx, user.ID, testHash, newHash); err != nil {
+		t.Fatal(err)
+	}
+	credentials, err := s.GetCredentialsByID(ctx, user.ID)
+	if err != nil || credentials.PasswordHash != newHash {
+		t.Fatalf("credentials %+v %v", credentials, err)
+	}
+	for i, wantRevoked := range []bool{true, true, false} {
+		_, err := s.GetSession(ctx, digests[i])
+		if revoked := errors.Is(err, users.ErrNotFound); revoked != wantRevoked {
+			t.Fatalf("session %d revoked=%v err=%v", i, revoked, err)
+		}
+	}
+	// The second of two concurrent changes from the same starting hash loses.
+	if err := s.ReplacePassword(ctx, user.ID, testHash, testHash); !errors.Is(err, users.ErrNotFound) {
+		t.Fatalf("second change from the old hash accepted: %v", err)
+	}
+	if _, err := s.SetUserStatus(ctx, other.ID, users.StatusDisabled); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ReplacePassword(ctx, other.ID, testHash, newHash); !errors.Is(err, users.ErrInactive) {
+		t.Fatalf("disabled user changed password: %v", err)
+	}
+	if _, err := s.GetCredentialsByID(ctx, "user_nobody"); !errors.Is(err, users.ErrInvalidUserID) {
+		t.Fatalf("invalid id: %v", err)
+	}
+	if err := s.ReplacePassword(ctx, user.ID, newHash, "plaintext-password"); err == nil {
+		t.Fatal("schema accepted a non-argon2id password value")
+	}
+}

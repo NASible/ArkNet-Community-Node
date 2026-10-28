@@ -22,8 +22,13 @@ project = args.host
 core = machine['role'] == 'core'
 base = '/opt/arknet'
 db = 'arknet_core' if core else 'arknet_node'
-env = {'POSTGRES_PASSWORD': local['database_password'], 'CORE_ADMIN_TOKEN': secrets['core_admin_token'],
-       'TRANSFER_TOKEN': local['transfer_token'], 'JELLYFIN_API_KEY': local.get('jellyfin_api_key', '')}
+# Community Nodes never receive Core administrative credentials (security review
+# requirement); each machine gets only the secrets its own services use.
+env = {'POSTGRES_PASSWORD': local['database_password']}
+if machine['role'] == 'core':
+    env['CORE_ADMIN_TOKEN'] = secrets['core_admin_token']
+else:
+    env.update({'TRANSFER_TOKEN': local['transfer_token'], 'JELLYFIN_API_KEY': local.get('jellyfin_api_key', '')})
 put(machine, base + '/runtime.env', '\n'.join(k + '=' + v for k, v in env.items()) + '\n', 0o600)
 
 hardening = {'restart': 'unless-stopped', 'cap_drop': ['ALL'], 'security_opt': ['no-new-privileges:true'],

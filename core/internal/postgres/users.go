@@ -50,6 +50,59 @@ func (s *Store) GetCredentials(ctx context.Context, username string) (users.Cred
 	return credentials, nil
 }
 
+func (s *Store) GetCredentialsByID(ctx context.Context, userID string) (users.Credentials, error) {
+	if !users.ValidUserID(userID) {
+		return users.Credentials{}, users.ErrInvalidUserID
+	}
+	var credentials users.Credentials
+	err := s.db.QueryRowContext(ctx,
+		"SELECT public_id, password_hash, status FROM global_users WHERE public_id = $1", userID).
+		Scan(&credentials.UserID, &credentials.PasswordHash, &credentials.Status)
+	if errors.Is(err, sql.ErrNoRows) {
+		return users.Credentials{}, users.ErrNotFound
+	}
+	if err != nil {
+		return users.Credentials{}, fmt.Errorf("get credentials: %w", err)
+	}
+	return credentials, nil
+}
+
+// ReplacePassword is a compare-and-swap on the stored hash: a concurrent change
+// or disable wins, and this call then reports ErrNotFound or ErrInactive. All
+// of the user's sessions are revoked in the same transaction.
+func (s *Store) ReplacePassword(ctx context.Context, userID, currentHash, newHash string) error {
+	if !users.ValidUserID(userID) {
+		return users.ErrInvalidUserID
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var internalID int64
+	var status string
+	err = tx.QueryRowContext(ctx,
+		"SELECT id, status FROM global_users WHERE public_id = $1 AND password_hash = $2 FOR UPDATE",
+		userID, currentHash).Scan(&internalID, &status)
+	if errors.Is(err, sql.ErrNoRows) {
+		return users.ErrNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("lock user: %w", err)
+	}
+	if users.Status(status) != users.StatusActive {
+		return users.ErrInactive
+	}
+	if _, err := tx.ExecContext(ctx,
+		"UPDATE global_users SET password_hash = $2, updated_at = now() WHERE id = $1", internalID, newHash); err != nil {
+		return fmt.Errorf("replace password: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, "DELETE FROM global_user_sessions WHERE user_id = $1", internalID); err != nil {
+		return fmt.Errorf("revoke sessions: %w", err)
+	}
+	return tx.Commit()
+}
+
 // SetUserStatus revokes every session in the same transaction when disabling.
 func (s *Store) SetUserStatus(ctx context.Context, userID string, status users.Status) (users.User, error) {
 	if !users.ValidUserID(userID) {

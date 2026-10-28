@@ -82,6 +82,11 @@ type Repository interface {
 	CreateSession(ctx context.Context, userID string, digest [32]byte, ttl time.Duration) (time.Time, error)
 	GetSession(ctx context.Context, digest [32]byte) (Session, error)
 	DeleteSession(ctx context.Context, digest [32]byte) error
+	GetCredentialsByID(ctx context.Context, userID string) (Credentials, error)
+	// ReplacePassword swaps currentHash for newHash only if currentHash is still
+	// stored (ErrNotFound otherwise) and the user is ACTIVE (ErrInactive), and
+	// revokes every session of that user in the same transaction.
+	ReplacePassword(ctx context.Context, userID, currentHash, newHash string) error
 }
 
 // NewUserID uses 256 random bits and no user-supplied input.

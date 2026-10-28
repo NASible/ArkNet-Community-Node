@@ -50,6 +50,75 @@ func registerIdentityRoutes(mux *http.ServeMux, repo users.Repository) {
 	mux.HandleFunc("POST /api/identity/v1/sessions", loginHandler(repo))
 	mux.HandleFunc("GET /api/identity/v1/session", currentSessionHandler(repo))
 	mux.HandleFunc("DELETE /api/identity/v1/session", logoutHandler(repo))
+	mux.HandleFunc("POST /api/identity/v1/password", passwordChangeHandler(repo))
+}
+
+// passwordChangeHandler lets a signed-in user replace their own password. It
+// requires the current password, answers a wrong one exactly like a failed
+// login, and on success revokes every session of the user, including this one.
+func passwordChangeHandler(repo users.Repository) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
+		digest, ok := bearerDigest(r)
+		if !ok {
+			sessionRequired(w)
+			return
+		}
+		var current, replacement string
+		body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, identityBodyLimit))
+		fields, exact := exactObject(body, "current_password", "new_password")
+		if err != nil || !exact || r.URL.RawQuery != "" || r.URL.ForceQuery ||
+			json.Unmarshal(fields["current_password"], &current) != nil ||
+			json.Unmarshal(fields["new_password"], &replacement) != nil {
+			adminError(w, http.StatusBadRequest, "password change requires exactly current_password and new_password strings")
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+		defer cancel()
+		session, err := repo.GetSession(ctx, digest)
+		if errors.Is(err, users.ErrNotFound) {
+			sessionRequired(w)
+			return
+		}
+		if err != nil {
+			adminError(w, http.StatusServiceUnavailable, "authentication unavailable")
+			return
+		}
+		if users.ValidatePassword(replacement) != nil || replacement == current {
+			adminError(w, http.StatusBadRequest, "new password must differ from the current one and meet the length policy")
+			return
+		}
+		credentials, err := repo.GetCredentialsByID(ctx, session.UserID)
+		if err != nil {
+			adminError(w, http.StatusServiceUnavailable, "authentication unavailable")
+			return
+		}
+		matched, err := users.VerifyPassword(ctx, credentials.PasswordHash, current)
+		if err != nil {
+			adminError(w, http.StatusServiceUnavailable, "authentication unavailable")
+			return
+		}
+		if !matched || credentials.Status != users.StatusActive {
+			invalidCredentials(w)
+			return
+		}
+		hash, err := users.HashPassword(ctx, replacement)
+		if err != nil {
+			adminError(w, http.StatusServiceUnavailable, "authentication unavailable")
+			return
+		}
+		err = repo.ReplacePassword(ctx, session.UserID, credentials.PasswordHash, hash)
+		if errors.Is(err, users.ErrNotFound) || errors.Is(err, users.ErrInactive) {
+			// Lost a race with another change or a disable: the caller must retry.
+			invalidCredentials(w)
+			return
+		}
+		if err != nil {
+			adminError(w, http.StatusServiceUnavailable, "authentication unavailable")
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}
 }
 
 func loginHandler(repo users.Repository) http.HandlerFunc {

@@ -123,6 +123,35 @@ func (m *memoryUsers) DeleteSession(_ context.Context, digest [32]byte) error {
 	return nil
 }
 
+func (m *memoryUsers) GetCredentialsByID(_ context.Context, id string) (users.Credentials, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	record := m.byID[id]
+	if record == nil {
+		return users.Credentials{}, users.ErrNotFound
+	}
+	return users.Credentials{UserID: id, PasswordHash: record.hash, Status: record.user.Status}, nil
+}
+
+func (m *memoryUsers) ReplacePassword(_ context.Context, id, currentHash, newHash string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	record := m.byID[id]
+	if record == nil || record.hash != currentHash {
+		return users.ErrNotFound
+	}
+	if record.user.Status != users.StatusActive {
+		return users.ErrInactive
+	}
+	record.hash = newHash
+	for digest, session := range m.sessions {
+		if session.userID == id {
+			delete(m.sessions, digest)
+		}
+	}
+	return nil
+}
+
 const testPassword = "correct horse battery staple"
 
 func identityServer(repo *memoryUsers, auth adminAuthorizer) http.Handler {
@@ -360,5 +389,80 @@ func TestSessionEndpointsRejectMalformedAuthorization(t *testing.T) {
 	}
 	if response, _ := call(t, h, "POST", "/api/identity/v1/sessions", strings.Repeat("x", identityBodyLimit+1)); response.Code != http.StatusBadRequest {
 		t.Fatalf("oversized login: %d", response.Code)
+	}
+}
+
+func changePassword(t *testing.T, h http.Handler, token, current, replacement string) *httptest.ResponseRecorder {
+	t.Helper()
+	encoded, _ := json.Marshal(map[string]string{"current_password": current, "new_password": replacement})
+	response, _ := call(t, h, "POST", "/api/identity/v1/password", string(encoded), "Authorization", "Bearer "+token)
+	return response
+}
+
+func TestPasswordChangeReplacesCredentialAndRevokesEverySession(t *testing.T) {
+	repo := newMemoryUsers()
+	h := identityServer(repo, allowAdmin(true))
+	createUser(t, h, "alice")
+	_, first := login(t, h, "alice", testPassword)
+	_, second := login(t, h, "alice", testPassword)
+	replacement := "a completely different passphrase"
+	response := changePassword(t, h, first["token"].(string), testPassword, replacement)
+	if response.Code != http.StatusNoContent || response.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("change: %d %s", response.Code, response.Body.String())
+	}
+	for _, token := range []string{first["token"].(string), second["token"].(string)} {
+		if response, _ := call(t, h, "GET", "/api/identity/v1/session", "", "Authorization", "Bearer "+token); response.Code != http.StatusUnauthorized {
+			t.Fatalf("session survived password change: %d", response.Code)
+		}
+	}
+	if response, _ := login(t, h, "alice", testPassword); response.Code != http.StatusUnauthorized {
+		t.Fatalf("old password still accepted: %d", response.Code)
+	}
+	if response, _ := login(t, h, "alice", replacement); response.Code != http.StatusCreated {
+		t.Fatalf("new password rejected: %d", response.Code)
+	}
+	if strings.Contains(repo.byName["alice"].hash, replacement) || !strings.HasPrefix(repo.byName["alice"].hash, "$argon2id$") {
+		t.Fatal("new password not stored as an argon2id hash")
+	}
+}
+
+func TestPasswordChangeRequiresSessionAndCurrentPassword(t *testing.T) {
+	repo := newMemoryUsers()
+	h := identityServer(repo, allowAdmin(true))
+	createUser(t, h, "alice")
+	_, body := login(t, h, "alice", testPassword)
+	token := body["token"].(string)
+	original := repo.byName["alice"].hash
+	replacement := "a completely different passphrase"
+	unknown, _, _ := users.NewSessionToken()
+
+	if response := changePassword(t, h, unknown, testPassword, replacement); response.Code != http.StatusUnauthorized {
+		t.Fatalf("unknown session: %d", response.Code)
+	}
+	wrong := changePassword(t, h, token, testPassword+"!", replacement)
+	failedLogin, _ := login(t, h, "alice", testPassword+"!")
+	if wrong.Code != http.StatusUnauthorized || wrong.Body.String() != failedLogin.Body.String() {
+		t.Fatalf("wrong current password: %d %q", wrong.Code, wrong.Body.String())
+	}
+	if response := changePassword(t, h, token, testPassword, "short"); response.Code != http.StatusBadRequest {
+		t.Fatalf("invalid new password: %d", response.Code)
+	}
+	if response := changePassword(t, h, token, testPassword, testPassword); response.Code != http.StatusBadRequest {
+		t.Fatalf("unchanged password: %d", response.Code)
+	}
+	for _, payload := range []string{
+		`{"current_password":"` + testPassword + `"}`,
+		`{"current_password":"` + testPassword + `","new_password":"` + replacement + `","username":"bob"}`,
+		`{"current_password":1,"new_password":"` + replacement + `"}`,
+	} {
+		if response, _ := call(t, h, "POST", "/api/identity/v1/password", payload, "Authorization", "Bearer "+token); response.Code != http.StatusBadRequest {
+			t.Fatalf("%s: %d", payload, response.Code)
+		}
+	}
+	if repo.byName["alice"].hash != original {
+		t.Fatal("rejected request changed the stored password")
+	}
+	if response, _ := call(t, h, "GET", "/api/identity/v1/session", "", "Authorization", "Bearer "+token); response.Code != http.StatusOK {
+		t.Fatalf("rejected change revoked the session: %d", response.Code)
 	}
 }

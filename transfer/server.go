@@ -45,7 +45,7 @@ func serve(ctx context.Context, s *http.Server, listener net.Listener, timeout t
 	defer s.Close()
 	done := make(chan error, 1)
 	go func() { done <- s.Serve(listener) }()
-	logger.Info("server_started", "service", "arknet-transfer", "addr", listener.Addr().String(), "version", version, "mock", true)
+	logger.Info("server_started", "service", "arknet-transfer", "addr", listener.Addr().String(), "version", version, "mock", false, "backend", "libtorrent")
 	select {
 	case err := <-done:
 		if errors.Is(err, http.ErrServerClosed) {

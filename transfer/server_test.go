@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
@@ -12,6 +14,33 @@ import (
 )
 
 func testLogger() *slog.Logger { return slog.New(slog.NewJSONHandler(io.Discard, nil)) }
+
+// The startup log must match /health and /version: this binary always runs
+// the real libtorrent worker, never the in-memory mock engine.
+func TestServerStartedLogReportsRealBackend(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var buffer bytes.Buffer
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_ = serve(ctx, newServer(http.NotFoundHandler(), testLogger()), listener, time.Second,
+		slog.New(slog.NewJSONHandler(&buffer, nil)))
+	var started map[string]any
+	for _, line := range bytes.Split(buffer.Bytes(), []byte("\n")) {
+		var entry map[string]any
+		if json.Unmarshal(line, &entry) == nil && entry["msg"] == "server_started" {
+			started = entry
+		}
+	}
+	if started == nil {
+		t.Fatalf("no server_started log line in %q", buffer.String())
+	}
+	if started["mock"] != false || started["backend"] != "libtorrent" {
+		t.Fatalf("server_started reports mock=%v backend=%v", started["mock"], started["backend"])
+	}
+}
 func TestServerTimeouts(t *testing.T) {
 	s := newServer(http.NotFoundHandler(), testLogger())
 	if s.ReadHeaderTimeout <= 0 || s.ReadTimeout <= 0 || s.WriteTimeout <= 0 || s.IdleTimeout <= 0 || s.MaxHeaderBytes <= 0 {
