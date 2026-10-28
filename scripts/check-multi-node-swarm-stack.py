@@ -28,6 +28,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from scripts.check_multi_node_result import result_document
+from scripts import e2e_diagnostics
 
 
 METER_PROXY = r'''
@@ -108,6 +109,8 @@ def write_result(path, value):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--results", help="write sanitized proof JSON after product evidence validation passes")
+    parser.add_argument("--diagnostics-dir",
+                        help="where to write the sanitized failure bundle (default: next to --results, else the temp dir)")
     args = parser.parse_args(argv)
     p25 = load_prompt25()
     p25["verify_prerequisites"]()
@@ -410,20 +413,40 @@ def main(argv=None):
         print("PASS: Prompt 43F product-path evidence validated\n" + json.dumps(result, indent=2, sort_keys=True), flush=True)
     except Exception as error:
         failure = error
+        # Collect before cleanup, while every container still exists.
+        def logs(compose, *services, tail="200"):
+            return compose("logs", "--no-color", "--timestamps", "--tail", tail, *services,
+                           capture=True, check=False, timeout=60)
+
+        def node_api(label, path):
+            return request_json(node_configs[label]["base"] + path)[2]
+
+        collectors = {
+            "failure": lambda: e2e_diagnostics.failure_text(error),
+            "core-logs": lambda: logs(core_compose, "arknet-core", "arknet-tracker"),
+            "meter-log": lambda: run(["docker", "logs", "--tail", "400", meter_name], capture=True, check=False, timeout=30),
+            "meter-stats": lambda: meter(),
+        }
+        for label in ("a", "b"):
+            compose = (lambda l: lambda *i, **k: node_compose(l, *i, **k))(label)
+            collectors.update({
+                f"node-{label}-status": lambda l=label: node_api(l, "/api/v1/status"),
+                f"node-{label}-transfers": lambda l=label: node_api(l, "/api/v1/transfers"),
+                f"node-{label}-media": lambda l=label: node_api(l, "/api/v1/media"),
+                f"node-{label}-seeds": lambda l=label: transfer_seeds(l),
+                f"node-{label}-worker-events": lambda c=compose: "\n".join(
+                    line for line in logs(c, "arknet-transfer", tail="2000").splitlines() if '"event"' in line)
+                    or "<no worker events>",
+                f"node-{label}-logs": lambda c=compose: logs(c, "arknet-agent", "arknet-transfer"),
+            })
+        directory = Path(args.diagnostics_dir) if args.diagnostics_dir else e2e_diagnostics.default_directory(prefix, args.results)
         try:
-            diagnostics = []
-            for label in ("a", "b"):
-                diagnostics.append(node_configs[label]["project"] + ":\n" + node_compose(
-                    label, "logs", "--tail", "30", "arknet-agent", "arknet-transfer", capture=True, check=False, timeout=30))
-            diagnostics.append(core_project + ":\n" + core_compose(
-                "logs", "--tail", "30", "arknet-core", "arknet-tracker", capture=True, check=False, timeout=30))
-            diagnostics.append(meter_name + ":\n" + run(["docker", "logs", "--tail", "30", meter_name],
-                                                      capture=True, check=False, timeout=30))
-            text = "\n".join(diagnostics)
-            for value in sorted((x for x in known_secrets if x), key=len, reverse=True): text = text.replace(value, "[REDACTED]")
-            text = text.replace(str(temporary), "[TEMPORARY]")
-            if text.strip(): print("Sanitized diagnostics:\n" + text[-12000:], flush=True)
-        except Exception: pass
+            sections = e2e_diagnostics.collect(collectors)
+            bundle = e2e_diagnostics.write_bundle(directory, sections, known_secrets, temporary)
+            print(f"DIAGNOSTICS: wrote {len(sections)} sanitized sections to {bundle} "
+                  f"({e2e_diagnostics.scan(bundle, known_secrets)} known secret values present)", flush=True)
+        except Exception as bundle_error:
+            print(f"ERROR: diagnostics bundle not written: {type(bundle_error).__name__}", flush=True)
         raise
     finally:
         run(["docker", "rm", "-f", meter_name], check=False, timeout=30)

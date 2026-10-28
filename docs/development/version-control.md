@@ -8,8 +8,8 @@ commit is tagged `v0.1.0-mvp`.
 - `main` is the integration branch. Every commit on `main` passes the
   component gate: gofmt, `go test ./...` and `go vet ./...` for every Go
   module, `node-ui` tests and build, harness tests, worker tests in the
-  transfer image, and `scripts/check-security-hygiene.py`. Once Prompt 44A
-  lands, `scripts/check-all.sh` is that gate.
+  transfer image, and `scripts/check-security-hygiene.py`. Run it with
+  `scripts/check-all.sh`; runtime changes also need `scripts/check-all.sh --e2e`.
 - Work happens on short-lived branches named after the prompt:
   `phase20/<prompt>-<slug>`, for example `phase20/45a-operator-accounts`.
   Fixes outside a prompt use `fix/<slug>`.

@@ -1,0 +1,116 @@
+#!/usr/bin/env bash
+# One-command ArkNet gate.
+#
+#   scripts/check-all.sh            component gate (no long-running stacks)
+#   scripts/check-all.sh --e2e      + Docker acceptance: MVP E2E, Node upgrade, product swarm
+#   scripts/check-all.sh --vm       + fresh-VM install check (needs Lima)
+#   --logs DIR                      keep step logs and diagnostics in DIR (default: a new temp dir)
+#
+# Every step runs even if an earlier one fails. Step logs are kept; failing
+# acceptance checks also write sanitized diagnostics bundles under DIR. The last
+# line is always "EXIT <n>", where n is the number of failed steps.
+set -u
+
+ROOT=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
+cd "$ROOT" || exit 1
+
+RUN_E2E=0
+RUN_VM=0
+LOGS=""
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --e2e) RUN_E2E=1 ;;
+        --vm) RUN_VM=1 ;;
+        --logs) shift; LOGS=${1:-} ;;
+        -h|--help) sed -n '2,12p' "$0"; exit 0 ;;
+        *) printf 'unknown option: %s\n' "$1" >&2; exit 2 ;;
+    esac
+    shift
+done
+if [ -z "$LOGS" ]; then
+    LOGS=$(mktemp -d "${TMPDIR:-/tmp}/arknet-check-all.XXXXXX")
+fi
+mkdir -p "$LOGS"
+GO_MODULES="core node-agent tracker transfer"
+WORKER_IMAGE="arknet-check-all-transfer:local"
+FAILED=""
+PASSED=0
+
+step() {  # step <name> <command...>
+    local name=$1; shift
+    local log="$LOGS/$name.log"
+    local started=$SECONDS
+    printf 'STEP %-24s ' "$name"
+    if "$@" >"$log" 2>&1; then
+        PASSED=$((PASSED + 1))
+        printf 'PASS (%ss)\n' $((SECONDS - started))
+    else
+        FAILED="$FAILED $name"
+        printf 'FAIL (%ss) — see %s\n' $((SECONDS - started)) "$log"
+        tail -n 15 "$log" | sed 's/^/    | /'
+    fi
+}
+
+gofmt_clean() {
+    local unformatted
+    unformatted=$(gofmt -l $GO_MODULES)
+    [ -z "$unformatted" ] || { printf 'gofmt needed:\n%s\n' "$unformatted"; return 1; }
+}
+
+go_module() {  # go_module <dir>
+    (cd "$1" && go test ./... && go vet ./...)
+}
+
+node_ui() {
+    (cd node-ui && { [ -d node_modules ] || npm ci; } && npm test -- --run && npm run build)
+}
+
+harness_tests() {
+    local modules
+    modules=$(cd scripts && ls *_test.py | sed 's/\.py$//; s/^/scripts./')
+    # shellcheck disable=SC2086
+    python3 -m unittest -v $modules
+}
+
+worker_tests() {
+    docker build -q -t "$WORKER_IMAGE" transfer >/dev/null || return 1
+    local status=0
+    docker run --rm --network none -u 0 -v "$ROOT/transfer:/w:ro" -w /w --entrypoint python3 \
+        "$WORKER_IMAGE" -B -m unittest -v worker_test worker_seed_test || status=$?
+    docker image rm -f "$WORKER_IMAGE" >/dev/null 2>&1
+    return $status
+}
+
+e2e() {
+    python3 -u scripts/check-mvp-e2e.py --results "$LOGS/e2e.json" --diagnostics-dir "$LOGS/e2e-diagnostics"
+}
+
+swarm() {
+    python3 -u scripts/check-multi-node-swarm-stack.py --results "$LOGS/swarm.json" \
+        --diagnostics-dir "$LOGS/swarm-diagnostics"
+}
+
+printf 'ArkNet gate: %s\nLogs: %s\n' "$(git rev-parse --short HEAD 2>/dev/null || echo 'no git')" "$LOGS"
+step scaffold sh scripts/check-scaffold.sh
+step hygiene python3 scripts/check-security-hygiene.py
+step gofmt gofmt_clean
+for module in $GO_MODULES; do
+    step "go-$module" go_module "$module"
+done
+step node-ui node_ui
+step harness-tests harness_tests
+step worker-tests worker_tests
+if [ "$RUN_E2E" = 1 ]; then
+    step mvp-e2e e2e
+    step node-upgrade python3 -u scripts/check-node-upgrade-stack.py
+    step product-swarm swarm
+fi
+if [ "$RUN_VM" = 1 ]; then
+    step node-install-vm python3 -u scripts/check-node-install-vm.py
+fi
+
+count=$(printf '%s\n' $FAILED | grep -c . || true)
+printf '\nSUMMARY: %d passed, %d failed%s\n' "$PASSED" "$count" "${FAILED:+ (${FAILED# })}"
+printf 'Logs: %s\n' "$LOGS"
+printf 'EXIT %d\n' "$count"
+exit "$count"

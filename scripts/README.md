@@ -9,8 +9,25 @@ mount from those locations silently becomes an empty directory. The MVP E2E and
 Node upgrade checks probe their bind sources first and fail fast with that
 explanation.
 
-- `python3 scripts/check-mvp-e2e.py [--setup-only] [--results FILE]`: Core,
-  Node A and Node B acceptance for Prompt 43 items 2–16, 19 and 20.
+- `scripts/check-all.sh [--e2e] [--vm] [--logs DIR]`: the one-command gate.
+  Without flags it runs the component checks: scaffold, security hygiene,
+  gofmt, `go test`/`go vet` for every Go module, `node-ui` tests and build,
+  every `scripts/*_test.py`, and worker tests inside the transfer image (real
+  libtorrent). `--e2e` adds the MVP E2E, Node upgrade and product swarm
+  checks; `--vm` adds the fresh-VM install check. Every step runs, step logs
+  stay in `DIR`, and the last line is `EXIT <failed steps>`.
+- `python3 scripts/check-mvp-e2e.py [--setup-only] [--results FILE] [--diagnostics-dir DIR]`:
+  Core, Node A and Node B acceptance for Prompt 43 items 2–16, 19 and 20.
+- **Failure diagnostics.** When `check-mvp-e2e.py` hits an exception *or any
+  item FAILs*, or `check-multi-node-swarm-stack.py` fails, the harness writes a
+  sanitized bundle before cleanup. The bundle contains per-Node status,
+  transfers, media and seeds, worker events, service log tails, item results
+  and the failure traceback. It goes to `--diagnostics-dir`, else next to
+  `--results`, else the system temp dir. `scripts/e2e_diagnostics.py` redacts
+  every known secret, grant-bearing URL segment, `Authorization` value and the
+  work path, then re-scans the bundle. A bundle that still contains a known
+  secret is deleted, not left on disk. `--inject-failure after-setup` forces a
+  failure after setup, carrying a known secret, to exercise this path.
 - `python3 scripts/check-node-upgrade-stack.py`: Agent update discovery
   (item 17) and whole-stack upgrade, failed-release rollback and manual
   rollback with data preserved (item 18). Agent discovery uses

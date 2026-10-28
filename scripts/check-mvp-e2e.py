@@ -33,6 +33,10 @@ import uuid
 
 ROOT = Path(__file__).resolve().parent.parent
 PROMPT25 = Path(__file__).with_name("check-core-to-node-transfer-stack.py")
+import sys  # noqa: E402  (repository root import path for sibling helper modules)
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+from scripts import e2e_diagnostics  # noqa: E402
 
 ITEMS = {
     2: "Enrollment", 3: "Node restart", 4: "Global user", 5: "Local-only user",
@@ -91,6 +95,10 @@ def main(argv=None):
     parser.add_argument("--results", help="write sanitized per-item JSON results")
     parser.add_argument("--setup-only", action="store_true",
                         help="start Core, Node A and Node B, print SETUP:, then clean up without checking items")
+    parser.add_argument("--diagnostics-dir",
+                        help="where to write the sanitized failure bundle (default: next to --results, else the temp dir)")
+    parser.add_argument("--inject-failure", choices=["after-setup"],
+                        help="test hook: fail right after SETUP (with a known secret in the error) to exercise diagnostics")
     args = parser.parse_args(argv)
 
     p25 = runpy.run_path(str(PROMPT25), run_name="arknet_prompt25_reuse")
@@ -244,6 +252,46 @@ def main(argv=None):
         return {"id": name, "size": torrent["size"], "hash": torrent["info_hash_v2"],
                 "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
 
+    def write_diagnostics(error):
+        """Sanitized state for post-mortem, collected while every container still exists."""
+        def logs(compose, *services, tail="200"):
+            return compose("logs", "--no-color", "--timestamps", "--tail", tail, *services,
+                           capture=True, check=False, timeout=60)
+
+        def worker_events(label):
+            text = logs(lambda *i, **k: node_compose(label, *i, **k), "arknet-transfer", tail="2000")
+            return "\n".join(line for line in text.splitlines() if '"event"' in line) or "<no worker events>"
+
+        collectors = {
+            "failure": lambda: e2e_diagnostics.failure_text(error),
+            "results": lambda: {n: {"status": v["status"], "evidence": v["evidence"]} for n, v in results.items.items()},
+            "core-nodes": lambda: core_sql("SELECT public_id, enrollment_status, trust_status, peer_serving FROM nodes ORDER BY public_id"),
+            "core-replicas": lambda: core_sql("SELECT m.public_id, n.public_id FROM media_replicas r JOIN nodes n ON n.id=r.node_id "
+                                              "JOIN media_objects m ON m.id=r.media_object_id ORDER BY 1, 2"),
+            "core-logs": lambda: logs(core_compose, "arknet-core", "arknet-tracker"),
+        }
+        for label in nodes_labels:
+            compose = (lambda l: lambda *i, **k: node_compose(l, *i, **k))(label)
+            collectors.update({
+                f"node-{label}-status": lambda l=label: agent(l, "/api/v1/status"),
+                f"node-{label}-transfers": lambda l=label: agent(l, "/api/v1/transfers"),
+                f"node-{label}-media": lambda l=label: agent(l, "/api/v1/media"),
+                f"node-{label}-seeds": lambda l=label: transfer_seeds(l),
+                f"node-{label}-worker-events": lambda l=label: worker_events(l),
+                f"node-{label}-logs": lambda c=compose: logs(c, "arknet-agent", "arknet-transfer", "jellyfin"),
+                f"node-{label}-containers": lambda c=compose: c("ps", "--all", capture=True, check=False, timeout=60),
+            })
+        directory = Path(args.diagnostics_dir) if args.diagnostics_dir else e2e_diagnostics.default_directory(prefix, args.results)
+        try:
+            sections = e2e_diagnostics.collect(collectors)
+            bundle = e2e_diagnostics.write_bundle(directory, sections, known_secrets, temporary)
+            print(f"DIAGNOSTICS: wrote {len(sections)} sanitized sections to {bundle} "
+                  f"({e2e_diagnostics.scan(bundle, known_secrets)} known secret values present)", flush=True)
+        except Exception as bundle_error:
+            print(f"ERROR: diagnostics bundle not written: {type(bundle_error).__name__}", flush=True)
+
+    nodes_labels = ("a", "b")
+
     try:
         # ---------------------------------------------------------------- setup
         key_helper = temporary / "grant-helper.go"; key_helper.write_text(p25["KEY_HELPER"]); os.chmod(key_helper, 0o600)
@@ -286,6 +334,9 @@ def main(argv=None):
             cfg["env"]["JELLYFIN_API_KEY"] = key
             node_compose(label, "up", "-d", "--wait", "--wait-timeout", "180", "arknet-agent")
         print("SETUP: Core, tracker, web seed, Node A and Node B are running", flush=True)
+        if args.inject_failure == "after-setup":
+            # The message deliberately carries a known secret: the bundle must redact it.
+            raise RuntimeError("injected harness failure after setup (admin token " + admin_token + ")")
         if args.setup_only:
             raise SetupOnly()
 
@@ -613,16 +664,11 @@ def main(argv=None):
         pass
     except Exception as error:
         failure = error
-        traceback.print_exc()
-        try:
-            text = "\n".join(compose("logs", "--tail", "40", capture=True, check=False, timeout=60) for compose in
-                             (core_compose, lambda *i, **k: node_compose("a", *i, **k), lambda *i, **k: node_compose("b", *i, **k)))
-            for value in sorted((v for v in known_secrets if v), key=len, reverse=True):
-                text = text.replace(value, "[REDACTED]")
-            print("Sanitized diagnostics:\n" + text.replace(str(temporary), "[TEMPORARY]")[-15000:], flush=True)
-        except Exception:
-            pass
+        print(e2e_diagnostics.redact(e2e_diagnostics.failure_text(error), known_secrets, temporary), flush=True)
     finally:
+        # Collect before cleanup: an item FAIL never raises, so check results too.
+        if failure is not None or any(v["status"] == "FAIL" for v in results.items.values()):
+            write_diagnostics(failure)
         for label in ("b", "a"):
             node_compose(label, "down", "--volumes", "--remove-orphans", check=False, timeout=240)
         core_compose("down", "--volumes", "--remove-orphans", check=False, timeout=240)

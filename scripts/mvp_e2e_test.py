@@ -22,6 +22,22 @@ class MVPHarnessTests(unittest.TestCase):
         self.assertIn('node-agent seed reconciler -> transfer service -> libtorrent worker', source)
         self.assertNotIn('NODE_A_SEEDER', source)
 
+    def test_diagnostics_bundle_is_written_before_cleanup_on_any_failure(self):
+        # Item failures are recorded without raising; diagnostics must not depend on an exception.
+        source = PATH.read_text()
+        cleanup = source.index('node_compose(label, "down"')
+        call = source.index('write_diagnostics(failure)')
+        self.assertLess(call, cleanup)
+        self.assertIn('if failure is not None or any(v["status"] == "FAIL" for v in results.items.values()):', source)
+        for section in ('-transfers', '-seeds', '-worker-events', '-logs', '"results"'):
+            self.assertIn(section, source)
+        self.assertIn('e2e_diagnostics.write_bundle(directory, sections, known_secrets, temporary)', source)
+
+    def test_swarm_check_writes_bundle_before_cleanup(self):
+        source = PATH.with_name('check-multi-node-swarm-stack.py').read_text()
+        self.assertLess(source.index('e2e_diagnostics.write_bundle('), source.index('docker", "rm", "-f", meter_name'))
+        self.assertIn('"meter-log"', source)
+
 
 if __name__ == '__main__':
     unittest.main()
