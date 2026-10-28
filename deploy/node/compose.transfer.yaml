@@ -1,0 +1,72 @@
+# Real resumable libtorrent service. Combine with compose.yaml.
+services:
+  arknet-agent:
+    environment:
+      ARKNET_TRANSFER_URL: http://arknet-transfer:8084
+      ARKNET_TRANSFER_TOKEN: ${ARKNET_TRANSFER_TOKEN:?Set a unique local transfer-service token of at least 32 characters}
+      ARKNET_TRANSFER_STAGING_DIR: /srv/arknet/transfers
+      ARKNET_MEDIA_DIR: /srv/arknet/media
+      ARKNET_TRANSFER_RECONCILE_INTERVAL: ${ARKNET_TRANSFER_RECONCILE_INTERVAL:-30s}
+      JELLYFIN_API_KEY: ${JELLYFIN_API_KEY:-}
+      # Diagnostics only: lets the Agent report private tracker reachability.
+      ARKNET_TRANSFER_TRACKER_ORIGIN: ${ARKNET_TRANSFER_TRACKER_ORIGIN:?Set the trusted private tracker origin}
+      ARKNET_TRANSFER_TRACKER_ALLOW_HTTP: ${ARKNET_TRANSFER_TRACKER_ALLOW_HTTP:-false}
+    volumes:
+      - transfers:/srv/arknet/transfers
+      - media:/srv/arknet/media
+    networks:
+      - transfer-control
+    depends_on:
+      arknet-transfer:
+        condition: service_healthy
+
+  arknet-transfer:
+    image: arknet-transfer:0.0.1-dev
+    build:
+      context: ../../transfer
+    environment:
+      ARKNET_TRANSFER_ADDR: 0.0.0.0:8084
+      ARKNET_TRANSFER_TOKEN: ${ARKNET_TRANSFER_TOKEN:?Set a unique local transfer-service token of at least 32 characters}
+      ARKNET_TRANSFER_TRACKER_ORIGIN: ${ARKNET_TRANSFER_TRACKER_ORIGIN:?Set the trusted private tracker origin}
+      ARKNET_TRANSFER_TRACKER_ALLOW_HTTP: ${ARKNET_TRANSFER_TRACKER_ALLOW_HTTP:-false}
+      ARKNET_TRANSFER_WEB_SEED_ORIGIN: ${ARKNET_TRANSFER_WEB_SEED_ORIGIN:?Set the trusted Core origin}
+      ARKNET_TRANSFER_WEB_SEED_ALLOW_HTTP: ${ARKNET_TRANSFER_WEB_SEED_ALLOW_HTTP:-false}
+      ARKNET_TRANSFER_STAGING_DIR: /srv/arknet/transfers
+      ARKNET_TRANSFER_STATE_DIR: /srv/arknet/transfer-state
+      # Worker seed mode serves Agent-finalized files from here (upload-only).
+      ARKNET_TRANSFER_MEDIA_DIR: /srv/arknet/media
+      ARKNET_TRANSFER_WORKER: /usr/local/lib/arknet/worker.py
+      ARKNET_TRANSFER_LISTEN_INTERFACES: 0.0.0.0:${ARKNET_TRANSFER_PEER_PORT:-6881}
+      ARKNET_TRANSFER_DOWNLOAD_RATE_LIMIT: ${ARKNET_TRANSFER_DOWNLOAD_RATE_LIMIT:-0}
+    volumes:
+      - transfers:/srv/arknet/transfers
+      - transfer-state:/srv/arknet/transfer-state
+      # Initialises the fresh named volume with UID/GID 10001 for the Agent.
+      - media:/srv/arknet/media
+    networks:
+      - transfer-control
+      - transfer-egress
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8084/health', timeout=2).read()"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
+    stop_grace_period: 15s
+
+volumes:
+  transfer-state:
+
+networks:
+  transfer-control:
+    driver: bridge
+    internal: true
+  transfer-egress:
+    driver: bridge

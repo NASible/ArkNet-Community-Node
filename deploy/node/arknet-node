@@ -1,0 +1,801 @@
+#!/usr/bin/env python3
+"""arknet-node: the supported host-side ArkNet Node release workflow.
+
+Commands:
+  install --index URL [--channel stable|development]
+                              Install the newest release (used by install.sh); on an
+                              installed Node, re-start and re-validate it instead.
+  status                      Show the installed release.
+  upgrade [--index URL]       Upgrade to the newest release on this Node's channel.
+  upgrade --manifest URL --sha256 HEX
+                              Upgrade to one specific published release.
+  rollback                    Re-apply the previous release.
+
+Installation layout (ARKNET_HOME, default /opt/arknet):
+  .env                  Operator configuration and secrets (mode 0600). Never edited.
+  state.json            Installed release, Compose project, Compose files in use.
+  releases/<version>/   Verified release.json and Compose files of each release.
+  backups/              Pre-upgrade PostgreSQL dumps (mode 0600).
+  upgrade.log           Step log without secrets.
+
+The tool never removes volumes, never edits Docker resources by hand and
+uses only the Python 3 standard library and the Docker CLI.
+"""
+from __future__ import annotations
+
+import argparse
+import contextlib
+import datetime as dt
+import fcntl
+import hashlib
+import ipaddress
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+from pathlib import Path
+
+MANIFEST_SCHEMA = "arknet.node-release/v1"
+INDEX_SCHEMA = "arknet.node-release-index/v1"
+STATE_SCHEMA = "arknet.node-install/v1"
+MAX_DOCUMENT = 64 << 10
+MAX_COMPOSE = 256 << 10
+MIN_FREE_BYTES = 2 << 30
+MIN_COMPOSE = (2, 20, 0)
+WAIT_TIMEOUT = 300
+VALIDATE_TIMEOUT = 120
+
+EXIT_OK, EXIT_ABORTED, EXIT_ROLLED_BACK, EXIT_ATTENTION = 0, 2, 3, 4
+
+REQUIRED = ("arknet-agent", "arknet-ui", "arknet-transfer", "postgresql", "jellyfin", "tailscale")
+LOCKSTEP = ("arknet-agent", "arknet-ui", "arknet-transfer")
+SEMVER = re.compile(r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$")
+COMPONENT_VERSION = re.compile(r"^[0-9A-Za-z][0-9A-Za-z.+-]{0,63}$")
+IMAGE = re.compile(r"^([a-z0-9]+([.-][a-z0-9]+)*(:[0-9]{1,5})?/)?[a-z0-9]+([._/-][a-z0-9]+)*"
+                   r"(:[0-9A-Za-z_][0-9A-Za-z_.-]{0,127})?(@sha256:[0-9a-f]{64})?$")
+TAG = re.compile(r"^[^@]*:([0-9A-Za-z_][0-9A-Za-z_.-]*)(@|$)")
+PROJECT = re.compile(r"^[a-z0-9][a-z0-9_-]{0,62}$")
+COMPOSE_FILE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,62}\.ya?ml$")
+SHA256 = re.compile(r"^[0-9a-f]{64}$")
+
+
+class Failure(Exception):
+    """A step failed before the running stack was changed."""
+
+    def __init__(self, step: str, message: str, hint: str = ""):
+        super().__init__(message)
+        self.step, self.message, self.hint = step, message, hint
+
+
+# ---------------------------------------------------------------- validation
+def strict_json(data: bytes, what: str) -> dict:
+    def no_duplicates(pairs):
+        keys = [k for k, _ in pairs]
+        if len(keys) != len(set(keys)):
+            raise ValueError("duplicate key")
+        return dict(pairs)
+    try:
+        value = json.loads(data.decode("utf-8"), object_pairs_hook=no_duplicates)
+    except (UnicodeDecodeError, ValueError):
+        raise ValueError(f"{what} is not valid JSON")
+    if not isinstance(value, dict):
+        raise ValueError(f"{what} must be a JSON object")
+    return value
+
+
+def exact_keys(value, keys, what):
+    if not isinstance(value, dict) or set(value) != set(keys):
+        raise ValueError(f"{what} must have exactly the fields {sorted(keys)}")
+
+
+def valid_version(version, channel) -> bool:
+    match = SEMVER.match(version) if isinstance(version, str) else None
+    if not match or channel not in ("stable", "development"):
+        return False
+    return (match.group(4) is None) == (channel == "stable")
+
+
+def compare_versions(a: str, b: str) -> int:
+    """SemVer 2.0 precedence (same rules as node-agent/internal/release)."""
+    ma, mb = SEMVER.match(a), SEMVER.match(b)
+    if not ma or not mb:
+        raise ValueError("cannot compare invalid versions")
+    for i in (1, 2, 3):
+        x, y = int(ma.group(i)), int(mb.group(i))
+        if x != y:
+            return -1 if x < y else 1
+    pa, pb = (ma.group(4) or "")[1:], (mb.group(4) or "")[1:]
+    if pa == pb:
+        return 0
+    if not pa:
+        return 1
+    if not pb:
+        return -1
+    fa, fb = pa.split("."), pb.split(".")
+    for x, y in zip(fa, fb):
+        if x == y:
+            continue
+        if x.isdigit() and y.isdigit():
+            return -1 if int(x) < int(y) else 1
+        if x.isdigit():
+            return -1
+        if y.isdigit():
+            return 1
+        return -1 if x < y else 1
+    return (len(fa) > len(fb)) - (len(fa) < len(fb))
+
+
+def validate_manifest(data: bytes) -> dict:
+    """Mirror of the Agent's strict parser for arknet.node-release/v1."""
+    if len(data) > MAX_DOCUMENT:
+        raise ValueError("release manifest too large")
+    m = strict_json(data, "release manifest")
+    exact_keys(m, ["schema", "version", "channel", "published_at", "components", "compose"], "release manifest")
+    if m["schema"] != MANIFEST_SCHEMA:
+        raise ValueError("unsupported release manifest schema")
+    if not valid_version(m["version"], m["channel"]):
+        raise ValueError("release version is not valid for its channel")
+    try:
+        dt.datetime.fromisoformat(str(m["published_at"]).replace("Z", "+00:00"))
+    except ValueError:
+        raise ValueError("published_at must be an RFC 3339 timestamp")
+    comps = m["components"]
+    if not isinstance(comps, dict) or set(comps) != set(REQUIRED):
+        raise ValueError(f"components must be exactly {list(REQUIRED)}")
+    for name in REQUIRED:
+        c = comps[name]
+        exact_keys(c, ["version", "image", "bundled"], f"component {name}")
+        if not isinstance(c["version"], str) or not COMPONENT_VERSION.match(c["version"]) or \
+                not isinstance(c["image"], str) or not IMAGE.match(c["image"]) or not isinstance(c["bundled"], bool):
+            raise ValueError(f"component {name} has an invalid version or image")
+        tag = TAG.match(c["image"])
+        if not tag or tag.group(1) in ("latest", "stable", "unstable"):
+            raise ValueError(f"component {name} image must be pinned to a version tag")
+    for name in LOCKSTEP:
+        if comps[name]["version"] != m["version"] or not comps[name]["bundled"]:
+            raise ValueError(f"component {name} must be bundled at the release version")
+    if not comps["postgresql"]["bundled"] or not comps["jellyfin"]["bundled"]:
+        raise ValueError("postgresql and jellyfin must be bundled")
+    compose = m["compose"]
+    exact_keys(compose, ["project", "files"], "compose")
+    if not isinstance(compose["project"], str) or not PROJECT.match(compose["project"]) or \
+            not isinstance(compose["files"], list) or not 1 <= len(compose["files"]) <= 8:
+        raise ValueError("compose must name a project and 1-8 files")
+    seen = set()
+    for f in compose["files"]:
+        exact_keys(f, ["path", "sha256"], "compose file")
+        if not isinstance(f["path"], str) or not COMPOSE_FILE.match(f["path"]) or \
+                not isinstance(f["sha256"], str) or not SHA256.match(f["sha256"]) or f["path"] in seen:
+            raise ValueError("compose files must be unique file names with SHA-256 digests")
+        seen.add(f["path"])
+    return m
+
+
+def validate_index(data: bytes) -> dict:
+    if len(data) > MAX_DOCUMENT:
+        raise ValueError("release index too large")
+    index = strict_json(data, "release index")
+    exact_keys(index, ["schema", "channels"], "release index")
+    if index["schema"] != INDEX_SCHEMA or not isinstance(index["channels"], dict):
+        raise ValueError("unsupported release index schema")
+    for channel, entry in index["channels"].items():
+        exact_keys(entry, ["version", "manifest_url", "manifest_sha256"], f"channel {channel}")
+        if not valid_version(entry["version"], channel) or not isinstance(entry["manifest_url"], str) or \
+                not entry["manifest_url"] or len(entry["manifest_url"]) > 2048 or \
+                not isinstance(entry["manifest_sha256"], str) or not SHA256.match(entry["manifest_sha256"]):
+            raise ValueError(f"invalid release index entry for channel {channel}")
+    return index
+
+
+def sha256(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+# ------------------------------------------------------------------- network
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *args, **kwargs):  # never follow: no silent HTTP downgrade
+        return None
+
+
+def check_url(url: str, allow_http: bool) -> None:
+    u = urllib.parse.urlsplit(url)
+    if u.username or u.password or not u.hostname or u.fragment:
+        raise ValueError("release URLs must be absolute and carry no credentials")
+    if u.scheme == "https":
+        return
+    loopback = u.hostname == "localhost"
+    with contextlib.suppress(ValueError):
+        loopback = loopback or ipaddress.ip_address(u.hostname).is_loopback
+    if u.scheme == "http" and (loopback or allow_http):
+        return
+    raise ValueError("release URLs must use HTTPS (HTTP only for loopback or ARKNET_RELEASE_INDEX_ALLOW_HTTP=true)")
+
+
+def fetch(url: str, allow_http: bool, limit: int) -> bytes:
+    check_url(url, allow_http)
+    opener = urllib.request.build_opener(_NoRedirect)
+    request = urllib.request.Request(url, headers={"User-Agent": "arknet-node", "Accept": "application/json, application/yaml"})
+    try:
+        with opener.open(request, timeout=20) as response:
+            if response.status != 200:
+                raise ValueError(f"HTTP {response.status}")
+            data = response.read(limit + 1)
+    except urllib.error.HTTPError as error:
+        raise ValueError(f"HTTP {error.code}")
+    except (urllib.error.URLError, OSError) as error:
+        raise ValueError(f"unreachable ({getattr(error, 'reason', error)})")
+    if len(data) > limit:
+        raise ValueError("response too large")
+    return data
+
+
+# -------------------------------------------------------------------- docker
+class Docker:
+    """Thin Docker CLI wrapper; tests substitute `run`."""
+
+    def __init__(self, run=None):
+        self._run = run or (lambda args, **kw: subprocess.run(args, **kw))
+
+    def run(self, args, check=True, stdout=subprocess.PIPE, timeout=None):
+        result = self._run(["docker", *args], stdout=stdout, stderr=subprocess.PIPE, text=stdout is subprocess.PIPE,
+                           timeout=timeout)
+        if check and result.returncode != 0:
+            raise RuntimeError(_last_line(result.stderr) or f"docker {args[0]} exited {result.returncode}")
+        return result
+
+    def compose(self, project, env_file, files, *args, check=True, stdout=subprocess.PIPE, timeout=None):
+        base = ["compose", "-p", project, "--env-file", str(env_file)]
+        for f in files:
+            base += ["-f", str(f)]
+        return self.run([*base, *args], check=check, stdout=stdout, timeout=timeout)
+
+
+def _last_line(text) -> str:
+    if isinstance(text, bytes):
+        text = text.decode("utf-8", "replace")
+    lines = [l.strip() for l in (text or "").splitlines() if l.strip()]
+    return lines[-1][:300] if lines else ""
+
+
+def parse_env(path: Path) -> dict:
+    values = {}
+    for line in path.read_text().splitlines():
+        line = line.strip()
+        if line and not line.startswith("#") and "=" in line:
+            key, value = line.split("=", 1)
+            values[key.strip()] = value.strip().strip('"').strip("'")
+    return values
+
+
+# ---------------------------------------------------------------------- node
+class Node:
+    def __init__(self, home: Path, docker: Docker, out=print, sleep=time.sleep, clock=time.monotonic):
+        self.home, self.docker, self.out, self.sleep, self.clock = Path(home), docker, out, sleep, clock
+        self.env_file = self.home / ".env"
+        self.state_file = self.home / "state.json"
+        self.releases = self.home / "releases"
+
+    # -- state
+    def log(self, message: str) -> None:
+        line = f"{dt.datetime.now(dt.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')} {message}"
+        with contextlib.suppress(OSError):
+            with open(self.home / "upgrade.log", "a") as f:
+                f.write(line + "\n")
+
+    def say(self, message: str) -> None:
+        self.out(message)
+        self.log(message)
+
+    def read_state(self) -> dict:
+        try:
+            state = strict_json(self.state_file.read_bytes(), "state.json")
+            exact_keys(state, ["schema", "release", "previous", "project", "compose_files"], "state.json")
+        except (OSError, ValueError) as error:
+            raise Failure("prerequisites", f"Installation state is missing or invalid: {error}",
+                          f"Check {self.state_file}; it is written only by the ArkNet installer and arknet-node.")
+        if state["schema"] != STATE_SCHEMA or not isinstance(state["compose_files"], list) or not state["compose_files"]:
+            raise Failure("prerequisites", "Installation state has an unsupported format.")
+        return state
+
+    def write_state(self, state: dict) -> None:
+        tmp = self.state_file.with_suffix(".tmp")
+        tmp.write_text(json.dumps(state, indent=2) + "\n")
+        os.replace(tmp, self.state_file)
+
+    def release(self, version: str, files) -> tuple[dict, list]:
+        """Load an installed release and verify its files are unmodified."""
+        directory = self.releases / version
+        try:
+            manifest = validate_manifest((directory / "release.json").read_bytes())
+        except (OSError, ValueError) as error:
+            raise Failure("prerequisites", f"Installed release {version} is unreadable or invalid: {error}")
+        digests = {f["path"]: f["sha256"] for f in manifest["compose"]["files"]}
+        paths = []
+        for name in files:
+            if name not in digests:
+                raise Failure("prerequisites", f"Release {version} does not include Compose file {name} used by this Node.")
+            path = directory / name
+            try:
+                ok = sha256(path.read_bytes()) == digests[name]
+            except OSError:
+                ok = False
+            if not ok:
+                raise Failure("prerequisites", f"{path} is missing or was modified after installation.",
+                              "Release files must not be edited; put local settings in .env.")
+            paths.append(path)
+        if manifest["version"] != version:
+            raise Failure("prerequisites", f"releases/{version} contains release {manifest['version']}.")
+        return manifest, paths
+
+    # -- prerequisites
+    def prerequisites(self, state: dict) -> dict:
+        self.host_prerequisites()
+        manifest, _ = self.release(state["release"], state["compose_files"])
+        self.check_readable(self.releases / state["release"] / "release.json")
+        if manifest["compose"]["project"] != state["project"]:
+            raise Failure("prerequisites", "Installed release and state disagree on the Compose project.")
+        return manifest
+
+    def host_prerequisites(self) -> None:
+        if not self.env_file.is_file():
+            raise Failure("prerequisites", f"{self.env_file} is missing.")
+        if self.env_file.stat().st_mode & 0o077:
+            raise Failure("prerequisites", f"{self.env_file} is readable by other users.", f"Run: chmod 600 {self.env_file}")
+        try:
+            self.docker.run(["info", "--format", "{{.ServerVersion}}"], timeout=30)
+        except (RuntimeError, OSError, subprocess.TimeoutExpired) as error:
+            raise Failure("prerequisites", f"Docker is not available: {error}", "Start Docker and retry.")
+        try:
+            raw = self.docker.run(["compose", "version", "--short"], timeout=30).stdout.strip().lstrip("v")
+            version = tuple(int(p) for p in re.findall(r"\d+", raw)[:3])
+        except (RuntimeError, OSError, ValueError, subprocess.TimeoutExpired):
+            version = ()
+        if version < MIN_COMPOSE:
+            raise Failure("prerequisites", f"Docker Compose {'.'.join(map(str, MIN_COMPOSE))} or newer is required (found {raw or 'none'}).")
+        free = shutil.disk_usage(self.home).free
+        if free < MIN_FREE_BYTES:
+            raise Failure("prerequisites", f"Only {free // (1 << 20)} MiB free in {self.home}; at least 2 GiB is required.")
+
+    def check_readable(self, manifest_path: Path) -> None:
+        """The Agent container runs as an unprivileged user and bind-mounts
+        release.json, so every directory on the path must be searchable and
+        the file readable by others; otherwise the Agent reports release: null."""
+        blocked = [p for p in (self.home, self.releases, manifest_path.parent) if not p.stat().st_mode & 0o001]
+        if not manifest_path.stat().st_mode & 0o004:
+            blocked.append(manifest_path)
+        if blocked:
+            raise Failure("prerequisites", f"The Agent container cannot read {manifest_path}: {', '.join(map(str, blocked))} "
+                          "not accessible to other users.",
+                          f"Run: chmod 755 {self.home} {self.releases} {manifest_path.parent} && chmod 644 {manifest_path}")
+
+    # -- target resolution
+    def resolve(self, current: dict, index_url, manifest_url, digest, allow_http) -> tuple[str, str] | None:
+        if manifest_url:
+            if not digest or not SHA256.match(digest):
+                raise Failure("resolve", "--manifest requires --sha256 with the published manifest digest.")
+            return manifest_url, digest
+        if not index_url:
+            raise Failure("resolve", "No release index is configured.",
+                          "Set ARKNET_RELEASE_INDEX_URL in .env or pass --index URL.")
+        try:
+            index = validate_index(fetch(index_url, allow_http, MAX_DOCUMENT))
+        except ValueError as error:
+            raise Failure("resolve", f"Release index unavailable or invalid: {error}")
+        entry = index["channels"].get(current["channel"])
+        if not entry or compare_versions(entry["version"], current["version"]) <= 0:
+            return None
+        return urllib.parse.urljoin(index_url, entry["manifest_url"]), entry["manifest_sha256"]
+
+    def fetch_release(self, url: str, digest: str, allow_http) -> tuple[dict, Path]:
+        """Download a published release, verify every digest and stage it in
+        releases/<version>/. Never touches the running stack."""
+        try:
+            data = fetch(url, allow_http, MAX_DOCUMENT)
+        except ValueError as error:
+            raise Failure("download", f"Release manifest unavailable: {error}")
+        if sha256(data) != digest:
+            raise Failure("download", "Release manifest digest does not match the published digest.",
+                          "The release may have been tampered with or republished; do not install it.")
+        try:
+            manifest = validate_manifest(data)
+        except ValueError as error:
+            raise Failure("download", f"Release manifest rejected: {error}")
+        target = manifest["version"]
+        staging = self.releases / f".staging-{target}"
+        shutil.rmtree(staging, ignore_errors=True)
+        self.releases.mkdir(parents=True, exist_ok=True)
+        os.chmod(self.releases, 0o755)
+        staging.mkdir()
+        os.chmod(staging, 0o755)  # the Agent container (UID 10001) reads release.json
+        (staging / "release.json").write_bytes(data)
+        os.chmod(staging / "release.json", 0o644)
+        for f in manifest["compose"]["files"]:
+            try:
+                content = fetch(urllib.parse.urljoin(url, f["path"]), allow_http, MAX_COMPOSE)
+            except ValueError as error:
+                raise Failure("download", f"Compose file {f['path']} unavailable: {error}")
+            if sha256(content) != f["sha256"]:
+                raise Failure("download", f"Compose file {f['path']} does not match the release manifest digest.")
+            (staging / f["path"]).write_bytes(content)
+            os.chmod(staging / f["path"], 0o644)
+        return manifest, staging
+
+    def promote(self, manifest: dict, staging: Path) -> Path:
+        final = self.releases / manifest["version"]
+        shutil.rmtree(final, ignore_errors=True)  # a previous failed attempt; never the running release
+        os.replace(staging, final)
+        return final
+
+    def download(self, url: str, digest: str, current: dict, files, allow_http) -> tuple[dict, Path]:
+        manifest, staging = self.fetch_release(url, digest, allow_http)
+        target = manifest["version"]
+        problem = None
+        if manifest["channel"] != current["channel"]:
+            problem = f"Release {target} is on the {manifest['channel']} channel, not {current['channel']}."
+        elif compare_versions(target, current["version"]) <= 0:
+            problem = f"Release {target} is not newer than the installed {current['version']}."
+        elif manifest["compose"]["project"] != current["compose"]["project"]:
+            problem = "Release changes the Compose project name, which would orphan persistent volumes."
+        else:
+            listed = {f["path"] for f in manifest["compose"]["files"]}
+            missing = [f for f in files if f not in listed]
+            if missing:
+                problem = f"Release {target} no longer provides Compose file(s) {missing} used by this Node."
+        if problem:
+            shutil.rmtree(staging, ignore_errors=True)
+            hint = "Use 'arknet-node rollback' to return to the previous release." if "not newer" in problem else ""
+            raise Failure("download", problem, hint)
+        return manifest, self.promote(manifest, staging)
+
+    # -- images, config, backup
+    def images(self, manifest: dict) -> None:
+        for name in REQUIRED:
+            component = manifest["components"][name]
+            if not component["bundled"]:
+                continue
+            image = component["image"]
+            if self.docker.run(["image", "inspect", image], check=False).returncode == 0:
+                self.say(f"      {name}: {image} (present)")
+                continue
+            self.say(f"      {name}: pulling {image}")
+            try:
+                self.docker.run(["pull", "--quiet", image], timeout=1800)
+            except (RuntimeError, subprocess.TimeoutExpired) as error:
+                raise Failure("images", f"Could not pull {image}: {error}",
+                              "Check network access to the image registry and retry.")
+
+    def check_config(self, project, paths) -> None:
+        try:
+            self.docker.compose(project, self.env_file, paths, "config", "--quiet", timeout=60)
+        except (RuntimeError, subprocess.TimeoutExpired) as error:
+            raise Failure("config", f"The new Compose release does not validate with this Node's .env: {error}",
+                          "A required setting may be missing from .env; see the release notes.")
+
+    def backup(self, project, paths, label: str) -> Path:
+        backups = self.home / "backups"
+        backups.mkdir(mode=0o700, exist_ok=True)
+        stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        path = backups / f"{label}-{stamp}.dump"
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        try:
+            with os.fdopen(fd, "wb") as f:
+                result = self.docker.compose(project, self.env_file, paths, "exec", "-T", "postgres", "sh", "-c",
+                                             'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc',
+                                             check=False, stdout=f, timeout=1800)
+            if result.returncode != 0 or path.stat().st_size == 0:
+                raise RuntimeError(_last_line(result.stderr) or "pg_dump failed")
+        except (RuntimeError, subprocess.TimeoutExpired) as error:
+            path.unlink(missing_ok=True)
+            raise Failure("backup", f"Could not back up the Node database: {error}",
+                          "The Node database must be running for a safe upgrade.")
+        return path
+
+    def volumes(self, project) -> dict:
+        names = self.docker.run(["volume", "ls", "-q", "--filter", f"label=com.docker.compose.project={project}"]).stdout.split()
+        found = {}
+        for name in names:
+            created = self.docker.run(["volume", "inspect", "-f", "{{.CreatedAt}}", name]).stdout.strip()
+            found[name] = created
+        return found
+
+    # -- apply and validate
+    def apply(self, project, paths) -> None:
+        self.docker.compose(project, self.env_file, paths, "up", "-d", "--wait", "--wait-timeout", str(WAIT_TIMEOUT),
+                            "--remove-orphans", "--no-build", "--pull", "never", timeout=WAIT_TIMEOUT + 120)
+
+    def validate(self, project, paths, version: str, before_volumes: dict) -> None:
+        after = self.volumes(project)
+        lost = [n for n, created in before_volumes.items() if after.get(n) != created]
+        if lost:
+            raise RuntimeError(f"persistent volume(s) missing or recreated: {lost}")
+        deadline = self.clock() + VALIDATE_TIMEOUT
+        problem = "not checked"
+        while True:
+            problem = self._health_problem(project, paths, version)
+            if problem is None:
+                return
+            if self.clock() >= deadline:
+                raise RuntimeError(problem)
+            self.sleep(5)
+
+    def agent_status(self, project, paths):
+        result = self.docker.compose(project, self.env_file, paths, "exec", "-T", "arknet-agent", "wget", "-qO-",
+                                     "http://127.0.0.1:8081/api/v1/status", check=False, timeout=30)
+        if result.returncode != 0:
+            return None
+        try:
+            status = json.loads(result.stdout)
+        except ValueError:
+            return None
+        return status if isinstance(status, dict) else None
+
+    def _health_problem(self, project, paths, version):
+        status = self.agent_status(project, paths)
+        if status is None:
+            return "ArkNet Agent status API is not responding"
+        if status.get("agent_healthy") is not True or status.get("database_healthy") is not True:
+            return "ArkNet Agent reports it is unhealthy"
+        if (status.get("release") or {}).get("version") != version:
+            return f"ArkNet Agent is not running release {version} (reports {(status.get('release') or {}).get('version')})"
+        if status.get("jellyfin_healthy") is not True:
+            return "ArkNet Agent reports Jellyfin unhealthy"
+        result = self.docker.compose(project, self.env_file, paths, "exec", "-T", "jellyfin", "curl", "-fsS",
+                                     "http://localhost:8096/health", check=False, timeout=30)
+        if result.returncode != 0 or "Healthy" not in (result.stdout or ""):
+            return "Jellyfin health endpoint is not Healthy"
+        return None
+
+    # -- commands
+    def attempt(self, project, version, paths, volumes) -> str | None:
+        """Apply and validate one release. Returns a failure description or None."""
+        try:
+            self.apply(project, paths)
+            self.validate(project, paths, version, volumes)
+            return None
+        except (RuntimeError, subprocess.TimeoutExpired) as error:
+            return str(error) or "Compose apply failed"
+
+    def upgrade(self, index_url=None, manifest_url=None, digest=None) -> int:
+        state = self.read_state()
+        env = parse_env(self.env_file) if self.env_file.is_file() else {}
+        allow_http = env.get("ARKNET_RELEASE_INDEX_ALLOW_HTTP") == "true"
+        index_url = index_url or env.get("ARKNET_RELEASE_INDEX_URL") or None
+        files, project = state["compose_files"], state["project"]
+
+        self.say("[1/8] Checking prerequisites")
+        current = self.prerequisites(state)
+        _, current_paths = self.release(current["version"], files)
+        self.say(f"      installed: ArkNet {current['version']} ({current['channel']})")
+
+        self.say("[2/8] Finding the target release")
+        target_ref = self.resolve(current, index_url, manifest_url, digest, allow_http)
+        if target_ref is None:
+            self.say(f"ArkNet {current['version']} is the newest release on the {current['channel']} channel. Nothing to do.")
+            return EXIT_OK
+
+        self.say("[3/8] Downloading and verifying the release")
+        target, directory = self.download(*target_ref, current, files, allow_http)
+        target_paths = [directory / f for f in files]
+        self.say(f"      target: ArkNet {target['version']} ({target['channel']})")
+
+        self.say("[4/8] Pulling required images")
+        self.images(target)
+
+        self.say("[5/8] Validating the Compose release")
+        self.check_config(project, target_paths)
+
+        self.say("[6/8] Backing up the Node database")
+        backup = self.backup(project, current_paths, f"{current['version']}-before-{target['version']}")
+        volumes = self.volumes(project)
+        self.say(f"      {backup}")
+
+        self.say(f"[7/8] Applying ArkNet {target['version']}")
+        problem = self.attempt(project, target["version"], target_paths, volumes)
+        if problem is None:
+            self.say("[8/8] Validated ArkNet Agent, database and Jellyfin; persistent volumes preserved")
+            self.write_state({**state, "release": target["version"], "previous": current["version"]})
+            self.say(f"UPGRADED: ArkNet {current['version']} -> {target['version']}. Previous release kept for 'arknet-node rollback'.")
+            return EXIT_OK
+
+        self.say(f"UPGRADE FAILED while applying ArkNet {target['version']}: {problem}")
+        self.say(f"Rolling back to ArkNet {current['version']}...")
+        rollback_problem = self.attempt(project, current["version"], current_paths, volumes)
+        if rollback_problem is None:
+            self.say(f"ROLLED BACK: ArkNet {current['version']} is running again and validated. Persistent volumes were preserved.")
+            self.say(f"Database backup from before the attempt: {backup}")
+            return EXIT_ROLLED_BACK
+        self.say(f"ATTENTION: rollback to ArkNet {current['version']} also failed: {rollback_problem}")
+        self.say(f"Volumes were not removed. Database backup: {backup}")
+        self.say("See docs/node-upgrade.md 'Manual recovery' before retrying.")
+        return EXIT_ATTENTION
+
+    def install(self, index_url=None, channel="stable", manifest_url=None, digest=None) -> int:
+        """Fresh install of a published release, or, when already installed,
+        re-start and re-validate the installed release (safe to re-run)."""
+        env = parse_env(self.env_file) if self.env_file.is_file() else {}
+        allow_http = env.get("ARKNET_RELEASE_INDEX_ALLOW_HTTP") == "true"
+        index_url = index_url or env.get("ARKNET_RELEASE_INDEX_URL") or None
+        if self.state_file.exists():
+            state = self.read_state()
+            self.say(f"[1/3] ArkNet {state['release']} is already installed; checking prerequisites")
+            current = self.prerequisites(state)
+            _, paths = self.release(current["version"], state["compose_files"])
+            self.say("[2/3] Checking images")
+            self.images(current)
+            self.say(f"[3/3] Starting and validating ArkNet {current['version']}")
+            problem = self.attempt(state["project"], current["version"], paths, self.volumes(state["project"]))
+            if problem:
+                return self.start_failed(state["project"], paths, problem)
+            self.say(f"ArkNet {current['version']} is installed and running. Use 'arknet-node upgrade' for newer releases.")
+            return self.report_node(state["project"], paths, env)
+
+        if channel not in ("stable", "development"):
+            raise Failure("resolve", "Channel must be stable or development.")
+        self.say("[1/6] Checking prerequisites")
+        self.host_prerequisites()
+        self.say(f"[2/6] Finding the newest {channel} release")
+        if manifest_url:
+            if not digest or not SHA256.match(digest):
+                raise Failure("resolve", "--manifest requires --sha256 with the published manifest digest.")
+        else:
+            if not index_url:
+                raise Failure("resolve", "No release index URL was given.", "Pass --index URL (the installer does this).")
+            try:
+                index = validate_index(fetch(index_url, allow_http, MAX_DOCUMENT))
+            except ValueError as error:
+                raise Failure("resolve", f"Release index unavailable or invalid: {error}",
+                              "Check this machine's internet access and the release URL, then re-run.")
+            entry = index["channels"].get(channel)
+            if not entry:
+                raise Failure("resolve", f"No {channel} ArkNet release is published yet.")
+            manifest_url, digest = urllib.parse.urljoin(index_url, entry["manifest_url"]), entry["manifest_sha256"]
+        self.say("[3/6] Downloading and verifying the release")
+        manifest, staging = self.fetch_release(manifest_url, digest, allow_http)
+        if manifest["channel"] != channel or "compose.yaml" not in {f["path"] for f in manifest["compose"]["files"]}:
+            shutil.rmtree(staging, ignore_errors=True)
+            raise Failure("download", f"Release {manifest['version']} is not a {channel} Node release with compose.yaml.")
+        directory = self.promote(manifest, staging)
+        self.check_readable(directory / "release.json")
+        project, files = manifest["compose"]["project"], ["compose.yaml"]
+        paths = [directory / f for f in files]
+        self.say(f"      ArkNet {manifest['version']} ({manifest['channel']})")
+        self.say("[4/6] Pulling required images")
+        self.images(manifest)
+        self.say("[5/6] Validating the Compose release")
+        self.check_config(project, paths)
+        existing = self.volumes(project)
+        if existing:
+            self.say(f"      Reusing existing ArkNet data volumes: {', '.join(sorted(existing))}")
+        self.say(f"[6/6] Starting and validating ArkNet {manifest['version']}")
+        problem = self.attempt(project, manifest["version"], paths, existing)
+        if problem:
+            return self.start_failed(project, paths, problem)
+        self.write_state({"schema": STATE_SCHEMA, "release": manifest["version"], "previous": None,
+                          "project": project, "compose_files": files})
+        self.say(f"INSTALLED: ArkNet {manifest['version']} ({manifest['channel']}) is running.")
+        return self.report_node(project, paths, env)
+
+    def start_failed(self, project, paths, problem) -> int:
+        self.say(f"INSTALL FAILED while starting the Node: {problem}")
+        self.say("  Persistent data volumes were kept. Inspect the failing service with:")
+        self.say(f"    docker compose -p {project} --env-file {self.env_file} -f {paths[0]} logs --tail 50")
+        self.say("  Fix the reported cause and re-run the installer; re-running is safe.")
+        return EXIT_ATTENTION
+
+    NODE_STATES = {
+        "PROVISIONING": "not enrolled: no ArkNet Core is configured or Core has not answered yet",
+        "ENROLLMENT_PENDING": "enrollment requested; an ArkNet Core administrator must approve this Node",
+        "CONNECTED": "approved and connected to ArkNet Core",
+    }
+
+    def report_node(self, project, paths, env) -> int:
+        """Wait briefly for enrollment and tell the operator what happens next."""
+        core = env.get("ARKNET_CORE_URL", "")
+        status = self.agent_status(project, paths) or {}
+        deadline = self.clock() + 60
+        while core and status.get("state") == "PROVISIONING" and self.clock() < deadline:
+            self.sleep(3)
+            status = self.agent_status(project, paths) or status
+        state = status.get("state", "UNKNOWN")
+        self.say(f"Node ID: {status.get('node_id', 'unknown')}")
+        self.say(f"Node state: {state} ({self.NODE_STATES.get(state, 'see the setup UI')})")
+        if core and state == "PROVISIONING":
+            self.say(f"  WARNING: ArkNet Core at {core} has not accepted the enrollment request yet.")
+            self.say("  Check ARKNET_CORE_URL in .env and this machine's network access; the Agent keeps retrying.")
+        port = env.get("ARKNET_UI_PORT") or "5174"
+        self.say(f"Setup UI: http://127.0.0.1:{port} (local to this machine only).")
+        self.say(f"  From another computer: ssh -L {port}:127.0.0.1:{port} <user>@<this-machine>, then open http://localhost:{port}")
+        return EXIT_OK
+
+    def rollback(self) -> int:
+        state = self.read_state()
+        if not state["previous"]:
+            raise Failure("rollback", "No previous release is recorded; nothing to roll back to.")
+        files, project = state["compose_files"], state["project"]
+        self.say("[1/4] Checking prerequisites")
+        current = self.prerequisites(state)
+        _, current_paths = self.release(current["version"], files)
+        previous, previous_paths = self.release(state["previous"], files)
+        self.say("[2/4] Checking images")
+        self.images(previous)
+        self.check_config(project, previous_paths)
+        self.say("[3/4] Backing up the Node database")
+        backup = self.backup(project, current_paths, f"{current['version']}-before-rollback")
+        volumes = self.volumes(project)
+        self.say(f"[4/4] Re-applying ArkNet {previous['version']}")
+        problem = self.attempt(project, previous["version"], previous_paths, volumes)
+        if problem is None:
+            self.write_state({**state, "release": previous["version"], "previous": current["version"]})
+            self.say(f"ROLLED BACK: ArkNet {current['version']} -> {previous['version']}, validated. Backup: {backup}")
+            return EXIT_OK
+        self.say(f"ROLLBACK FAILED: {problem}. Re-applying ArkNet {current['version']}...")
+        if self.attempt(project, current["version"], current_paths, volumes) is None:
+            self.say(f"ArkNet {current['version']} is running again. Backup: {backup}")
+            return EXIT_ROLLED_BACK
+        self.say(f"ATTENTION: neither release validated. Volumes were not removed. Backup: {backup}")
+        return EXIT_ATTENTION
+
+    def status(self) -> int:
+        state = self.read_state()
+        manifest, _ = self.release(state["release"], state["compose_files"])
+        self.say(f"ArkNet {manifest['version']} ({manifest['channel']} channel), Compose project {state['project']}")
+        self.say(f"Previous release: {state['previous'] or 'none'}")
+        for name in REQUIRED:
+            c = manifest["components"][name]
+            self.say(f"  {name:16} {c['version']:12} {c['image'] if c['bundled'] else '(host-provided)'}")
+        return EXIT_OK
+
+
+@contextlib.contextmanager
+def locked(home: Path):
+    home.mkdir(parents=True, exist_ok=True)
+    with open(home / ".arknet-node.lock", "w") as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise Failure("prerequisites", "Another arknet-node operation is running.")
+        yield
+
+
+def main(argv=None, docker=None, out=print) -> int:
+    parser = argparse.ArgumentParser(prog="arknet-node", description="ArkNet Node release management")
+    parser.add_argument("--home", default=os.environ.get("ARKNET_HOME", "/opt/arknet"), type=Path)
+    sub = parser.add_subparsers(dest="command", required=True)
+    sub.add_parser("status")
+    up = sub.add_parser("upgrade")
+    up.add_argument("--index")
+    up.add_argument("--manifest")
+    up.add_argument("--sha256")
+    sub.add_parser("rollback")
+    inst = sub.add_parser("install")
+    inst.add_argument("--index")
+    inst.add_argument("--channel", default="stable", choices=["stable", "development"])
+    inst.add_argument("--manifest")
+    inst.add_argument("--sha256")
+    args = parser.parse_args(argv)
+    node = Node(args.home, docker or Docker(), out=out)
+    try:
+        with locked(args.home):
+            if args.command == "status":
+                return node.status()
+            if args.command == "rollback":
+                return node.rollback()
+            if args.command == "install":
+                return node.install(args.index, args.channel, args.manifest, args.sha256)
+            return node.upgrade(args.index, args.manifest, args.sha256)
+    except Failure as failure:
+        node.say(f"{args.command.upper()} FAILED at {failure.step}: {failure.message}")
+        if failure.hint:
+            node.say(f"  {failure.hint}")
+        node.say("  The running Node was not changed.")
+        return EXIT_ABORTED
+
+
+if __name__ == "__main__":
+    sys.exit(main())

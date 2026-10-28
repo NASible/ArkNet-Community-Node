@@ -1,0 +1,23 @@
+[
+  {
+    "node": "a",
+    "connected_dashboard": true,
+    "release_manifest_visible": true,
+    "media_text": "ArkNet\nCOMMUNITY NODE\nDashboard\nMedia\nUsers\nDiagnostics\nSettings\n\nLOCAL MANAGEMENT\n\nMedia\n\nMake media available with one action. Progress and controls appear below.\n\nSelections queue only; transfers require an explicit start, which this action sends after selection succeeds.\n\nALLOCATION\n20 GiB\nRESERVED\n1.74 MiB\n\nThe Agent enforces the storage allocation. Configure a positive allocation in GiB or -1 for unlimited before selecting media.\n\nNodeNet generated playback test\n\n1.74 MiB\n\nAvailable\n\nTransfers\nTransfer \u2014 NodeNet generated playback test\n\nCOMPLETED\n\n1820330 / 1820330 bytes (100%)\n\nVerified transfer complete \u2014 media catalog reports available locally.",
+    "style_sheets": 1
+  },
+  {
+    "node": "b",
+    "connected_dashboard": true,
+    "release_manifest_visible": true,
+    "media_text": "ArkNet\nCOMMUNITY NODE\nDashboard\nMedia\nUsers\nDiagnostics\nSettings\n\nLOCAL MANAGEMENT\n\nMedia\n\nMake media available with one action. Progress and controls appear below.\n\nSelections queue only; transfers require an explicit start, which this action sends after selection succeeds.\n\nALLOCATION\n20 GiB\nRESERVED\n1.74 MiB\n\nThe Agent enforces the storage allocation. Configure a positive allocation in GiB or -1 for unlimited before selecting media.\n\nNodeNet generated playback test\n\n1.74 MiB\n\nAvailable\n\nTransfers\nTransfer \u2014 NodeNet generated playback test\n\nCOMPLETED\n\n1820330 / 1820330 bytes (100%)\n\nVerified transfer complete \u2014 media catalog reports available locally.",
+    "style_sheets": 1
+  },
+  {
+    "node": "c",
+    "connected_dashboard": true,
+    "release_manifest_visible": true,
+    "media_text": "ArkNet\nCOMMUNITY NODE\nDashboard\nMedia\nUsers\nDiagnostics\nSettings\n\nLOCAL MANAGEMENT\n\nMedia\n\nMake media available with one action. Progress and controls appear below.\n\nSelections queue only; transfers require an explicit start, which this action sends after selection succeeds.\n\nALLOCATION\n20 GiB\nRESERVED\n1.74 MiB\n\nThe Agent enforces the storage allocation. Configure a positive allocation in GiB or -1 for unlimited before selecting media.\n\nNodeNet generated playback test\n\n1.74 MiB\n\nAvailable\n\nTransfers\nTransfer \u2014 NodeNet generated playback test\n\nCOMPLETED\n\n1820330 / 1820330 bytes (100%)\n\nVerified transfer complete \u2014 media catalog reports available locally.",
+    "style_sheets": 1
+  }
+]

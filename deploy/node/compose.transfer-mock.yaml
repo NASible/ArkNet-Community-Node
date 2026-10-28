@@ -1,0 +1,39 @@
+# Explicit development opt-in. Combine with compose.yaml; this is NOT BitTorrent.
+services:
+  arknet-agent:
+    environment:
+      ARKNET_TRANSFER_URL: http://arknet-transfer:8084
+      ARKNET_TRANSFER_TOKEN: ${ARKNET_TRANSFER_TOKEN:?Set a unique local transfer-service token of at least 32 characters}
+    networks:
+      - transfer-control
+    depends_on:
+      arknet-transfer:
+        condition: service_healthy
+
+  arknet-transfer:
+    image: arknet-transfer:0.0.1-dev
+    build:
+      context: ../../transfer
+    environment:
+      ARKNET_TRANSFER_ADDR: 0.0.0.0:8084
+      ARKNET_TRANSFER_TOKEN: ${ARKNET_TRANSFER_TOKEN:?Set a unique local transfer-service token of at least 32 characters}
+      ARKNET_TRANSFER_MOCK_DURATION: ${ARKNET_TRANSFER_MOCK_DURATION:-10s}
+    networks:
+      - transfer-control
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8084/health"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+      start_period: 5s
+    stop_grace_period: 15s
+
+networks:
+  transfer-control:
+    driver: bridge
+    internal: true

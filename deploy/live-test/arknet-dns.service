@@ -1,0 +1,22 @@
+[Unit]
+Description=NodeNet private project DNS (tailnet only)
+Wants=network-online.target
+After=network-online.target tailscaled.service
+
+[Service]
+Type=simple
+User=nobody
+Group=nogroup
+RuntimeDirectory=arknet-dns
+ExecStart=/usr/sbin/dnsmasq --keep-in-foreground --conf-file=/etc/arknet/dnsmasq.conf --pid-file=/run/arknet-dns/dnsmasq.pid --user=nobody --group=nogroup
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+
+[Install]
+WantedBy=multi-user.target

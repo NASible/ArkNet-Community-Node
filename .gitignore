@@ -1,0 +1,79 @@
+# Local environment and secrets (retain safe example templates)
+/proxmox_creds
+.env
+.env.*
+*.env
+!.env.example
+!.env.*.example
+!*.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa
+id_dsa
+id_ecdsa
+id_ed25519
+
+# Generated integration-test/runtime state must never enter a source archive
+/.arknet-*
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+
+# Local service state and media; scope to deployment directories
+/deploy/**/data/
+/deploy/**/media/
+/deploy/**/secrets/
+
+# Media, swarm state and backups are runtime data, never source
+*.mp4
+*.mkv
+*.torrent
+*.fastresume
+*.dump
+*.age
+
+# Go build and test outputs (including `go build` binaries at module roots)
+/bin/
+/core/bin/
+/node-agent/bin/
+/transfer/bin/
+/tracker/bin/
+/core/core
+/node-agent/node-agent
+/tracker/tracker
+/transfer/transfer
+
+# Python caches and local scanner state
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.cache_ggshield
+*.test
+*.out
+coverage/
+coverage.out
+
+# JavaScript / TypeScript generated dependencies and output
+node_modules/
+dist/
+build/
+*.tsbuildinfo
+
+# Logs, caches, temporary files
+*.log
+.cache/
+tmp/
+*.tmp
+
+# Editor and OS files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db

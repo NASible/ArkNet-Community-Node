@@ -1,0 +1,58 @@
+name: arknet-core-dev
+
+services:
+  postgres:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-arknet_core}
+      POSTGRES_USER: ${POSTGRES_USER:-arknet}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in your local .env}
+    volumes:
+      - postgres-data:/var/lib/postgresql
+    networks:
+      - core
+    healthcheck:
+      test: ["CMD-SHELL", 'pg_isready -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"']
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
+
+  arknet-core:
+    image: arknet-core:0.0.1-dev
+    build:
+      context: ../../core
+    environment:
+      ARKNET_CORE_ADDR: :8080
+      ARKNET_CORE_LOG_LEVEL: ${ARKNET_CORE_LOG_LEVEL:-INFO}
+      ARKNET_CORE_DEV_ADMIN_ENABLED: ${ARKNET_CORE_DEV_ADMIN_ENABLED:-false}
+      ARKNET_CORE_DEV_ADMIN_TOKEN: ${ARKNET_CORE_DEV_ADMIN_TOKEN:-}
+      ARKNET_CORE_SHUTDOWN_TIMEOUT: 10s
+      # Core consumes these settings and migrates automatically at startup.
+      PGHOST: postgres
+      PGSSLMODE: ${PGSSLMODE:-disable}
+      PGPORT: "5432"
+      PGDATABASE: ${POSTGRES_DB:-arknet_core}
+      PGUSER: ${POSTGRES_USER:-arknet}
+      PGPASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in your local .env}
+    ports:
+      - "127.0.0.1:${ARKNET_CORE_PORT:-8083}:8080"
+    networks:
+      - core
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
+    stop_grace_period: 15s
+
+volumes:
+  postgres-data:
+
+networks:
+  core:
+    driver: bridge

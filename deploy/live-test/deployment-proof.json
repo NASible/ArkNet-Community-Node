@@ -1,0 +1,66 @@
+{
+  "verified_at": "2026-10-28T02:44:21.506363+00:00",
+  "machines": {
+    "nodenet-core": {
+      "all_containers_healthy": true,
+      "image_ids": {
+        "core": "sha256:234d7c2ff0bb74591dc587b500bebaba45405372634fe1ce1f3599582dcc8962",
+        "tracker": "sha256:5e352673cf90196cda8bf338b9beedfb6df4c7a9d4334f85f27f6226f3bd32b2"
+      },
+      "running_container_count": 3,
+      "ufw_authoritative": true
+    },
+    "nodenet-node-a": {
+      "all_containers_healthy": true,
+      "state": "CONNECTED",
+      "peer_serving_enabled": false,
+      "release_manifest_available": true,
+      "image_ids": {
+        "agent": "sha256:7b41d75ea37ae31ad1e9e4892265fcbaeef0ce34dbeb03f36520afeba7913c3c",
+        "transfer": "sha256:5c6b18f0fb8878cbdcd4f159b50a0e02560d412805ac2162c077a0bc28f3c48d",
+        "ui": "sha256:ca78a780418a013cc0de8a1e558f6ca4900ba889b0d8dab6c6db5e491a1d5ecf"
+      },
+      "running_container_count": 5,
+      "ufw_authoritative": true
+    },
+    "nodenet-node-b": {
+      "all_containers_healthy": true,
+      "state": "CONNECTED",
+      "peer_serving_enabled": false,
+      "release_manifest_available": true,
+      "image_ids": {
+        "agent": "sha256:7b41d75ea37ae31ad1e9e4892265fcbaeef0ce34dbeb03f36520afeba7913c3c",
+        "transfer": "sha256:5c6b18f0fb8878cbdcd4f159b50a0e02560d412805ac2162c077a0bc28f3c48d",
+        "ui": "sha256:ca78a780418a013cc0de8a1e558f6ca4900ba889b0d8dab6c6db5e491a1d5ecf"
+      },
+      "running_container_count": 5,
+      "ufw_authoritative": true
+    },
+    "nodenet-node-c": {
+      "all_containers_healthy": true,
+      "state": "CONNECTED",
+      "peer_serving_enabled": false,
+      "release_manifest_available": true,
+      "image_ids": {
+        "agent": "sha256:7b41d75ea37ae31ad1e9e4892265fcbaeef0ce34dbeb03f36520afeba7913c3c",
+        "transfer": "sha256:5c6b18f0fb8878cbdcd4f159b50a0e02560d412805ac2162c077a0bc28f3c48d",
+        "ui": "sha256:ca78a780418a013cc0de8a1e558f6ca4900ba889b0d8dab6c6db5e491a1d5ecf"
+      },
+      "running_container_count": 5,
+      "ufw_authoritative": true
+    }
+  },
+  "boundaries": {
+    "nodenet-core_private_ports_blocked_on_lan": true,
+    "nodenet-node-a_private_ports_blocked_on_lan": true,
+    "nodenet-node-a_lan_jellyfin_only": true,
+    "nodenet-node-b_private_ports_blocked_on_lan": true,
+    "nodenet-node-b_lan_jellyfin_only": true,
+    "nodenet-node-c_private_ports_blocked_on_lan": true,
+    "nodenet-node-c_lan_jellyfin_only": true,
+    "node_a_denied_cross_machine_ssh": true,
+    "node_a_denied_node_b_management": true,
+    "node_a_denied_core_administration": true,
+    "node_a_can_reach_user_facing_jellyfin_b": true
+  }
+}

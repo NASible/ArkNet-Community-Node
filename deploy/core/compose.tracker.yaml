@@ -1,0 +1,48 @@
+# Explicit private-tracker overlay. Core issues grants; tracker receives only
+# the corresponding public verification key and has no database network.
+services:
+  arknet-core:
+    environment:
+      ARKNET_TRACKER_ANNOUNCE_URL: ${ARKNET_TRACKER_ANNOUNCE_URL:?Set the externally reachable HTTPS tracker origin}
+      ARKNET_TRACKER_SIGNING_KEY_FILE: /run/secrets/arknet-tracker-signing-key
+    volumes:
+      - type: bind
+        source: ${ARKNET_TRACKER_SIGNING_KEY_FILE:?Set the host path to the Core tracker-signing key}
+        target: /run/secrets/arknet-tracker-signing-key
+        read_only: true
+
+  arknet-tracker:
+    image: arknet-tracker:0.0.1-dev
+    build:
+      context: ../../tracker
+    environment:
+      ARKNET_TRACKER_BIND_ADDR: 0.0.0.0:6969
+      ARKNET_TRACKER_VERIFY_KEY_FILE: /run/secrets/arknet-tracker-verify-key
+      ARKNET_TRACKER_ANNOUNCE_INTERVAL: ${ARKNET_TRACKER_ANNOUNCE_INTERVAL:-30m}
+      ARKNET_TRACKER_PEER_TTL: ${ARKNET_TRACKER_PEER_TTL:-45m}
+      ARKNET_TRACKER_SHUTDOWN_TIMEOUT: 10s
+    volumes:
+      - type: bind
+        source: ${ARKNET_TRACKER_VERIFY_KEY_FILE:?Set the host path to the tracker verification key}
+        target: /run/secrets/arknet-tracker-verify-key
+        read_only: true
+    ports:
+      - "127.0.0.1:${ARKNET_TRACKER_PORT:-6969}:6969"
+    networks:
+      - tracker-edge
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:6969/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
+    stop_grace_period: 15s
+
+networks:
+  tracker-edge:
+    driver: bridge

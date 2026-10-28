@@ -1,0 +1,28 @@
+{
+  "object_id": "media_a681007b95438cd4aa4ea062bc8366e9fe3b13fc82aec9d95db74c9eafb45426",
+  "bytes": 1820330,
+  "sha256": "71c381d4fc113de19c649a8eda84300c63ceefe8b64b6607280a7d78de130379",
+  "info_hash_v2": "092dc89827116bae0ba62b8ecffd8ddf64ae921054e3e0c1c1fb2e06a82b210b",
+  "generated_test_media": true,
+  "nodes": {
+    "nodenet-node-a": {
+      "available": true,
+      "finalized_sha256_matches": true,
+      "jellyfin_indexed": true,
+      "direct_stream_sha256_matches": true
+    },
+    "nodenet-node-b": {
+      "available": true,
+      "finalized_sha256_matches": true,
+      "jellyfin_indexed": true,
+      "direct_stream_sha256_matches": true
+    },
+    "nodenet-node-c": {
+      "available": true,
+      "finalized_sha256_matches": true,
+      "jellyfin_indexed": true,
+      "direct_stream_sha256_matches": true
+    }
+  },
+  "start_trigger": "operator transfer/start action"
+}

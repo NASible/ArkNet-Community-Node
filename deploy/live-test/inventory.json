@@ -1,0 +1,13 @@
+{
+  "purpose": "private-live-test-not-production-ready",
+  "domain": "nodenet.arknet.media",
+  "proxmox_node": "pve2",
+  "storage": "ceph-docker",
+  "headscale": "https://headscale.arknet.media",
+  "machines": [
+    {"vmid":108,"hostname":"nodenet-core","role":"core","owner":"user-a","lan_ip":"192.168.0.144","tailscale_ip":"100.64.0.21","cpu":2,"memory_mib":4096,"system_disk_gib":32},
+    {"vmid":109,"hostname":"nodenet-node-a","role":"node","owner":"user-a","lan_ip":"192.168.0.86","tailscale_ip":"100.64.0.22","cpu":2,"memory_mib":4096,"system_disk_gib":32,"media_disk_gib":20},
+    {"vmid":110,"hostname":"nodenet-node-b","role":"node","owner":"user-b","lan_ip":"192.168.0.113","tailscale_ip":"100.64.0.23","cpu":2,"memory_mib":4096,"system_disk_gib":32,"media_disk_gib":20},
+    {"vmid":111,"hostname":"nodenet-node-c","role":"node","owner":"user-c","lan_ip":"192.168.0.212","tailscale_ip":"100.64.0.24","cpu":2,"memory_mib":4096,"system_disk_gib":32,"media_disk_gib":20}
+  ]
+}

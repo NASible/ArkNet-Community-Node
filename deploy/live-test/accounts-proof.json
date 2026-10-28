@@ -1,0 +1,17 @@
+{
+  "user-a": {
+    "core_login_verified": true,
+    "pairwise_node_login_verified": true,
+    "online_core_authorization": true
+  },
+  "user-b": {
+    "core_login_verified": true,
+    "pairwise_node_login_verified": true,
+    "online_core_authorization": true
+  },
+  "user-c": {
+    "core_login_verified": true,
+    "pairwise_node_login_verified": true,
+    "online_core_authorization": true
+  }
+}

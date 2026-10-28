@@ -1,0 +1,12 @@
+# Explicit Core web-seed overlay. Combine with compose.tracker.yaml because
+# web-seed authorization uses the same dedicated short-lived swarm token.
+services:
+  arknet-core:
+    environment:
+      ARKNET_CORE_WEB_SEED_ORIGIN: ${ARKNET_CORE_WEB_SEED_ORIGIN:?Set the externally reachable HTTPS Core origin}
+      ARKNET_CORE_WEB_SEED_ROOT: /srv/arknet/web-seed
+    volumes:
+      - type: bind
+        source: ${ARKNET_CORE_WEB_SEED_SOURCE:?Set the host directory containing approved opaque-ID files}
+        target: /srv/arknet/web-seed
+        read_only: true

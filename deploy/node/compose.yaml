@@ -1,0 +1,122 @@
+name: arknet-node-dev
+
+services:
+  postgres:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-arknet_node}
+      POSTGRES_USER: ${POSTGRES_USER:-arknet}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in your local .env}
+    volumes:
+      - postgres-data:/var/lib/postgresql
+    networks:
+      - node
+    healthcheck:
+      test: ["CMD-SHELL", 'pg_isready -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"']
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
+
+  arknet-agent:
+    image: arknet-agent:0.0.1-dev
+    build:
+      context: ../../node-agent
+    environment:
+      ARKNET_AGENT_ADDR: :8081
+      ARKNET_AGENT_LOG_LEVEL: ${ARKNET_AGENT_LOG_LEVEL:-INFO}
+      ARKNET_AGENT_SHUTDOWN_TIMEOUT: 10s
+      # Empty by default: outbound enrollment is opt-in.
+      ARKNET_CORE_URL: ${ARKNET_CORE_URL:-}
+      ARKNET_CORE_ALLOW_HTTP: ${ARKNET_CORE_ALLOW_HTTP:-false}
+      ARKNET_HEARTBEAT_INTERVAL: ${ARKNET_HEARTBEAT_INTERVAL:-30s}
+      # Whole GiB allocation: 0 (unset default) disables new selections; -1 is unlimited.
+      ARKNET_MEDIA_STORAGE_ALLOCATION_GIB: ${ARKNET_MEDIA_STORAGE_ALLOCATION_GIB:-}
+      # Legacy byte setting is fallback-only; do not set both allocation variables.
+      ARKNET_MEDIA_STORAGE_ALLOCATION_BYTES: ${ARKNET_MEDIA_STORAGE_ALLOCATION_BYTES:-}
+      # Agent initializes and reads persistent local state at startup.
+      PGHOST: postgres
+      PGSSLMODE: ${PGSSLMODE:-disable}
+      PGPORT: "5432"
+      PGDATABASE: ${POSTGRES_DB:-arknet_node}
+      PGUSER: ${POSTGRES_USER:-arknet}
+      PGPASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in your local .env}
+      # Agent polls Jellyfin health via Docker-internal hostname.
+      JELLYFIN_API_URL: http://jellyfin:8096
+      # Whole-stack release manifest shipped beside this Compose file.
+      ARKNET_RELEASE_MANIFEST: /etc/arknet/release.json
+      # Read-only update discovery; empty disables it. Nothing is installed.
+      ARKNET_RELEASE_INDEX_URL: ${ARKNET_RELEASE_INDEX_URL:-}
+      ARKNET_RELEASE_INDEX_ALLOW_HTTP: ${ARKNET_RELEASE_INDEX_ALLOW_HTTP:-false}
+    volumes:
+      - ./release.json:/etc/arknet/release.json:ro
+    ports:
+      - "127.0.0.1:${ARKNET_AGENT_PORT:-8082}:8081"
+    networks:
+      - node
+      - media-services
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8081/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
+    stop_grace_period: 15s
+
+  arknet-ui:
+    image: arknet-ui:0.0.1-dev
+    build:
+      context: ../../node-ui
+    environment:
+      ARKNET_AGENT_URL: http://arknet-agent:8081
+    ports:
+      - "127.0.0.1:${ARKNET_UI_PORT:-5174}:5173"
+    networks:
+      - node
+    depends_on:
+      arknet-agent:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:5173/').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
+
+  jellyfin:
+    # Pinned by the release manifest; never a floating tag.
+    image: jellyfin/jellyfin:12.2@sha256:357724bf0ae27a672c7cbaa899db2d9abeb13dbd8657ccce750258a4c059d037
+    environment:
+      - TZ=${TZ:-UTC}
+    volumes:
+      - appdata:/config
+      - jellyfin-cache:/cache
+      - media:/srv/arknet/media:ro
+    ports:
+      - "${JELLYFIN_BIND:-127.0.0.1:8096}:8096"
+    networks:
+      - media-services
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl --noproxy 'localhost' -Lk -fsS \"$${HEALTHCHECK_URL}\" || exit 1"]
+      interval: 30s
+      timeout: 30s
+      retries: 3
+      start_period: 10s
+    stop_grace_period: 30s
+
+volumes:
+  postgres-data:
+  appdata:
+  jellyfin-cache:
+  media:
+  transfers:
+
+networks:
+  node:
+    driver: bridge
+  media-services:
+    driver: bridge
