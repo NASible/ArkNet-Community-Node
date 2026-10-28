@@ -174,7 +174,7 @@ The acceptance criteria for each ID are tracked in
 | [ARKSEC-006](security-follow-ups.md#arksec-006) | **Open.** Active transfers on a revoked Node are not forcibly terminated. A revoked Node cannot get new grants, and the cooperative reconciler unseeds when not CONNECTED. Active downloads are not cancelled, and established peer sessions are not cut. | 16 does not test byte-counter termination. |
 | [ARKSEC-007](security-follow-ups.md#arksec-007) | **Open.** There is no supported TLS ingress that redacts bearer URLs. The tests use explicit HTTP allowances. | — |
 | [ARKSEC-008](security-follow-ups.md#arksec-008) | **Open.** Login and enrollment have no abuse controls, and the unsigned enrollment compatibility path still exists. | — |
-| [ARKSEC-009](security-follow-ups.md#arksec-009) | **Open.** Removed local artifacts still need operator-confirmed credential rotation. | — |
+| [ARKSEC-009](security-follow-ups.md#arksec-009) | **Open.** Removed local artifacts still need operator-confirmed credential rotation. Addressed for the live-test group only by Prompt 44B (after this report's run). | — |
 
 Other limitations, not security items:
 
