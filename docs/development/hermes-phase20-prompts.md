@@ -36,7 +36,7 @@ prompt that depends on an undecided item must stop and ask, not assume.
 | ID | Decision | Recommended default | Needed by |
 | --- | --- | --- | --- |
 | D1 | Where automated checks run | A local one-command gate (`scripts/check-all.sh`), plus a self-hosted runner later. Hosted CI cannot run the Lima VM or the Docker-heavy E2E reliably. | 44A |
-| D2 | How Node operators authenticate | Node-local operator accounts that work offline, with passkey or password plus TOTP. Optional OIDC (for example Authentik) only as an add-on for operators who run an IdP. Community Nodes must not depend on one person's IdP. | 45 |
+| D2 | How Node operators authenticate | **Confirmed 2026-10-27:** Node-local operator accounts that work offline, password plus TOTP first (passkeys later), one operator role. Optional OIDC (for example Authentik) only as an add-on for operators who run an IdP. Community Nodes must not depend on one person's IdP. Details and the other Prompt 45 answers: [operator authentication decisions](../node-operator-authentication.md#decisions). | 45 |
 | D3 | How long global users can log in offline | Bounded: at most 30 days since the last online verification. Core may set a shorter limit per Node or per user. | 46 |
 | D4 | First login for a global user on a Node | Redirect to Core, which requires Core to be reachable once per Node per offline window. | 46 |
 | D5 | Who operates the private relay | Decided by the 48 design spike, not up front. | 48 |
@@ -165,6 +165,9 @@ Task:
    storage beyond the session cookie.
 4. Update `install.sh`, the upgrade path and the docs so existing Nodes get
    a bootstrap code on upgrade.
+5. Ship the self-signed HTTPS management listener from the design's
+   "LAN HTTPS listener" section. `install.sh` and the upgrade path generate the
+   Node's certificate and print its SHA-256 fingerprint next to the setup code.
 
 Acceptance criteria:
 
@@ -173,7 +176,26 @@ Acceptance criteria:
 - The full E2E and upgrade checks pass with the harness logging in as an
   operator. Item 20 gains a check that an unauthenticated caller on Node B's
   management address is denied.
+- A browser-level test signs in over the HTTPS listener and confirms that the
+  plain-HTTP listener is reachable only on loopback.
 - Close ARKSEC-002 in `docs/security-follow-ups.md`, citing the run.
+
+## Prompt 45C — Separate Member Listener
+
+Context: decision Q6 in `docs/node-operator-authentication.md`. Member login
+and session routes share the Agent listener with the management plane.
+
+Task: serve the `public` and `member` routes from the permission matrix on
+their own listener and port, and keep the management listener loopback-only
+except for the HTTPS listener from 45B. Update compose, `install.sh`, the
+upgrade path, the live-test ingress and the docs.
+
+Acceptance criteria:
+
+- Every operator route answers 404 on the member listener, and every member
+  route answers 404 on the management listener, using a test generated from
+  the registered routes.
+- The full E2E and upgrade checks pass.
 
 ---
 

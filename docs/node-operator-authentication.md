@@ -4,10 +4,11 @@ Status: **design, Prompt 45.** Nothing here is implemented yet. Prompt 45A
 builds the accounts, bootstrap, sessions and recovery; Prompt 45B enforces the
 permission matrix and closes [ARKSEC-002](security-follow-ups.md#arksec-002).
 
-This design assumes decision **D2** from the
-[Phase 20 prompt pack](development/hermes-phase20-prompts.md): Node-local operator
-accounts that work offline, with OIDC only as an optional add-on. D2 is still the
-recommended default and has not been confirmed. It is open question Q1 below.
+This design follows decision **D2** from the
+[Phase 20 prompt pack](development/hermes-phase20-prompts.md), confirmed by the
+user on 2026-10-27: Node-local operator accounts that work offline, with OIDC
+only as an optional add-on. All open design questions were answered the same day;
+see [Decisions](#decisions).
 
 ## Problem
 
@@ -41,9 +42,9 @@ Goals:
 
 Non-goals for 45A/45B:
 
-- multiple roles beyond a single operator role (see Q4);
+- multiple roles beyond a single operator role (decision Q4);
 - OIDC sign-in (an add-on, see [OIDC add-on](#optional-oidc-add-on));
-- passkeys in the first implementation (see Q2);
+- passkeys in the first implementation (decision Q2);
 - abuse controls on *member* login, which belong to
   [ARKSEC-008](security-follow-ups.md#arksec-008);
 - protecting Jellyfin's own administrator account, which Jellyfin manages.
@@ -112,7 +113,7 @@ Passkeys (WebAuthn) are the stronger option in D2, but they need a secure
 context and a stable relying-party ID (a hostname). Many community Nodes will be
 reached by LAN IP, or over `http://localhost` through an SSH tunnel.
 Password+TOTP works in every case, so it comes first and passkeys are an
-optional second credential type later (Q2).
+optional second credential type later (decision Q2).
 
 ### TOTP secret at rest
 
@@ -173,16 +174,45 @@ one from the UI with a fresh login (see [Step-up](#step-up-re-authentication)).
 | Logout | `DELETE` of the session deletes the row and expires the cookie |
 | Revoked on | logout, password or TOTP change (all *other* sessions), disable, shell recovery (all sessions) |
 
-`Secure` cookies are accepted over HTTPS and on `http://localhost`, so both
-remote-ingress and SSH-tunnel use work. Plain HTTP on a LAN IP is deliberately
-not supported for operator sign-in (Q3). Browsers' handling of `__Host-` cookies
-on `http://localhost` must be confirmed in the 45B UI test. If one does not
-accept it, the fallback name is `arknet_operator` with the same flags.
+`Secure` cookies are accepted over HTTPS and on `http://localhost`, so the LAN
+HTTPS listener, remote ingress and SSH tunnels all work. Plain HTTP on a LAN IP
+is not supported for operator sign-in; the plain-HTTP listener stays
+loopback-only. Browsers' handling of `__Host-` cookies on `http://localhost`
+must be confirmed in the 45B UI test. If one does not accept it, the fallback
+name is `arknet_operator` with the same flags.
 
 The Agent sees the browser's origin only through the UI proxy (`/api` is proxied
 same-origin), so the cookie belongs to the UI origin. The UI keeps no operator
 data in browser storage. It learns the signed-in state from
 `GET /api/v1/operator/session`.
+
+### LAN HTTPS listener
+
+Decision Q3: every Node ships a self-signed HTTPS listener for the management UI,
+so operators on the LAN never send a password or session cookie in clear text.
+
+- **Where:** the `arknet-ui` container terminates TLS and keeps proxying `/api`
+  to the Agent over the internal `control` network. The default port is `8443`,
+  bound to all interfaces and set with `ARKNET_UI_HTTPS_BIND`. The existing
+  plain-HTTP UI port stays on `127.0.0.1` for SSH tunnels.
+- **Certificate:** `install.sh` (and the upgrade path, for existing Nodes)
+  generates a per-Node ECDSA P-256 key and a self-signed certificate valid for
+  825 days. The SANs cover the host name, `localhost` and the host's
+  non-loopback addresses at install time. The files live in the Node's state
+  directory: the key is mode 0600, readable only by the UI container, and never
+  leaves the host or reaches Core.
+- **First-use trust:** the browser warns about the self-signed certificate. So
+  `install.sh` and `arknet-node operator setup-code` print the certificate's
+  SHA-256 fingerprint next to the setup code. The operator compares it with
+  the browser's certificate details before accepting it.
+- **Rotation:** `sudo arknet-node tls renew` reissues the certificate (for
+  example after an address change) and prints the new fingerprint. A
+  certificate is never replaced silently.
+- **Not covered:** operators who already run their own reverse proxy with a
+  real certificate can keep using it. The self-signed listener is the default,
+  not a requirement.
+- **Hardening:** TLS 1.2 minimum, HSTS off (a self-signed host must not pin
+  itself), and the same security headers as the current UI.
 
 ### Login
 
@@ -232,7 +262,7 @@ Legend:
 - **operator+step-up**: an operator session authenticated in the last 10 minutes.
 
 In the first implementation every ACTIVE operator holds the single `operator`
-role (Q4). Every route registered in `node-agent` today appears below. The
+role (decision Q4). Every route registered in `node-agent` today appears below. The
 script in [Matrix check](#matrix-check) verifies this.
 
 | Route | Permission | Notes |
@@ -367,25 +397,18 @@ test). The script:
 Result on 2026-10-27, commit `d26f335`: 29 registered routes and 29 matrix rows,
 no missing or extra entries.
 
-## Open questions for the user
+## Decisions
 
-1. **Confirm D2.** Are Node-local operator accounts, with OIDC as an optional
-   add-on, the decision? 45A should not start until this is confirmed.
-2. **Passkeys.** Is password+TOTP acceptable for 45A, with passkeys as a later
-   optional credential? Or must passkeys be available from the start, which
-   requires every Node to be reached on a stable hostname?
-3. **Plain HTTP on the LAN.** Should operator sign-in refuse plain-HTTP access
-   by LAN IP, as designed, so operators use HTTPS ingress or an SSH tunnel to
-   `localhost`? Or should Nodes ship a self-signed HTTPS listener for LAN use?
-4. **Roles.** Is one `operator` role enough, or do you want a read-only role
-   (for example a co-owner who can view status and diagnostics only)?
-5. **Timeouts.** Are a 30-minute idle timeout, a 12-hour absolute lifetime and
-   a 10-minute step-up window right for how you run Nodes?
-6. **Separate member listener.** Member login routes share the Agent listener
-   with the management plane. Should a later prompt move member routes to their
-   own port, so the management port can stay loopback-only behind an SSH tunnel?
-7. **`/api/v1/status` for tooling.** Is replacing `arknet-node`'s HTTP status
-   call with a local `arknet-agent status` CLI acceptable? The alternative is a
-   minimal unauthenticated readiness field on `/health`.
-8. **Setup-code lifetime.** Is 1 hour long enough when `install.sh` prints the
-   code at the end of a fresh install?
+The user answered the design questions on 2026-10-27. 45A, 45B and 45C build on
+these answers.
+
+| # | Question | Decision |
+| --- | --- | --- |
+| Q1 | Confirm D2: Node-local operator accounts, OIDC optional | **Yes.** |
+| Q2 | Passkeys from the start? | **No.** Password plus TOTP is enough for now; passkeys may be added later as an optional credential. |
+| Q3 | Plain HTTP on the LAN | **Nodes ship a self-signed HTTPS listener.** See [LAN HTTPS listener](#lan-https-listener); built in 45B. |
+| Q4 | Roles | **One `operator` role** for now. |
+| Q5 | Timeouts (30 min idle, 12 h absolute, 10 min step-up) | **Yes.** |
+| Q6 | Separate member listener | **Yes, in a later prompt:** Prompt 45C in the [Phase 20 pack](development/hermes-phase20-prompts.md). |
+| Q7 | `arknet-agent status` CLI instead of HTTP status for `arknet-node` | **Yes.** |
+| Q8 | 1-hour setup-code lifetime | **Yes.** |
