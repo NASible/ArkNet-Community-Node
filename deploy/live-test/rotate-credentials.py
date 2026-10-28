@@ -22,10 +22,12 @@ import secrets as rng
 import shlex
 import subprocess
 import sys
+import urllib.error
 import urllib.parse
+import urllib.request
 
 from ops import HERE, MACHINES, load_secrets, save_secrets, ssh
-from private_api import request, wait
+from private_api import TLS, request, wait
 
 PENDING = HERE / 'secrets' / 'rotation-pending.json'
 ACCESS = HERE / 'secrets' / 'access.txt'
@@ -137,9 +139,24 @@ def node_login(host, member_id, password):
                    {'member_id': member_id, 'password': password}, expected=(201, 401))
 
 
+def status_of(url, method='GET', body=None, headers=None):
+    """Status code only; for endpoints (Jellyfin) whose error bodies are not JSON."""
+    data = json.dumps(body).encode() if body is not None else None
+    req = urllib.request.Request(url, data=data, method=method,
+                                 headers={'Content-Type': 'application/json', **(headers or {})})
+    try:
+        with urllib.request.urlopen(req, context=TLS, timeout=30) as response:
+            return response.status, response.read()
+    except urllib.error.HTTPError as error:
+        return error.code, b''
+
+
 def jellyfin_login(host, username, password):
-    return request(jellyfin_url(host) + '/Users/AuthenticateByName', 'POST', {'Username': username, 'Pw': password},
-                   {'Authorization': JELLYFIN_CLIENT.format(host[-1])}, expected=(200, 401))
+    status, raw = status_of(jellyfin_url(host) + '/Users/AuthenticateByName', 'POST',
+                            {'Username': username, 'Pw': password}, {'Authorization': JELLYFIN_CLIENT.format(host[-1])})
+    if status not in (200, 401):
+        raise RuntimeError(host + ': Jellyfin login returned HTTP ' + str(status))
+    return status, json.loads(raw) if status == 200 else None
 
 
 def jellyfin_auth(token):
@@ -229,7 +246,7 @@ def rotate_jellyfin(state, plan):
         assert jellyfin_login(host, username, old_password)[0] == 401, host + ': old Jellyfin password still accepted'
         old_token = plan['old']['machines'][host]['jellyfin_access_token']
         if old_token != token:
-            status, _ = request(jellyfin_url(host) + '/Users/Me', headers=jellyfin_auth(old_token), expected=(200, 401))
+            status, _ = status_of(jellyfin_url(host) + '/Users/Me', headers=jellyfin_auth(old_token))
             assert status == 401, host + ': old Jellyfin access token still accepted'
         local['jellyfin_password'], local['jellyfin_access_token'] = new_password, token
         save_secrets(state)
