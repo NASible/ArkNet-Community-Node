@@ -141,7 +141,7 @@ func TestInitializeDefaultsAndReplay(t *testing.T) {
 		t.Fatalf("replay = %+v, %v", second, err)
 	}
 	var migrationCount int
-	if err := s.db.QueryRowContext(ctx, "SELECT count(*) FROM arknet_schema_migrations").Scan(&migrationCount); err != nil || migrationCount != 10 {
+	if err := s.db.QueryRowContext(ctx, "SELECT count(*) FROM arknet_schema_migrations").Scan(&migrationCount); err != nil || migrationCount != 11 {
 		t.Fatalf("migration count = %d, %v", migrationCount, err)
 	}
 	var settings, status string

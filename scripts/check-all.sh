@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # One-command ArkNet gate.
 #
-#   scripts/check-all.sh            component gate (no long-running stacks)
+#   scripts/check-all.sh            component gate (no long-running stacks; uses a
+#                                   throwaway PostgreSQL container for store tests)
 #   scripts/check-all.sh --e2e      + Docker acceptance: MVP E2E, Node upgrade, product swarm
 #   scripts/check-all.sh --vm       + fresh-VM install check (needs Lima)
 #   --logs DIR                      keep step logs and diagnostics in DIR (default: a new temp dir)
@@ -72,6 +73,36 @@ harness_tests() {
     python3 -m unittest -v $modules
 }
 
+deploy_tests() {
+    local modules
+    modules=$(cd deploy/node && ls *_test.py | sed 's/\.py$//; s/^/deploy.node./')
+    # shellcheck disable=SC2086
+    python3 -m unittest -v $modules
+}
+
+# Go store tests skip without ARKNET_TEST_DATABASE_URL. Run them against a
+# throwaway PostgreSQL matching the shipped image, from a Go container sharing
+# its network namespace: the tests then share the database's clock, as Core and
+# the Agent do in production (Docker Desktop's VM clock can drift from the host).
+postgres_tests() {
+    local name="arknet-check-all-postgres-$$" password status=0 modcache
+    password=$(openssl rand -hex 16)
+    modcache=$(go env GOMODCACHE)
+    docker run -d --rm --name "$name" -e POSTGRES_PASSWORD="$password" postgres:18-alpine >/dev/null || return 1
+    for _ in $(seq 1 60); do
+        docker exec "$name" pg_isready -U postgres -h 127.0.0.1 >/dev/null 2>&1 && break
+        sleep 1
+    done
+    sleep 1
+    docker run --rm --network "container:$name" -e GOFLAGS=-mod=mod -e GOTOOLCHAIN=local \
+        -e ARKNET_TEST_DATABASE_URL="postgres://postgres:${password}@127.0.0.1:5432/postgres?sslmode=disable" \
+        -v "$ROOT:/src:ro" -v "$modcache:/go/pkg/mod" -w /src golang:1.26-alpine sh -c \
+        'export GOCACHE=/tmp/gocache; cd /src/core && go test -count=1 ./internal/postgres/... . && cd /src/node-agent && go test -count=1 ./internal/postgres/... .' \
+        || status=$?
+    docker rm -f "$name" >/dev/null 2>&1
+    return $status
+}
+
 worker_tests() {
     docker build -q -t "$WORKER_IMAGE" transfer >/dev/null || return 1
     local status=0
@@ -99,6 +130,8 @@ for module in $GO_MODULES; do
 done
 step node-ui node_ui
 step harness-tests harness_tests
+step deploy-tests deploy_tests
+step postgres-tests postgres_tests
 step worker-tests worker_tests
 if [ "$RUN_E2E" = 1 ]; then
     step mvp-e2e e2e

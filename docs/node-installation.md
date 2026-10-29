@@ -70,6 +70,13 @@ Setup UI: http://127.0.0.1:5174 (local to this machine only).
   `http://localhost:5174`.
 - **Releases:** run `sudo arknet-node status`, `upgrade`, or `rollback`. See
   [Node upgrade](node-upgrade.md).
+- **Operator accounts:** `sudo arknet-node operator setup-code` prints a
+  one-time, 1-hour code for creating the first operator (password plus an
+  authenticator app). `operator recover NAME`, `operator list` and
+  `operator disable NAME` handle lost access, all from the local shell. Codes
+  are printed to the terminal only and never logged. The management UI does not
+  require operator sign-in yet; that arrives with Prompt 45B. See
+  [Node operator authentication](node-operator-authentication.md).
 
 ## Options
 

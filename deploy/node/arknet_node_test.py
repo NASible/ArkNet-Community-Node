@@ -82,6 +82,7 @@ class FakeDocker:
         self.fail_up_for, self.fail_config, self.fail_dump, self.recreate_volume = set(), False, False, False
         self.jellyfin_healthy = True
         self.stale_agent = False
+        self.operator_calls, self.operator_exit = [], 0
         self.node_state = "ENROLLMENT_PENDING"  # Agent keeps reporting the old release (e.g. unreadable manifest)
 
     def __call__(self, args, stdout=None, stderr=None, text=None, timeout=None):
@@ -124,7 +125,10 @@ class FakeDocker:
                     return subprocess.CompletedProcess(args, 1, None, b"connection refused")
                 stdout.write(b"PGDMP fake")
                 return subprocess.CompletedProcess(args, 0, None, b"")
-            if rest[:3] == ["exec", "-T", "arknet-agent"]:
+            if rest[:5] == ["exec", "-T", "arknet-agent", "arknet-agent", "operator"]:
+                self.operator_calls.append((rest[5:], stdout))
+                return subprocess.CompletedProcess(args, self.operator_exit, None, "")
+            if rest[:6] == ["exec", "-T", "arknet-agent", "arknet-agent", "status", "--json"]:
                 return ok(json.dumps({"agent_healthy": True, "database_healthy": True, "jellyfin_healthy": self.jellyfin_healthy,
                                       "release": {"version": self.running, "channel": "development"},
                                       "node_id": "node_" + "a" * 64, "state": self.node_state}))
@@ -375,6 +379,31 @@ class UpgradeTests(unittest.TestCase):
         self.assertEqual(self.docker.ups(), ["0.0.2-dev.1"])
         self.assertEqual(self.state()["release"], "0.0.2-dev.1")
         self.assertEqual(self.state()["previous"], "0.0.2-dev.2")
+
+    def test_operator_commands_run_agent_cli_with_uncaptured_output(self):
+        for argv, expected in ((["operator", "setup-code"], ["setup-code"]),
+                               (["operator", "setup-code", "--additional"], ["setup-code", "--additional"]),
+                               (["operator", "recover", "alice"], ["recover", "alice"]),
+                               (["operator", "disable", "alice"], ["disable", "alice"]),
+                               (["operator", "list"], ["list"])):
+            self.docker.operator_calls.clear()
+            code = an.main(["--home", str(self.home), *argv], docker=an.Docker(self.docker), out=self.output.append)
+            self.assertEqual(code, an.EXIT_OK, self.text())
+            self.assertEqual(len(self.docker.operator_calls), 1)
+            args, stdout = self.docker.operator_calls[0]
+            self.assertEqual(args, expected)
+            # Codes are printed by the container straight to the terminal, never captured.
+            self.assertIsNone(stdout)
+        self.docker.operator_exit = 1
+        self.assertEqual(an.main(["--home", str(self.home), "operator", "setup-code"], docker=an.Docker(self.docker),
+                                 out=self.output.append), 1)
+
+    def test_health_check_uses_local_status_command(self):
+        self.publish_newer()
+        self.assertEqual(self.run_cli("upgrade"), an.EXIT_OK, self.text())
+        execs = [c for c in self.docker.calls if "exec" in c and "arknet-agent" in c]
+        self.assertTrue(execs)
+        self.assertFalse([c for c in execs if "wget" in c or any("/api/v1/status" in a for a in c)])
 
     def test_concurrent_operations_are_refused(self):
         with an.locked(self.home):

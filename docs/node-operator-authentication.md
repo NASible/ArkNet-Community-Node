@@ -1,8 +1,10 @@
 # Node Operator Authentication (design)
 
-Status: **design, Prompt 45.** Nothing here is implemented yet. Prompt 45A
-builds the accounts, bootstrap, sessions and recovery; Prompt 45B enforces the
-permission matrix and closes [ARKSEC-002](security-follow-ups.md#arksec-002).
+Status: **accounts, bootstrap, sessions and shell recovery implemented
+(Prompt 45A); management routes are not protected yet.** Prompt 45B enforces the
+permission matrix, adds the UI and the LAN HTTPS listener, and closes
+[ARKSEC-002](security-follow-ups.md#arksec-002). Until then
+[ARKSEC-002](security-follow-ups.md#arksec-002) stays open.
 
 This design follows decision **D2** from the
 [Phase 20 prompt pack](development/hermes-phase20-prompts.md), confirmed by the
@@ -296,19 +298,21 @@ script in [Matrix check](#matrix-check) verifies this.
 | `POST /api/v1/global-users/sessions` | public | Member login. The password still transits the Node ([ARKSEC-001](security-follow-ups.md#arksec-001), Phase 20C). |
 | `GET /api/v1/global-users/session` | member | |
 | `DELETE /api/v1/global-users/session` | member | |
+| `POST /api/v1/operator/setup` | public | Requires a valid setup or recovery code from the local shell. |
+| `POST /api/v1/operator/setup/confirm` | public | Requires the enrollment token from `/setup` and a current TOTP code. |
+| `POST /api/v1/operator/sessions` | public | Operator login: password plus TOTP or one recovery code. |
+| `GET /api/v1/operator/session` | operator | Reads only the operator cookie. |
+| `DELETE /api/v1/operator/session` | operator | Logout; idempotent. |
 
-Routes added by 45A are not in today's registry. They will be added to this
-table when they land, and 45B's generated test then enforces them:
+Planned routes, not registered yet. They join the table above when they land,
+and 45B's generated test then enforces them:
 
 | Planned route | Permission |
 | --- | --- |
-| `POST /api/v1/operator/setup` | public (requires a valid setup or recovery code) |
-| `POST /api/v1/operator/setup/confirm` | public (requires the enrollment token) |
-| `POST /api/v1/operator/sessions` | public (operator login) |
-| `GET /api/v1/operator/session` | operator |
-| `DELETE /api/v1/operator/session` | operator |
 | `PUT /api/v1/operator/password`, `PUT /api/v1/operator/totp`, `POST /api/v1/operator/recovery-codes` | operator+step-up |
 | `GET /api/v1/operators`, `POST /api/v1/operators/{id}/disable` | operator+step-up |
+
+Until then, list and disable operators with `arknet-node operator list|disable`.
 
 Enforcement (45B):
 
@@ -395,7 +399,7 @@ test). The script:
 - compares the resulting set with the first column of the matrix above.
 
 Result on 2026-10-27, commit `d26f335`: 29 registered routes and 29 matrix rows,
-no missing or extra entries.
+no missing or extra entries. After Prompt 45A: 34 routes and 34 rows.
 
 ## Decisions
 

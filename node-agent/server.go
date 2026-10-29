@@ -64,7 +64,7 @@ func run(ctx context.Context, cfg config, logger *slog.Logger) error {
 		transferService = transfer.New(cfg.transferURL, cfg.transferToken)
 	}
 	media := mediaOpt{repository: database, allocation: cfg.mediaStorageAllocation, coreURL: cfg.coreURL, mediaDir: cfg.mediaDir}
-	opts := []handlerOption{media, settingsOpt{database}, localUsersOpt{repository: database}, globalAuthOpt{repository: database, identity: media.identity}, mediaMissOpt{database}, current,
+	opts := []handlerOption{media, settingsOpt{database}, localUsersOpt{repository: database}, globalAuthOpt{repository: database, identity: media.identity}, mediaMissOpt{database}, operatorOpt{repository: database, logger: logger}, current,
 		diagnosticsOpt{coreURL: strings.TrimSuffix(cfg.coreURL, "/"), trackerOrigin: cfg.trackerOrigin, mediaDir: cfg.mediaDir}}
 	var checker *updates.Checker
 	if cfg.releaseIndexURL != nil {

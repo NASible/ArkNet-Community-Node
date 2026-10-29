@@ -525,8 +525,10 @@ class Node:
             self.sleep(5)
 
     def agent_status(self, project, paths):
-        result = self.docker.compose(project, self.env_file, paths, "exec", "-T", "arknet-agent", "wget", "-qO-",
-                                     "http://127.0.0.1:8081/api/v1/status", check=False, timeout=30)
+        # Local CLI, not the HTTP API: /api/v1/status becomes operator-only (Prompt 45B),
+        # and local shell access is already the trust root for this tool.
+        result = self.docker.compose(project, self.env_file, paths, "exec", "-T", "arknet-agent", "arknet-agent",
+                                     "status", "--json", check=False, timeout=30)
         if result.returncode != 0:
             return None
         try:
@@ -741,6 +743,21 @@ class Node:
         self.say(f"ATTENTION: neither release validated. Volumes were not removed. Backup: {backup}")
         return EXIT_ATTENTION
 
+    def operator(self, args) -> int:
+        """Run `arknet-agent operator ...` in the running Agent container.
+
+        Output goes straight to this terminal and is never captured or logged,
+        because setup and recovery codes are secrets shown once.
+        """
+        state = self.read_state()
+        _, paths = self.release(state["release"], state["compose_files"])
+        result = self.docker.compose(state["project"], self.env_file, paths, "exec", "-T", "arknet-agent",
+                                     "arknet-agent", "operator", *args, check=False, stdout=None, timeout=60)
+        if result.returncode not in (0, 1, 2):
+            raise Failure("operator", "The ArkNet Agent container is not running or did not answer.",
+                          "Start the Node with `arknet-node upgrade` or check `docker compose ps`.")
+        return result.returncode
+
     def status(self) -> int:
         state = self.read_state()
         manifest, _ = self.release(state["release"], state["compose_files"])
@@ -773,6 +790,14 @@ def main(argv=None, docker=None, out=print) -> int:
     up.add_argument("--manifest")
     up.add_argument("--sha256")
     sub.add_parser("rollback")
+    op = sub.add_parser("operator", help="manage Node operator accounts (setup code, recovery, list, disable)")
+    op_sub = op.add_subparsers(dest="operator_command", required=True)
+    setup = op_sub.add_parser("setup-code", help="print a one-time operator setup code")
+    setup.add_argument("--additional", action="store_true", help="issue a code even though operators exist")
+    for name, text in (("recover", "sign an operator out everywhere and print a recovery code"),
+                       ("disable", "disable an operator and sign it out everywhere")):
+        op_sub.add_parser(name, help=text).add_argument("username")
+    op_sub.add_parser("list", help="list operator accounts")
     inst = sub.add_parser("install")
     inst.add_argument("--index")
     inst.add_argument("--channel", default="stable", choices=["stable", "development"])
@@ -786,6 +811,10 @@ def main(argv=None, docker=None, out=print) -> int:
                 return node.status()
             if args.command == "rollback":
                 return node.rollback()
+            if args.command == "operator":
+                extra = ["--additional"] if getattr(args, "additional", False) else []
+                name = [args.username] if hasattr(args, "username") else []
+                return node.operator([args.operator_command, *name, *extra])
             if args.command == "install":
                 return node.install(args.index, args.channel, args.manifest, args.sha256)
             return node.upgrade(args.index, args.manifest, args.sha256)

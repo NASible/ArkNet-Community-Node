@@ -12,8 +12,10 @@ explanation.
 - `scripts/check-all.sh [--e2e] [--vm] [--logs DIR]`: the one-command gate.
   Without flags it runs the component checks: scaffold, security hygiene,
   gofmt, `go test`/`go vet` for every Go module, `node-ui` tests and build,
-  every `scripts/*_test.py`, and worker tests inside the transfer image (real
-  libtorrent). `--e2e` adds the MVP E2E, Node upgrade and product swarm
+  every `scripts/*_test.py` and `deploy/node/*_test.py`, the Core and Agent
+  PostgreSQL store tests against a throwaway `postgres:18-alpine` (run from a Go
+  container that shares the database's clock), and worker tests inside the
+  transfer image (real libtorrent). `--e2e` adds the MVP E2E, Node upgrade and product swarm
   checks; `--vm` adds the fresh-VM install check. Every step runs, step logs
   stay in `DIR`, and the last line is `EXIT <failed steps>`.
 - `python3 scripts/check-mvp-e2e.py [--setup-only] [--results FILE] [--diagnostics-dir DIR]`:

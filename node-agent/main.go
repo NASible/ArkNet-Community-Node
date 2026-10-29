@@ -9,6 +9,9 @@ import (
 )
 
 func main() {
+	if isCLI(os.Args[1:]) {
+		os.Exit(runCLI(context.Background(), os.Args[1:], defaultCLIEnv(os.Getenv, os.Stdout, os.Stderr)))
+	}
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	cfg, err := loadConfig(os.Getenv)
 	if err != nil {

@@ -68,6 +68,7 @@ func newHandler(repository localstate.Repository, opts ...handlerOption) http.Ha
 	var current *releaseSummary
 	var updateOpt updatesOpt
 	var diagnostics diagnosticsOpt
+	var operatorAccounts operatorOpt
 	diagnosticsEnabled := false
 	for _, opt := range opts {
 		switch o := opt.(type) {
@@ -89,6 +90,8 @@ func newHandler(repository localstate.Repository, opts ...handlerOption) http.Ha
 			misses = o
 		case updatesOpt:
 			updateOpt = o
+		case operatorOpt:
+			operatorAccounts = o
 		case diagnosticsOpt:
 			diagnostics, diagnosticsEnabled = o, true
 		case releaseOpt:
@@ -122,38 +125,17 @@ func newHandler(repository localstate.Repository, opts ...handlerOption) http.Ha
 			_ = json.NewEncoder(w).Encode(map[string]string{"error": "local state database unavailable"})
 			return
 		}
-		snapshot, err := repository.Snapshot(ctx)
+		connectivity := coreConnectivityNotImplemented
+		if monitor != nil && monitor.Connectivity() != "" {
+			connectivity = monitor.Connectivity()
+		}
+		status, err := buildStatus(ctx, repository, connectivity, managedApplication, current)
 		if err != nil {
 			w.WriteHeader(503)
 			_ = json.NewEncoder(w).Encode(map[string]string{"error": "local state database unavailable"})
 			return
 		}
-		connectivity := coreConnectivityNotImplemented
-		if monitor != nil && monitor.Connectivity() != "" {
-			connectivity = monitor.Connectivity()
-		}
-		var lastContact *time.Time
-		if !snapshot.LastSuccessfulCoreContactAt.IsZero() {
-			lastContact = &snapshot.LastSuccessfulCoreContactAt
-		}
-		var jellyfinHealthy *bool
-		if managedApplication != nil {
-			h := managedApplication.Healthy(ctx)
-			jellyfinHealthy = &h
-		}
-		_ = json.NewEncoder(w).Encode(nodeStatus{
-			NodeID:                      snapshot.NodeID,
-			Version:                     version,
-			State:                       snapshot.State,
-			StateChangedAt:              snapshot.StateChangedAt,
-			EnrollmentState:             snapshot.EnrollmentState,
-			CoreConnectivity:            connectivity,
-			LastSuccessfulCoreContactAt: lastContact,
-			DatabaseHealthy:             true,
-			AgentHealthy:                true,
-			JellyfinHealthy:             jellyfinHealthy,
-			Release:                     current,
-		})
+		_ = json.NewEncoder(w).Encode(status)
 	})
 	mux.HandleFunc("GET /api/v1/media", media.list)
 	mux.Handle("POST /api/v1/media/{id}/selection", http.NewCrossOriginProtection().Handler(http.HandlerFunc(media.queue)))
@@ -167,9 +149,41 @@ func newHandler(repository localstate.Repository, opts ...handlerOption) http.Ha
 	registerGlobalAuth(mux, global)
 	registerMediaMisses(mux, misses)
 	registerUpdates(mux, updateOpt)
+	registerOperators(mux, operatorAccounts)
 	if diagnosticsEnabled {
 		registerDiagnostics(mux, diagnosticsDeps{opt: diagnostics, repository: repository, monitor: monitor,
 			jellyfin: managedApplication, media: media, transfers: transfers.service, release: current})
 	}
 	return mux
+}
+
+// buildStatus is the status document shared by GET /api/v1/status and the
+// local `arknet-agent status` command.
+func buildStatus(ctx context.Context, repository localstate.Repository, connectivity string, app application.Adapter, current *releaseSummary) (nodeStatus, error) {
+	snapshot, err := repository.Snapshot(ctx)
+	if err != nil {
+		return nodeStatus{}, err
+	}
+	var lastContact *time.Time
+	if !snapshot.LastSuccessfulCoreContactAt.IsZero() {
+		lastContact = &snapshot.LastSuccessfulCoreContactAt
+	}
+	var jellyfinHealthy *bool
+	if app != nil {
+		h := app.Healthy(ctx)
+		jellyfinHealthy = &h
+	}
+	return nodeStatus{
+		NodeID:                      snapshot.NodeID,
+		Version:                     version,
+		State:                       snapshot.State,
+		StateChangedAt:              snapshot.StateChangedAt,
+		EnrollmentState:             snapshot.EnrollmentState,
+		CoreConnectivity:            connectivity,
+		LastSuccessfulCoreContactAt: lastContact,
+		DatabaseHealthy:             true,
+		AgentHealthy:                true,
+		JellyfinHealthy:             jellyfinHealthy,
+		Release:                     current,
+	}, nil
 }
