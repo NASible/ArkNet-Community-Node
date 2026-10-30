@@ -1,7 +1,8 @@
 # Global login assertions (design)
 
 Status: **design only** (Prompt 46, ARKSEC-001). Nothing here is implemented
-yet. Prompt 46A builds the Core side and Prompt 46B the Agent side.
+yet. Prompt 46A builds the Core side and Prompt 46B the Agent side. The user
+answered the blocking questions on 2026-10-29; see [Decisions](#decisions).
 
 Decisions this design depends on:
 
@@ -10,8 +11,8 @@ Decisions this design depends on:
 - **D4:** a global user's first login on a Node redirects to Core, so Core must
   be reachable once per Node in each offline window.
 
-These were recorded as the accepted defaults. Confirming them is open question
-[Q1](#open-questions).
+D3 was confirmed on 2026-10-29. D4 follows from the Q2 and Q7 decisions:
+login happens on a Core page and returns to a callback the Node registered.
 
 ## Problem
 
@@ -117,7 +118,7 @@ Browser            Node (member listener)                Core
    Node all show one identical error.
 3. **Return.** Core redirects only to a callback origin the Node registered in
    advance over its signed federation channel (see
-   [Q2](#open-questions)). The assertion travels in the URL **fragment**.
+   [Q2](#decisions)). The assertion travels in the URL **fragment**.
    Fragments are not sent in HTTP requests, so the assertion never appears in
    proxy, Core or Node access logs. That matches ARKSEC-007's redaction goal.
    The callback page reads the fragment, clears it with `history.replaceState`,
@@ -190,7 +191,7 @@ unauthenticated and cacheable (`Cache-Control: max-age=3600`).
 - An Agent never accepts a key that wasn't in a set fetched from its configured
   Core URL. An attacker who can make the Agent fetch a different key set
   already controls what that Node talks to, which is a Node-local compromise
-  only; see [Q4](#open-questions) for pinning the first key at enrollment.
+  only. Per [Q4](#decisions), there is no separate pinning of the first key.
 
 ## Offline model
 
@@ -321,7 +322,7 @@ migration.
   IDs, nonces, assertions or callback fragments.
 - The registered callback origin tells Core how the Node's member listener is
   addressed (for example a LAN hostname). The operator chooses it; see
-  [Q2](#open-questions).
+  [Q2](#decisions).
 
 ## Threat table
 
@@ -362,34 +363,32 @@ times for its own members, and attempt phishing (below).
 - **Revocation lag.** As described in [Revocation](#revocation): up to 30 days
   offline, by D3.
 
+## Decisions
+
+The user answered these on 2026-10-29. 46A and 46B build on them.
+
+| # | Question | Decision |
+| --- | --- | --- |
+| Q1 | Confirm D3 (offline window) | **Yes: at most 30 days** on a Node since the last online verification. 30 days is the hard ceiling and the Core default; Core may set a shorter limit per Node or per user. |
+| Q2 | Callback origin registration | **Recommended design.** Nodes register their member callback origin(s) with Core over the signed federation channel. Core redirects only to a registered origin for that `node_id`. Core therefore learns the Node's member URL. |
+| Q4 | Key trust bootstrap | **Fetch over HTTPS from Core.** The Agent fetches the assertion key set from its configured Core URL over its verified HTTPS federation connection and persists it. Nothing is pinned in the release manifest or the enrollment response. |
+| Q7 | Core login UI | **A minimal server-rendered login and confirmation page in Core** (46A), served only from Core's origin and not frameable. A separate Core web app can replace it later. |
+
 ## Open questions
 
-1. **Q1 — confirm D3 and D4.** Is the 30-day maximum offline window right? Should
-   the Core default be shorter (for example 7 days), with 30 days only as the
-   hard ceiling? Is "first login on a Node redirects to Core" acceptable?
-2. **Q2 — callback origin registration.** Should Nodes register their member
-   callback origin(s) with Core over the signed federation channel? That is
-   recommended, and it reveals the member URL, possibly a LAN hostname, to
-   Core. Or should Core accept a fixed set of patterns? How many origins per
-   Node (LAN HTTPS plus a TLS ingress hostname)?
-3. **Q3 — revocation versus offline length.** Is 30 days of possible
+These do not block 46A or 46B.
+
+1. **Q3 — revocation versus offline length.** Is 30 days of possible
    revocation lag during a Core outage acceptable for `ADMIN`-role members, or
    should `ADMIN` get a shorter cap?
-4. **Q4 — key trust bootstrap.** Is fetching the assertion key set over the
-   Agent's verified HTTPS connection to its configured Core URL enough? Or
-   should the first key be pinned in the release manifest or the enrollment
-   response?
-5. **Q5 — passkeys.** Should Core get passkey/WebAuthn login (removing the
+2. **Q5 — passkeys.** Should Core get passkey/WebAuthn login (removing the
    phishing risk), and should per-Node passkeys (Option B) replace the device
    cookie once ARKSEC-007's TLS ingress gives Nodes proper hostnames? Which
    prompt should own each?
-6. **Q6 — non-browser clients.** How should a global member sign in to the
+3. **Q6 — non-browser clients.** How should a global member sign in to the
    Node's Jellyfin from a TV or native app? An OAuth-style device code flow
    would fit: the Node shows a code and the user approves it at Core. Is that
    in scope for Phase 20 or later?
-7. **Q7 — Core login UI.** Core has no web UI today. Is a minimal server-rendered
-   login and confirmation page in Core (46A) acceptable, or should it live in
-   a separate Core web app?
 
 ## Not in this phase
 

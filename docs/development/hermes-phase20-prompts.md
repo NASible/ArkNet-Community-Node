@@ -37,8 +37,8 @@ prompt that depends on an undecided item must stop and ask, not assume.
 | --- | --- | --- | --- |
 | D1 | Where automated checks run | A local one-command gate (`scripts/check-all.sh`), plus a self-hosted runner later. Hosted CI cannot run the Lima VM or the Docker-heavy E2E reliably. | 44A |
 | D2 | How Node operators authenticate | **Confirmed 2026-10-27:** Node-local operator accounts that work offline, password plus TOTP first (passkeys later), one operator role. Optional OIDC (for example Authentik) only as an add-on for operators who run an IdP. Community Nodes must not depend on one person's IdP. Details and the other Prompt 45 answers: [operator authentication decisions](../node-operator-authentication.md#decisions). | 45 |
-| D3 | How long global users can log in offline | Bounded: at most 30 days since the last online verification. Core may set a shorter limit per Node or per user. | 46 |
-| D4 | First login for a global user on a Node | Redirect to Core, which requires Core to be reachable once per Node per offline window. | 46 |
+| D3 | How long global users can log in offline | **Confirmed 2026-10-29:** at most 30 days on a Node since the last online verification. Core may set a shorter limit per Node or per user. See [global login decisions](../global-login-assertions.md#decisions). | 46 |
+| D4 | First login for a global user on a Node | Redirect to Core, which requires Core to be reachable once per Node per offline window. Adopted with the Prompt 46 decisions (Core login page, Node-registered callback). | 46 |
 | D5 | Who operates the private relay | Decided by the 48 design spike, not up front. | 48 |
 
 ---
