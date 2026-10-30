@@ -21,6 +21,7 @@ Architecture, development, and operations documentation belongs here.
 - [Node-local users](local-users.md): Node-scoped accounts, offline authentication, and privacy boundaries.
 - [Node operator authentication](node-operator-authentication.md): design for operator accounts, bootstrap, sessions, the route permission matrix and shell recovery (ARKSEC-002; not yet implemented).
 - [Cached global authorization](cached-global-authorization.md): bounded Node-side verification during Core outages.
+- [Global login assertions](global-login-assertions.md): design for Core-bound login without password transit, and the offline model (ARKSEC-001; not yet implemented).
 - [Primary home node](home-node.md): Core-only home-node relationship, explicit change, and routing access.
 - [Media routing](media-routing.md): home-node-or-Core decision from Core-observed health and verified replicas.
 - [Media-miss events](media-miss-events.md): non-blocking Core miss recording, private aggregates, and MANUAL/ASK/AUTOMATIC Node policy.
