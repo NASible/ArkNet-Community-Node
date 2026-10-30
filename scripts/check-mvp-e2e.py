@@ -137,12 +137,13 @@ def main(argv=None):
         password, token, jelly_password = secrets.token_hex(32), secrets.token_hex(32), secrets.token_urlsafe(24)
         known_secrets.extend((password, token, jelly_password))
         cfg = {"project": prefix + "-node-" + label, "uplink": uplink, "agent_port": free_port(),
-               "jellyfin_port": free_port(), "password": password, "jelly_password": jelly_password,
+               "member_port": free_port(), "jellyfin_port": free_port(), "password": password, "jelly_password": jelly_password,
                "override": temporary / f"node-{label}-override.json",
                "jelly_config": temporary / f"jellyfin-{label}-config", "jelly_cache": temporary / f"jellyfin-{label}-cache"}
         cfg["jelly_config"].mkdir(mode=0o755); cfg["jelly_cache"].mkdir(mode=0o755)
         cfg["env"] = dict(os.environ, POSTGRES_USER="arknet", POSTGRES_DB="arknet_node", POSTGRES_PASSWORD=password,
                           PGSSLMODE="disable", ARKNET_AGENT_PORT=str(cfg["agent_port"]),
+                          ARKNET_MEMBER_PORT=str(cfg["member_port"]),
                           ARKNET_UI_HTTPS_BIND="127.0.0.1:", ARKNET_TLS_DIR=str(temporary / f"tls-{label}"),
                           JELLYFIN_BIND=f"127.0.0.1:{cfg['jellyfin_port']}", ARKNET_CORE_URL="http://arknet-core:8080",
                           ARKNET_CORE_ALLOW_HTTP="true", ARKNET_HEARTBEAT_INTERVAL="5s",
@@ -155,6 +156,7 @@ def main(argv=None):
                           # a 5s stress cadence continually tears down HTTP peers.
                           ARKNET_TRANSFER_RECONCILE_INTERVAL="30s", JELLYFIN_API_KEY="")
         cfg["base"] = f"http://127.0.0.1:{cfg['agent_port']}"
+        cfg["member_base"] = f"http://127.0.0.1:{cfg['member_port']}"
         cfg["jelly_base"] = f"http://127.0.0.1:{cfg['jellyfin_port']}"
         nodes[label] = cfg
     projects = (core_project, nodes["a"]["project"], nodes["b"]["project"])
@@ -192,6 +194,9 @@ def main(argv=None):
     def agent(label, path, method="GET", body=None, expected=(200,), headers=None):
         merged = {**(op(label) if "operator" in nodes[label] else {}), **(headers or {})}
         return request_json(nodes[label]["base"] + path, method, body, merged, expected=expected)[2]
+
+    def member(label, path, method="GET", body=None, expected=(200,), headers=None):
+        return request_json(nodes[label]["member_base"] + path, method, body, headers, expected=expected)[2]
 
     def status(label):
         return agent(label, "/api/v1/status")
@@ -344,7 +349,8 @@ def main(argv=None):
             code = operator_login.setup_code(node_compose(label, "exec", "-T", "arknet-agent", "arknet-agent", "operator",
                                                           "setup-code", capture=True))
             known_secrets.extend((code, code.replace("-", "")))
-            cfg["operator"] = operator_login.bootstrap(cfg["base"], code, request, username=f"operator-{label}")
+            cfg["operator"] = operator_login.bootstrap(cfg["base"], code, request, username=f"operator-{label}",
+                                                       member_base=cfg["member_base"])
             known_secrets.extend(cfg["operator"].secrets)
         print("SETUP: Core, tracker, web seed, Node A and Node B are running", flush=True)
         if args.inject_failure == "after-setup":
@@ -392,8 +398,8 @@ def main(argv=None):
             created = agent("a", "/api/v1/local-users", "POST", {"username": "local-bob", "password": local_password}, (201,))
             assert created["kind"] == "LOCAL"
             nodes["local_id"] = created["user_id"]
-            agent("a", "/api/v1/local-users/sessions", "POST", {"username": "local-bob", "password": local_password}, (201,))
-            other = request(nodes["b"]["base"] + "/api/v1/local-users/sessions", "POST",
+            member("a", "/api/v1/local-users/sessions", "POST", {"username": "local-bob", "password": local_password}, (201,))
+            other = request(nodes["b"]["member_base"] + "/api/v1/local-users/sessions", "POST",
                             {"username": "local-bob", "password": local_password})
             assert other[0] == 401
             core_dump = dump(core_compose, "arknet_core")
@@ -449,7 +455,7 @@ def main(argv=None):
             assert after["node_id"] == before["node_id"]
             assert core_sql("SELECT count(*) FROM nodes") == "2"
             assert media_object("a", video["id"])["local_state"] == "QUEUED"
-            assert request(nodes["a"]["base"] + "/api/v1/local-users/sessions", "POST",
+            assert request(nodes["a"]["member_base"] + "/api/v1/local-users/sessions", "POST",
                            {"username": "local-bob", "password": local_password})[0] == 201
             results.evidence(3, "Agent restart and container recreation kept node ID, CONNECTED enrollment, queued selection"
                                 " and local users; Core still has exactly 2 Nodes")
@@ -491,7 +497,7 @@ def main(argv=None):
 
         # -------------------------------- 13a cached auth online population
         def online_global_login():
-            session = agent("a", "/api/v1/global-users/sessions", "POST",
+            session = member("a", "/api/v1/global-users/sessions", "POST",
                             {"member_id": nodes["a"]["member_id"], "password": global_password}, (200, 201))
             assert session["kind"] == "GLOBAL" and session["member_id"] == nodes["a"]["member_id"]
             nodes["member_token"] = session["token"]
@@ -514,16 +520,16 @@ def main(argv=None):
         item(12, offline_playback)
 
         def offline_auth():
-            session = agent("a", "/api/v1/global-users/sessions", "POST",
+            session = member("a", "/api/v1/global-users/sessions", "POST",
                             {"member_id": nodes["a"]["member_id"], "password": global_password}, (200, 201))
             assert session["kind"] == "GLOBAL"
-            denied = request(nodes["a"]["base"] + "/api/v1/global-users/sessions", "POST",
+            denied = request(nodes["a"]["member_base"] + "/api/v1/global-users/sessions", "POST",
                              {"member_id": nodes["a"]["member_id"], "password": global_password + "x"})
             assert denied[0] == 401
-            foreign = request(nodes["a"]["base"] + "/api/v1/global-users/sessions", "POST",
+            foreign = request(nodes["a"]["member_base"] + "/api/v1/global-users/sessions", "POST",
                               {"member_id": nodes["b"]["member_id"], "password": global_password})
             assert foreign[0] == 401
-            local = request(nodes["a"]["base"] + "/api/v1/local-users/sessions", "POST", {"username": "local-bob", "password": local_password})
+            local = request(nodes["a"]["member_base"] + "/api/v1/local-users/sessions", "POST", {"username": "local-bob", "password": local_password})
             assert local[0] == 201
             results.evidence(13, "Core offline: cached member authenticated; wrong password and Node B's member ID rejected;"
                                  " local user still authenticates")
@@ -664,8 +670,13 @@ def main(argv=None):
                         denied.append(f"{method} {path} as {caller}: {status}")
             assert not denied, denied
             assert agent("b", "/api/v1/settings/peer-serving") == {"enabled": False}, "an unauthenticated write changed Node B"
+            assert request(nodes["b"]["member_base"] + "/api/v1/status")[0] == 404
+            assert request(nodes["b"]["base"] + "/api/v1/global-users/sessions", "POST", {})[0] == 404
+            assert request(nodes["b"]["member_base"] + "/health")[0] == 200
             results.evidence(20, "Node B's management address returned 401 to anonymous callers, to Node A's operator"
                                  " session and to a member bearer token on status, users, invitations, settings and updates")
+            results.evidence(20, "Node B's member listener returned 404 for management status; its management listener returned"
+                                 " 404 for member login; health remained available only on the member listener")
         item(20, isolation)
 
         # --------------------------------------------------- 16 revocation

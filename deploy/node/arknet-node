@@ -332,6 +332,13 @@ def parse_env(path: Path) -> dict:
     return values
 
 
+def append_env(path: Path, text: str) -> None:
+    """Append settings, starting on a new line even if the file lacks a final newline."""
+    existing = path.read_bytes()
+    with open(path, "a") as stream:
+        stream.write(("\n" if existing and not existing.endswith(b"\n") else "") + text)
+
+
 # ---------------------------------------------------------------------- node
 class Node:
     def __init__(self, home: Path, docker: Docker, out=print, sleep=time.sleep, clock=time.monotonic):
@@ -581,9 +588,13 @@ class Node:
         if os.geteuid() == 0:
             os.chown(key, 0, 0)
         if self.env_file.is_file() and "ARKNET_TLS_DIR" not in parse_env(self.env_file):
-            with open(self.env_file, "a") as stream:
-                stream.write(f"# Management UI certificate (created by arknet-node)\nARKNET_TLS_DIR={self.tls_dir}\n")
+            append_env(self.env_file, f"# Management UI certificate (created by arknet-node)\nARKNET_TLS_DIR={self.tls_dir}\n")
         return certificate_fingerprint(cert)
+
+    def ensure_member_listener(self) -> None:
+        """Give fresh and upgraded Nodes a stable loopback member endpoint."""
+        if self.env_file.is_file() and "ARKNET_MEMBER_PORT" not in parse_env(self.env_file):
+            append_env(self.env_file, "# Member API for a TLS reverse proxy; management remains separate\nARKNET_MEMBER_PORT=8086\n")
 
     def announce_management(self, project, paths) -> None:
         """Print the HTTPS address, certificate fingerprint and, when no
@@ -615,6 +626,7 @@ class Node:
 
     def apply(self, project, paths) -> None:
         self.ensure_tls()
+        self.ensure_member_listener()
         self.docker.compose(project, self.env_file, paths, "up", "-d", "--wait", "--wait-timeout", str(WAIT_TIMEOUT),
                             "--remove-orphans", "--no-build", "--pull", "never", timeout=WAIT_TIMEOUT + 120)
 

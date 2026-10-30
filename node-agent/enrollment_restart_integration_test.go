@@ -50,11 +50,11 @@ func TestRunLearnsApprovalAndRebootDoesNotReenroll(t *testing.T) {
 	cfg.coreURL = core.URL
 	var cookie *http.Cookie
 	for range 2 {
-		logs := &startupLogCapture{started: make(chan string, 1)}
+		logs := &startupLogCapture{started: make(chan startupAddrs, 1)}
 		ctx, cancel := context.WithCancel(context.Background())
 		done := make(chan error, 1)
 		go func() { done <- run(ctx, cfg, slog.New(slog.NewJSONHandler(logs, nil))) }()
-		var addr string
+		var addr startupAddrs
 		select {
 		case addr = <-logs.started:
 		case <-time.After(5 * time.Second):
@@ -62,11 +62,11 @@ func TestRunLearnsApprovalAndRebootDoesNotReenroll(t *testing.T) {
 			t.Fatal("startup timed out")
 		}
 		if cookie == nil {
-			cookie = startupOperatorCookie(t, cfg, "http://"+addr)
+			cookie = startupOperatorCookie(t, cfg, "http://"+addr.member)
 		}
 		deadline := time.Now().Add(3 * time.Second)
 		for {
-			status := startupStatus(t, "http://"+addr, cookie)
+			status := startupStatus(t, "http://"+addr.management, cookie)
 			if status.State == localstate.Connected && status.CoreConnectivity == "CONNECTED" {
 				break
 			}

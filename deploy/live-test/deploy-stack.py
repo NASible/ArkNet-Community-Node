@@ -105,7 +105,7 @@ else:
         'networks': ['control', 'egress'], 'read_only': True, 'tmpfs': ['/tmp:size=16m,mode=1777'],
         'healthcheck': probe(['CMD', 'python3', '-c', "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8084/health',timeout=2).read()"]) }
     services['arknet-agent'] = {**hardening, 'image': images['agent'], 'mem_limit': '128m',
-        'environment': {**pgenv, 'ARKNET_AGENT_ADDR': ':8081', 'ARKNET_CORE_URL': 'https://core.nodenet.arknet.media',
+        'environment': {**pgenv, 'ARKNET_AGENT_ADDR': ':8081', 'ARKNET_MEMBER_ADDR': ':8082', 'ARKNET_CORE_URL': 'https://core.nodenet.arknet.media',
             'ARKNET_HEARTBEAT_INTERVAL': '30s', 'ARKNET_MEDIA_STORAGE_ALLOCATION_GIB': '20',
             'ARKNET_TRANSFER_URL': 'http://arknet-transfer:8084', 'ARKNET_TRANSFER_TOKEN': '${TRANSFER_TOKEN}',
             'ARKNET_TRANSFER_STAGING_DIR': '/srv/arknet/transfers', 'ARKNET_MEDIA_DIR': '/srv/arknet/media',
@@ -113,9 +113,9 @@ else:
             'JELLYFIN_API_URL': 'http://jellyfin:8096', 'JELLYFIN_API_KEY': '${JELLYFIN_API_KEY}',
             'ARKNET_RELEASE_MANIFEST': '/etc/arknet/release.json', 'SSL_CERT_FILE': '/etc/ssl/certs/ca-certificates.crt'},
         'extra_hosts': extra_hosts, 'volumes': ['transfers:/srv/arknet/transfers', '/srv/arknet/media:/srv/arknet/media', '/opt/arknet/release.json:/etc/arknet/release.json:ro', ca_mount],
-        'ports': ['127.0.0.1:8082:8081'], 'networks': ['database', 'control', 'media-services', 'egress'],
+        'ports': ['127.0.0.1:8082:8081', '127.0.0.1:8086:8082'], 'networks': ['database', 'control', 'media-services', 'egress'],
         'depends_on': {'postgres': {'condition': 'service_healthy'}, 'arknet-transfer': {'condition': 'service_healthy'}},
-        'healthcheck': probe(['CMD', 'wget', '-q', '-O', '/dev/null', 'http://127.0.0.1:8081/health'])}
+        'healthcheck': probe(['CMD', 'wget', '-q', '-O', '/dev/null', 'http://127.0.0.1:8082/health'])}
     services['arknet-ui'] = {'image': images['ui'], 'restart': 'unless-stopped', 'mem_limit': '64m',
         'ports': ['127.0.0.1:5174:5173'], 'networks': ['control', 'ui-edge'],
         'volumes': ['/opt/arknet/ui-nginx.conf:/etc/nginx/conf.d/default.conf:ro'],

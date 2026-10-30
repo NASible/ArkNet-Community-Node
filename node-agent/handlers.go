@@ -56,8 +56,8 @@ type applicationOpt struct{ application.Adapter }
 
 func (a applicationOpt) isOption() {}
 
-// newHandler is the production handler: every route behind the permission
-// matrix (authz.go).
+// newHandler keeps the full authorized route set for focused HTTP tests.
+// Production serves the two handlers returned by newListenerHandlers.
 func newHandler(repository localstate.Repository, opts ...handlerOption) http.Handler {
 	var accounts operatorOpt
 	for _, opt := range opts {
@@ -66,6 +66,19 @@ func newHandler(repository localstate.Repository, opts ...handlerOption) http.Ha
 		}
 	}
 	return authorize(newRoutes(repository, opts...), accounts.repository, accounts.now, accounts.logger)
+}
+
+func newListenerHandlers(repository localstate.Repository, opts ...handlerOption) (http.Handler, http.Handler) {
+	var accounts operatorOpt
+	for _, opt := range opts {
+		if o, ok := opt.(operatorOpt); ok {
+			accounts = o
+		}
+	}
+	routes := newRoutes(repository, opts...)
+	management := listenerPartition{routes: routes, next: authorize(routes, accounts.repository, accounts.now, accounts.logger), allowed: managementPermission}
+	member := listenerPartition{routes: routes, next: routes, allowed: memberPermission}
+	return management, member
 }
 
 // newRoutes registers every route without authorization. Only newHandler and

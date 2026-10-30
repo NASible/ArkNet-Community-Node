@@ -27,8 +27,10 @@ class OperatorLoginTests(unittest.TestCase):
             return 201, {"Set-Cookie": "__Host-arknet_operator=abc123; Path=/; Secure; HttpOnly; SameSite=Strict"}, \
                 json.dumps({"recovery_codes": ["AAAAA-BBBBB"]}).encode()
 
-        op = ol.bootstrap("http://agent", "ABCD-EFGH-IJKL-MNOP-QRST-UVWX-YZ23-4567", request)
+        op = ol.bootstrap("http://management", "ABCD-EFGH-IJKL-MNOP-QRST-UVWX-YZ23-4567", request,
+                          member_base="http://member")
         self.assertEqual(op.headers, {"Cookie": "__Host-arknet_operator=abc123"})
+        self.assertTrue(all(call[0].startswith("http://member/") for call in calls))
         self.assertEqual(calls[0][2]["setup_code"], "ABCD-EFGH-IJKL-MNOP-QRST-UVWX-YZ23-4567")
         self.assertEqual(calls[1][2], {"enrollment_token": "tok", "totp": ol.totp("JBSWY3DPEHPK3PXP")})
         for value in ("abc123", op.password, "JBSWY3DPEHPK3PXP", "tok", "AAAAA-BBBBB"):

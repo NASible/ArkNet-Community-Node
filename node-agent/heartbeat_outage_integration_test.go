@@ -47,7 +47,7 @@ func TestRunCoreOutageKeepsAPIAndAutomaticallyRecovers(t *testing.T) {
 	}))
 	defer core.Close()
 	cfg.coreURL = core.URL
-	logs := &startupLogCapture{started: make(chan string, 1)}
+	logs := &startupLogCapture{started: make(chan startupAddrs, 1)}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() { done <- run(ctx, cfg, slog.New(slog.NewJSONHandler(logs, nil))) }()
@@ -62,16 +62,16 @@ func TestRunCoreOutageKeepsAPIAndAutomaticallyRecovers(t *testing.T) {
 			t.Error("worker did not join before database close")
 		}
 	}()
-	var addr string
+	var addr startupAddrs
 	select {
 	case addr = <-logs.started:
 	case <-time.After(5 * time.Second):
 		t.Fatal("API not started")
 	}
-	cookie := startupOperatorCookie(t, cfg, "http://"+addr)
+	cookie := startupOperatorCookie(t, cfg, "http://"+addr.member)
 	readStatus := func() nodeStatus {
 		t.Helper()
-		return startupStatus(t, "http://"+addr, cookie)
+		return startupStatus(t, "http://"+addr.management, cookie)
 	}
 	waitStatus := func(want localstate.State) nodeStatus {
 		t.Helper()

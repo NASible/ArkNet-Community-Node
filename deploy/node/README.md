@@ -5,7 +5,7 @@ Local development environment for the ArkNet `0.0.1-dev` community-node stack:
 | Service | Purpose | Default host access |
 | --- | --- | --- |
 || `arknet-ui` | React/TypeScript dashboard served by Vite | http://127.0.0.1:5174 |
-|| `arknet-agent` | Local Go management API | http://127.0.0.1:8082 |
+|| `arknet-agent` | Local Go management API / member API (health, logins) | http://127.0.0.1:8082 / http://127.0.0.1:8086 |
 || `postgres` | PostgreSQL 18 development database | None; stack-only port 5432 |
 || `jellyfin` | Jellyfin media server | http://127.0.0.1:8096 |
 
@@ -71,7 +71,9 @@ The local configuration supports:
 - `ARKNET_UI_HTTPS_BIND`: defaults to `0.0.0.0:8443` (LAN management HTTPS).
 - `ARKNET_TLS_DIR`: directory containing `cert.pem` and `key.pem`, mounted
   read-only into the UI; defaults to `./tls` for direct Compose development.
-- `ARKNET_AGENT_PORT`: defaults to `8082` on loopback.
+- `ARKNET_AGENT_PORT`: management listener; defaults to `8082` on loopback.
+- `ARKNET_MEMBER_PORT`: public/member listener (health, member and operator
+  login); defaults to `8086` on loopback.
 - `ARKNET_AGENT_LOG_LEVEL`: defaults to `INFO`.
 - `PGSSLMODE`: defaults to `disable` only for the private local Docker network.
 - `ARKNET_CORE_URL`: empty by default; opt in with an HTTPS Core base URL.
@@ -106,7 +108,7 @@ Plain HTTP at **http://127.0.0.1:5174/** remains available only on loopback.
 
 ```sh
 docker compose exec -T arknet-agent arknet-agent status --json
-curl --fail http://127.0.0.1:8082/health
+curl --fail http://127.0.0.1:8086/health
 docker compose logs --tail 50 arknet-agent arknet-ui postgres
 ```
 

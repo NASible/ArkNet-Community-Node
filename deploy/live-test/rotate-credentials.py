@@ -130,12 +130,16 @@ def node_url(host):
     return 'https://node-' + host[-1] + '.nodenet.arknet.media'
 
 
+def member_url(host):
+    return 'https://member-' + host[-1] + '.nodenet.arknet.media'
+
+
 def jellyfin_url(host):
     return 'https://jellyfin-' + host[-1] + '.nodenet.arknet.media'
 
 
 def node_login(host, member_id, password):
-    return request(node_url(host) + '/api/v1/global-users/sessions', 'POST',
+    return request(member_url(host) + '/api/v1/global-users/sessions', 'POST',
                    {'member_id': member_id, 'password': password}, expected=(201, 401))
 
 
@@ -288,6 +292,7 @@ def write_access(state):
         user = state['global_users']['user-' + label]
         local = state['machines'][host]
         lines += ['USER ' + label.upper(), 'Node management: ' + node_url(host),
+                  'Member API: ' + member_url(host),
                   'Global username: ' + user['username'], 'Global password: ' + user['password'],
                   'Pairwise member ID for this Node: ' + user['member_id'],
                   'Jellyfin: ' + jellyfin_url(host),

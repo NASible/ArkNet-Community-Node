@@ -155,7 +155,7 @@ def main(argv=None):
         password, token, jelly_password = secrets.token_hex(32), secrets.token_hex(32), secrets.token_urlsafe(24)
         known_secrets.extend((password, token, jelly_password))
         node_configs[label] = {
-            "project": project, "agent_port": free_port(), "jellyfin_port": free_port(),
+            "project": project, "agent_port": free_port(), "member_port": free_port(), "jellyfin_port": free_port(),
             "password": password, "token": token, "jelly_password": jelly_password,
             "override": temporary / ("node-" + label + "-override.json"),
             "jelly_config": temporary / ("jellyfin-" + label + "-config"),
@@ -165,6 +165,7 @@ def main(argv=None):
         node_configs[label]["jelly_cache"].mkdir(mode=0o755)
         node_configs[label]["env"] = dict(os.environ, POSTGRES_USER="arknet", POSTGRES_DB="arknet_node",
             POSTGRES_PASSWORD=password, PGSSLMODE="disable", ARKNET_AGENT_PORT=str(node_configs[label]["agent_port"]),
+            ARKNET_MEMBER_PORT=str(node_configs[label]["member_port"]),
             ARKNET_UI_HTTPS_BIND="127.0.0.1:", ARKNET_TLS_DIR=str(temporary / ("tls-" + label)),
             JELLYFIN_BIND=f"127.0.0.1:{node_configs[label]['jellyfin_port']}",
             ARKNET_CORE_URL="http://arknet-core-origin:8080", ARKNET_CORE_ALLOW_HTTP="true",
@@ -272,10 +273,12 @@ def main(argv=None):
             cfg = node_configs[label]
             isolated_network = network_a if label == "a" else network_b
             agent_networks = ["node", "media-services", "transfer-control", "acceptance"]
-            transfer_networks = ["transfer-control", "swarm"] if label == "a" else ["transfer-control", "acceptance"]
+            # Node A's transfer joins Node B's network after startup (below), not
+            # through Compose: Compose would register the "arknet-transfer"
+            # service name there too, so Node B's Agent could resolve its sidecar
+            # to Node A's (wrong token -> 401 -> transfer_unavailable).
+            transfer_networks = ["transfer-control"] if label == "a" else ["transfer-control", "acceptance"]
             network_defs = {"acceptance": {"external": True, "name": isolated_network}}
-            if label == "a":
-                network_defs["swarm"] = {"external": True, "name": network_b}
             cfg["override"].write_text(json.dumps({"services": {
                 "arknet-agent": {"image": images["agent"], "networks": agent_networks},
                 "arknet-transfer": {"image": images["transfer"], "networks": transfer_networks},
@@ -300,16 +303,25 @@ def main(argv=None):
         for label in ("a", "b"):
             build = ["--build"] if label == "a" else []
             node_compose(label, "up", *build, "-d", "--wait", "--wait-timeout", "240", "postgres", "jellyfin", "arknet-transfer")
+            if label == "a":
+                # Plain connect: no "arknet-transfer" alias on Node B's network.
+                # Restart so libtorrent opens its listen socket on this network
+                # too; it only binds interfaces present at startup.
+                run(["docker", "network", "connect", network_b, transfer_container("a")], capture=True)
+                run(["docker", "restart", transfer_container("a")], capture=True)
+                node_compose(label, "up", "-d", "--wait", "--wait-timeout", "120", "arknet-transfer")
             cfg = node_configs[label]; jelly_base = f"http://127.0.0.1:{cfg['jellyfin_port']}"
             wait_until(label + " Jellyfin HTTP", lambda base=jelly_base: request(base + "/System/Info/Public")[0] == 200, 180)
             access, key = jellyfin_setup(jelly_base, cfg["jelly_password"]); known_secrets.extend((access, key))
             cfg["env"]["JELLYFIN_API_KEY"] = key
             node_compose(label, "up", "-d", "--wait", "--wait-timeout", "180", "arknet-agent")
             cfg["base"] = f"http://127.0.0.1:{cfg['agent_port']}"
+            cfg["member_base"] = f"http://127.0.0.1:{cfg['member_port']}"
             code = operator_login.setup_code(node_compose(label, "exec", "-T", "arknet-agent", "arknet-agent", "operator",
                                                           "setup-code", capture=True))
             known_secrets.extend((code, code.replace("-", "")))
-            signed_in = operator_login.bootstrap(cfg["base"], code, request, username=f"operator-{label}")
+            signed_in = operator_login.bootstrap(cfg["base"], code, request, username=f"operator-{label}",
+                                                 member_base=cfg["member_base"])
             known_secrets.extend(signed_in.secrets)
             operator_headers[cfg["base"]] = signed_in.headers
 

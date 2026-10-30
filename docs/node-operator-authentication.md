@@ -325,6 +325,17 @@ Enforcement (45B):
   the permission, using a uniform body that never names the missing permission
   beyond `operator_required`.
 
+### Listener split
+
+45C serves `public` and `member` routes, including `/health`, on the member
+listener (`ARKNET_MEMBER_ADDR`, container `:8082`, host `127.0.0.1:8086`).
+`operator` and `operator+step-up` routes stay on the management listener
+(`ARKNET_AGENT_ADDR`, container `:8081`, host `127.0.0.1:8082`). A route on
+the wrong listener answers `404`. The partition is derived from this matrix,
+and a test generated from the registered routes checks both directions. Both
+host ports are loopback-only; the LAN HTTPS UI from 45B is the only other
+entry point.
+
 ### Status for local tooling
 
 `arknet-node` reads `GET /api/v1/status` over HTTP from inside the Agent
@@ -415,6 +426,6 @@ these answers.
 | Q3 | Plain HTTP on the LAN | **Nodes ship a self-signed HTTPS listener.** See [LAN HTTPS listener](#lan-https-listener); built in 45B. |
 | Q4 | Roles | **One `operator` role** for now. |
 | Q5 | Timeouts (30 min idle, 12 h absolute, 10 min step-up) | **Yes.** |
-| Q6 | Separate member listener | **Yes, in a later prompt:** Prompt 45C in the [Phase 20 pack](development/hermes-phase20-prompts.md). |
+| Q6 | Separate member listener | **Yes.** Built in 45C; see [Listener split](#listener-split). |
 | Q7 | `arknet-agent status` CLI instead of HTTP status for `arknet-node` | **Yes.** |
 | Q8 | 1-hour setup-code lifetime | **Yes.** |

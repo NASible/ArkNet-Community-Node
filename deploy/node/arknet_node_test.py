@@ -424,6 +424,20 @@ class UpgradeTests(unittest.TestCase):
         chown.assert_called_once_with(key, 0, 0)
         self.assertEqual(key.read_text(), "existing-key")
 
+    def test_upgrade_appends_settings_safely_to_env_without_trailing_newline(self):
+        import stat
+        env_file = self.home / ".env"
+        env_file.write_text(env_file.read_text().rstrip("\n"))
+        env_file.chmod(0o600)
+        last_key, last_value = env_file.read_text().splitlines()[-1].split("=", 1)
+        self.publish_newer()
+        self.assertEqual(self.run_cli("upgrade"), an.EXIT_OK, self.text())
+        values = an.parse_env(env_file)
+        self.assertEqual(values[last_key], last_value)
+        self.assertEqual(values["ARKNET_MEMBER_PORT"], "8086")
+        self.assertEqual(values["ARKNET_TLS_DIR"], str(self.home / "tls"))
+        self.assertEqual(stat.S_IMODE(env_file.stat().st_mode), 0o600)
+
     def test_upgrade_creates_ui_certificate_once_and_announces_setup(self):
         import ssl, stat
         self.publish_newer()
@@ -441,6 +455,8 @@ class UpgradeTests(unittest.TestCase):
         env = (self.home / ".env").read_text()
         self.assertEqual(env.count("ARKNET_TLS_DIR="), 1)
         self.assertIn(f"ARKNET_TLS_DIR={self.home / 'tls'}", env)
+        self.assertEqual(env.count("ARKNET_MEMBER_PORT="), 1)
+        self.assertIn("ARKNET_MEMBER_PORT=8086", env)
         # The setup code comes from the Agent straight to the terminal, only when no operator exists.
         self.assertIn((["setup-code", "--if-none"], None), self.docker.operator_calls)
         # Re-applying never replaces the certificate silently; renew does.

@@ -59,6 +59,7 @@ for machine in INVENTORY['machines']:
     names = (['nodenet.arknet.media', 'core.nodenet.arknet.media', 'tracker.nodenet.arknet.media']
              if machine['role'] == 'core' else
              [host.removeprefix('nodenet-') + '.nodenet.arknet.media',
+              'member-' + host[-1] + '.nodenet.arknet.media',
               'jellyfin-' + host[-1] + '.nodenet.arknet.media'])
     config = '''# Infrastructure TLS verification only; application deployment is pending.
 server {

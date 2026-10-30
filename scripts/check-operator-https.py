@@ -64,7 +64,7 @@ def request(url, method='GET', body=None, headers=None):
 def ports():
     sockets = []
     try:
-        for _ in range(3):
+        for _ in range(4):
             sock = socket.socket()
             sock.bind(('0.0.0.0', 0))
             sockets.append(sock)
@@ -162,7 +162,7 @@ def main():
             module = command(['node', '-p', 'require.resolve("playwright")']).strip()
         lan = args.lan_address or lan_address()
         assert not lan.startswith('127.') and lan != '0.0.0.0', 'need a real LAN address'
-        agent, http, https = ports()
+        agent, http, https, member = ports()
         tls = work / 'tls'
         tls.mkdir()
         command(['openssl', 'ecparam', '-name', 'prime256v1', '-genkey', '-noout',
@@ -172,7 +172,7 @@ def main():
         (tls / 'key.pem').chmod(0o644)  # disposable certificate, readable by non-root UI
         password = secrets.token_hex(24)
         env = work / '.env'
-        env.write_text(f'POSTGRES_PASSWORD={password}\nARKNET_AGENT_PORT={agent}\nARKNET_UI_PORT={http}\n'
+        env.write_text(f'POSTGRES_PASSWORD={password}\nARKNET_AGENT_PORT={agent}\nARKNET_MEMBER_PORT={member}\nARKNET_UI_PORT={http}\n'
                        f'ARKNET_UI_HTTPS_BIND=0.0.0.0:{https}\nARKNET_TLS_DIR={tls}\n')
         env.chmod(0o600)
         (work / 'override.json').write_text(json.dumps({'services': {
@@ -182,6 +182,10 @@ def main():
         command(compose + ['build', 'arknet-agent', 'arknet-ui'], timeout=600)
         command(compose + ['up', '-d', '--wait', '--wait-timeout', '180', 'postgres', 'arknet-agent', 'arknet-ui'], timeout=240)
         report('PASS real Agent/Postgres/UI healthy')
+        assert request(f'http://127.0.0.1:{member}/health')[0] == 200
+        assert request(f'http://127.0.0.1:{member}/api/v1/status')[0] == 404
+        assert request(f'http://127.0.0.1:{agent}/api/v1/global-users/sessions', 'POST', {})[0] == 404
+        report('PASS member and management listeners are route-separated')
         assert request(f'http://127.0.0.1:{http}/')[0] == 200
         report('PASS loopback HTTP accessible')
         try:

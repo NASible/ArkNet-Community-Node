@@ -135,6 +135,19 @@ func TestRunReportsListenError(t *testing.T) {
 	}
 }
 
+func TestRunReportsMemberListenError(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	cfg := config{addr: "127.0.0.1:0", memberAddr: listener.Addr().String(), shutdownTimeout: time.Second}
+	err = run(context.Background(), cfg, slog.New(slog.NewJSONHandler(io.Discard, nil)))
+	if err == nil || !strings.Contains(err.Error(), "member listen") {
+		t.Fatalf("expected member listen error, got %v", err)
+	}
+}
+
 func TestConfiguredHandlerChecksJellyfinWithoutCore(t *testing.T) {
 	jellyfin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/health" {

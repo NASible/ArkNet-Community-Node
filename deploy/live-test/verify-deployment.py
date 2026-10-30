@@ -40,7 +40,7 @@ for host, machine in MACHINES.items():
     assert mode == 0, 'Tailscale netfilter overrides UFW policy'
     proof['machines'][host]['running_container_count'] = len(rows)
     proof['machines'][host]['ufw_authoritative'] = True
-    for port in ([22, 8083, 6969] if machine['role'] == 'core' else [22, 8082, 5174, 8096, 8084]):
+    for port in ([22, 8083, 6969] if machine['role'] == 'core' else [22, 8082, 8086, 5174, 8096, 8084]):
         try:
             with socket.create_connection((machine['lan_ip'], port), timeout=.5):
                 raise AssertionError(f'{host}: private port {port} reachable on LAN')
@@ -59,7 +59,9 @@ for host, machine in MACHINES.items():
         proof['boundaries'][host + '_lan_jellyfin_only'] = True
     print('SERVICE_IMAGE_AND_BOUNDARY_PASS', host, flush=True)
 for domain, address, path, expected in [('node-b.nodenet.arknet.media', '100.64.0.23', '/api/v1/status', '403'),
-                                        ('core.nodenet.arknet.media', '100.64.0.21', '/api/admin/v1/nodes/pending', '403'),
+                                         ('member-b.nodenet.arknet.media', '100.64.0.23', '/health', '200'),
+                                         ('member-b.nodenet.arknet.media', '100.64.0.23', '/api/v1/status', '404'),
+                                         ('core.nodenet.arknet.media', '100.64.0.21', '/api/admin/v1/nodes/pending', '403'),
                                         ('jellyfin-b.nodenet.arknet.media', '100.64.0.23', '/health', '200')]:
     result = ssh('nodenet-node-a', 'curl -sS --max-time 10 --resolve ' + domain + ':443:' + address +
                  ' -o /dev/null -w "%{http_code}" https://' + domain + path).decode().strip()

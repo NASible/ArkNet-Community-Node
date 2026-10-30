@@ -216,6 +216,8 @@ else
         echo "ARKNET_CORE_URL=$CORE_URL"
         [ "$ALLOW_HTTP" = "true" ] && echo "ARKNET_CORE_ALLOW_HTTP=true"
         echo "ARKNET_RELEASE_INDEX_URL=$RELEASE_URL/index.json"
+        echo "# Member API loopback port for a TLS reverse proxy"
+        echo "ARKNET_MEMBER_PORT=8086"
         [ "$ALLOW_HTTP" = "true" ] && echo "ARKNET_RELEASE_INDEX_ALLOW_HTTP=true"
     } > "$env_file.tmp"
     umask "$old_umask"

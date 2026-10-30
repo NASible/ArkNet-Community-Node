@@ -26,6 +26,10 @@ when rebuilding a VM; its non-secret policy is backed up at
 | User B | https://node-b.nodenet.arknet.media | https://jellyfin-b.nodenet.arknet.media |
 | User C | https://node-c.nodenet.arknet.media | https://jellyfin-c.nodenet.arknet.media |
 
+Member APIs (health and member/operator login) are
+`https://member-a.nodenet.arknet.media`, `https://member-b.nodenet.arknet.media`
+and `https://member-c.nodenet.arknet.media`; management routes answer 404 there.
+
 Core API: `https://core.nodenet.arknet.media`. It does not ship a separate Core
 administration dashboard. Private tracker: `https://tracker.nodenet.arknet.media`.
 

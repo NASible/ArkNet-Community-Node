@@ -56,9 +56,9 @@ KEY.chmod(0o600)
 
 identities = {
     'nodenet-core': ['core.nodenet.arknet.media', 'tracker.nodenet.arknet.media', 'nodenet.arknet.media'],
-    'nodenet-node-a': ['node-a.nodenet.arknet.media', 'jellyfin-a.nodenet.arknet.media'],
-    'nodenet-node-b': ['node-b.nodenet.arknet.media', 'jellyfin-b.nodenet.arknet.media'],
-    'nodenet-node-c': ['node-c.nodenet.arknet.media', 'jellyfin-c.nodenet.arknet.media'],
+    'nodenet-node-a': ['node-a.nodenet.arknet.media', 'member-a.nodenet.arknet.media', 'jellyfin-a.nodenet.arknet.media'],
+    'nodenet-node-b': ['node-b.nodenet.arknet.media', 'member-b.nodenet.arknet.media', 'jellyfin-b.nodenet.arknet.media'],
+    'nodenet-node-c': ['node-c.nodenet.arknet.media', 'member-c.nodenet.arknet.media', 'jellyfin-c.nodenet.arknet.media'],
 }
 for host, names in identities.items():
     directory = BASE / host

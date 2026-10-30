@@ -27,8 +27,9 @@ federation retains `core_connectivity: "NOT_IMPLEMENTED"`. Database read failure
 with `{"error":"local state database unavailable"}` instead of fabricated state.
 No credentials or driver errors appear in HTTP responses.
 
-Standalone `go run .` still listens on `127.0.0.1:8081`, but now requires a
-reachable PostgreSQL database configured below. No Core service is needed.
+Standalone `go run .` listens on `127.0.0.1:8081` for management and
+`127.0.0.1:8082` for public/member routes, and requires a reachable PostgreSQL
+database configured below. No Core service is needed.
 The Compose database is deliberately not host-published. Local Compose explicitly
 sets `PGSSLMODE=disable` on its dedicated development network only; do not copy
 that setting to remote deployments. Passwords supplied through `PGPASSWORD`
@@ -77,7 +78,8 @@ explicit exception. Opt-in outbound enrollment is described below.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `ARKNET_AGENT_ADDR` | `127.0.0.1:8081` | Listener in `host:port` form; port `0` selects an available port. |
+| `ARKNET_AGENT_ADDR` | `127.0.0.1:8081` | Management listener in `host:port` form; port `0` selects an available port. |
+| `ARKNET_MEMBER_ADDR` | `127.0.0.1:8082` | Public/member listener in `host:port` form; port `0` selects an available port. |
 | `ARKNET_AGENT_LOG_LEVEL` | `INFO` | Standard `slog` level: `DEBUG`, `INFO`, `WARN`, or `ERROR` (case-insensitive; numeric offsets are supported). |
 | `ARKNET_AGENT_SHUTDOWN_TIMEOUT` | `10s` | Positive Go duration allowed for draining active requests. |
 | `DATABASE_URL` | Unset | Overrides all `PG*` settings with a PostgreSQL URL. |
@@ -94,11 +96,13 @@ Unset or empty values use defaults. Invalid configuration or listener failures
 exit with status 1. Core server variables such as `ARKNET_CORE_ADDR` do not
 configure the Agent; `ARKNET_CORE_URL` specifically configures its outbound client.
 
-The management API has no authentication in this bootstrap. Keep the default
-loopback binding; binding to `:8081` exposes it on all interfaces and requires
+Management routes require an operator session, and the two listeners split
+routes by the permission matrix: wrong-listener routes answer 404. See
+[operator authentication](../docs/node-operator-authentication.md#listener-split).
+Keep both default loopback bindings; binding to all interfaces requires
 appropriate external access controls. The [Node development Compose stack](../deploy/node/README.md)
-binds the Agent on the container network while publishing only on host loopback,
-and provides the persistent private PostgreSQL database.
+binds the Agent on the container network while publishing both listeners only
+on host loopback, and provides the persistent private PostgreSQL database.
 
 Structured JSON logs go to stdout with startup address/version, shutdown events,
 and errors. No user identities or request bodies are logged. HTTP timeouts match

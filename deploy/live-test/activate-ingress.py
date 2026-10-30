@@ -45,12 +45,21 @@ else:
     label = args.host[-1]
     ip = machine['tailscale_ip']
     config = 'server {\n    listen ' + ip + ':443 ssl;\n    server_name node-' + label + '.nodenet.arknet.media;\n' + common
-    config += '''    # Compensating control for the currently unauthenticated Agent management API.
+    config += '''    # Defense in depth: management has operator auth and remains VPN-restricted.
     # Do not trust forwarded headers as the operator identity.
     allow 100.64.0.10;
     allow 127.0.0.1;
     deny all;
     location / { proxy_pass http://127.0.0.1:5174;
+''' + proxy_headers + '''    }
+}
+server {
+    # Member login/session API is separate from the management listener.
+    listen ''' + ip + ''':443 ssl;
+    server_name member-''' + label + '''.nodenet.arknet.media;
+''' + common + '''    # Operator sign-in belongs to the VPN-restricted node-x UI, not here.
+    location /api/v1/operator/ { return 404; }
+    location / { proxy_pass http://127.0.0.1:8086;
 ''' + proxy_headers + '''    }
 }
 server {

@@ -24,6 +24,7 @@ services:
       context: ../../node-agent
     environment:
       ARKNET_AGENT_ADDR: :8081
+      ARKNET_MEMBER_ADDR: :8082
       ARKNET_AGENT_LOG_LEVEL: ${ARKNET_AGENT_LOG_LEVEL:-INFO}
       ARKNET_AGENT_SHUTDOWN_TIMEOUT: 10s
       # Empty by default: outbound enrollment is opt-in.
@@ -51,7 +52,11 @@ services:
     volumes:
       - ./release.json:/etc/arknet/release.json:ro
     ports:
+      # Management never publishes beyond host loopback. LAN management uses
+      # the UI's authenticated HTTPS reverse proxy below.
       - "127.0.0.1:${ARKNET_AGENT_PORT:-8082}:8081"
+      # Member login/session API: separate loopback endpoint for a TLS ingress.
+      - "127.0.0.1:${ARKNET_MEMBER_PORT:-8086}:8082"
     networks:
       - node
       - media-services
@@ -59,7 +64,7 @@ services:
       postgres:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8081/health"]
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8082/health"]
       interval: 5s
       timeout: 3s
       retries: 12
@@ -72,6 +77,7 @@ services:
       context: ../../node-ui
     environment:
       ARKNET_AGENT_URL: http://arknet-agent:8081
+      ARKNET_MEMBER_URL: http://arknet-agent:8082
     # Plain HTTP stays on loopback (SSH tunnels). The HTTPS listener serves the
     # LAN with the Node's self-signed certificate, created by arknet-node.
     volumes:

@@ -64,19 +64,21 @@ class Operator:
         return {"Cookie": f"{COOKIE}={self.cookie}"}
 
 
-def bootstrap(base: str, code: str, request: Callable, username: str = "harness-operator") -> Operator:
+def bootstrap(base: str, code: str, request: Callable, username: str = "harness-operator",
+              member_base: str | None = None) -> Operator:
     """Create an operator with a setup or recovery code and return its session.
 
     `request(url, method, body, headers)` returns (status, headers, body_bytes),
     like the harnesses' shared request helper.
     """
     password = "harness " + random.token_urlsafe(24)
-    status, _, body = request(base + "/api/v1/operator/setup", "POST",
+    public_base = member_base or base
+    status, _, body = request(public_base + "/api/v1/operator/setup", "POST",
                               {"setup_code": code, "username": username, "password": password}, None)
     if status != 201:
         raise AssertionError(f"operator setup: HTTP {status}")
     started = json.loads(body)
-    status, headers, body = request(base + "/api/v1/operator/setup/confirm", "POST",
+    status, headers, body = request(public_base + "/api/v1/operator/setup/confirm", "POST",
                                     {"enrollment_token": started["enrollment_token"], "totp": totp(started["totp_secret"])}, None)
     if status != 201:
         raise AssertionError(f"operator setup confirm: HTTP {status}")

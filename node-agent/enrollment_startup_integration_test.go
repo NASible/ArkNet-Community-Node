@@ -18,10 +18,14 @@ import (
 	"time"
 )
 
+// startupAddrs holds the two Agent listener addresses from server_started logs.
+type startupAddrs struct{ management, member string }
+
 type startupLogCapture struct {
 	mu      sync.Mutex
 	logs    strings.Builder
-	started chan string
+	addrs   map[string]string
+	started chan startupAddrs
 }
 
 func (w *startupLogCapture) Write(p []byte) (int, error) {
@@ -30,7 +34,14 @@ func (w *startupLogCapture) Write(p []byte) (int, error) {
 	w.logs.Write(p)
 	var event map[string]any
 	if json.Unmarshal(p, &event) == nil && event["msg"] == "server_started" {
-		w.started <- event["addr"].(string)
+		if w.addrs == nil {
+			w.addrs = map[string]string{}
+		}
+		listener, _ := event["listener"].(string)
+		w.addrs[listener], _ = event["addr"].(string)
+		if w.addrs["management"] != "" && w.addrs["member"] != "" {
+			w.started <- startupAddrs{management: w.addrs["management"], member: w.addrs["member"]}
+		}
 	}
 	return len(p), nil
 }
@@ -68,7 +79,7 @@ func startupTestConfig(t *testing.T) config {
 	q := u.Query()
 	q.Set("search_path", schema)
 	u.RawQuery = q.Encode()
-	return config{addr: "127.0.0.1:0", databaseURL: u.String(), shutdownTimeout: time.Second}
+	return config{addr: "127.0.0.1:0", memberAddr: "127.0.0.1:0", databaseURL: u.String(), shutdownTimeout: time.Second}
 }
 func TestRunLocalAPIStartsWhileCoreBlockedAndWorkerJoins(t *testing.T) {
 	cfg := startupTestConfig(t)
@@ -78,7 +89,7 @@ func TestRunLocalAPIStartsWhileCoreBlockedAndWorkerJoins(t *testing.T) {
 	defer server.Close()
 	defer close(release)
 	cfg.coreURL = server.URL
-	logs := &startupLogCapture{started: make(chan string, 1)}
+	logs := &startupLogCapture{started: make(chan startupAddrs, 1)}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	done := make(chan error, 1)
@@ -88,14 +99,14 @@ func TestRunLocalAPIStartsWhileCoreBlockedAndWorkerJoins(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("worker did not start")
 	}
-	var addr string
+	var addr startupAddrs
 	select {
 	case addr = <-logs.started:
 	case <-time.After(time.Second):
 		t.Fatal("local API blocked on Core")
 	}
-	cookie := startupOperatorCookie(t, cfg, "http://"+addr)
-	status := startupStatus(t, "http://"+addr, cookie)
+	cookie := startupOperatorCookie(t, cfg, "http://"+addr.member)
+	status := startupStatus(t, "http://"+addr.management, cookie)
 	if !status.AgentHealthy || !status.DatabaseHealthy {
 		t.Fatal("local API is unhealthy while Core is blocked")
 	}

@@ -65,7 +65,8 @@ func defaultCLIEnv(getenv func(string) string, stdout, stderr io.Writer) cliEnv 
 			return store, func() { _ = store.Close() }, nil
 		},
 		agentHealthy: func(ctx context.Context, cfg config) bool {
-			_, port, err := net.SplitHostPort(cfg.addr)
+			// /health is a public route, served only on the member listener (45C).
+			_, port, err := net.SplitHostPort(cfg.memberAddr)
 			if err != nil {
 				return false
 			}

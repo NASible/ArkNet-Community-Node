@@ -89,6 +89,30 @@ func (m *routeMux) HandleFunc(pattern string, handler func(http.ResponseWriter, 
 func (m *routeMux) Handler(r *http.Request) (http.Handler, string)   { return m.mux.Handler(r) }
 func (m *routeMux) ServeHTTP(w http.ResponseWriter, r *http.Request) { m.mux.ServeHTTP(w, r) }
 
+type listenerPartition struct {
+	routes  *routeMux
+	next    http.Handler
+	allowed func(permission) bool
+}
+
+func (p listenerPartition) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	_, pattern := p.routes.Handler(r)
+	permission, listed := routePermissions[pattern]
+	if pattern == "" || !listed || !p.allowed(permission) {
+		http.NotFound(w, r)
+		return
+	}
+	p.next.ServeHTTP(w, r)
+}
+
+func memberPermission(p permission) bool {
+	return p == permPublic || p == permMember
+}
+
+func managementPermission(p permission) bool {
+	return p == permOperator || p == permStepUp
+}
+
 type operatorContextKey struct{}
 
 // operatorFromContext returns the authorized operator session, if any.

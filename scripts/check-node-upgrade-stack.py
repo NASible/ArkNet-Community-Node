@@ -43,7 +43,7 @@ TOOL = NODE_DIR / "arknet-node"
 PROJECT = "arknet-upgrade-test"
 REGISTRY_NAME = "arknet-upgrade-test-registry"
 REGISTRY = "localhost:15039"
-AGENT_PORT, UI_PORT, JELLYFIN_PORT, HTTPS_PORT = 18110, 18111, 18112, 18113
+AGENT_PORT, UI_PORT, JELLYFIN_PORT, HTTPS_PORT, MEMBER_PORT = 18110, 18111, 18112, 18113, 18114
 UI_SOURCE_IMAGE = "arknet-ui:upgrade-test-source"
 session = {}  # operator cookie header for agent()
 A, B, BROKEN, UNPULLABLE = "0.0.2-dev.1", "0.0.2-dev.2", "0.0.2-dev.3", "0.0.2-dev.4"
@@ -182,7 +182,7 @@ def main():
         # Install release A (what the Prompt 40 installer will do).
         old = os.umask(0o077)
         env_file.write_text(f"POSTGRES_PASSWORD={secrets.token_hex(24)}\nARKNET_AGENT_PORT={AGENT_PORT}\n"
-                            f"ARKNET_UI_PORT={UI_PORT}\nJELLYFIN_BIND=127.0.0.1:{JELLYFIN_PORT}\n"
+                            f"ARKNET_MEMBER_PORT={MEMBER_PORT}\nARKNET_UI_PORT={UI_PORT}\nJELLYFIN_BIND=127.0.0.1:{JELLYFIN_PORT}\n"
                             f"ARKNET_UI_HTTPS_BIND=127.0.0.1:{HTTPS_PORT}\n"
                             f"ARKNET_RELEASE_INDEX_URL={agent_index_url}\nARKNET_RELEASE_INDEX_ALLOW_HTTP=true\n")
         os.umask(old)
@@ -202,10 +202,15 @@ def main():
         status, _, _ = raw_request(f"http://127.0.0.1:{AGENT_PORT}/api/v1/status")
         check("management API refuses an anonymous caller", status == 401, f"HTTP {status}")
         code = operator_login.setup_code(sh(*compose_a, "exec", "-T", "arknet-agent", "arknet-agent", "operator", "setup-code").stdout)
-        first = operator_login.bootstrap(f"http://127.0.0.1:{AGENT_PORT}", code, raw_request, username="operator-a")
+        first = operator_login.bootstrap(f"http://127.0.0.1:{AGENT_PORT}", code, raw_request, username="operator-a",
+                                         member_base=f"http://127.0.0.1:{MEMBER_PORT}")
         session.update(first.headers)
         status = agent("/api/v1/status")
         check("release A installed and running", status["release"] == {"version": A, "channel": "development"}, status["release"])
+        member_status = raw_request(f"http://127.0.0.1:{MEMBER_PORT}/api/v1/status")[0]
+        management_login = raw_request(f"http://127.0.0.1:{AGENT_PORT}/api/v1/global-users/sessions", "POST", {})[0]
+        check("member and management listeners are separated", member_status == 404 and management_login == 404,
+              f"member status {member_status}, management member-login {management_login}")
 
         # Data that must survive.
         node_id = status["node_id"]
@@ -257,7 +262,8 @@ def main():
               printed is not None and f"https://" in out and printed.group(1) == served_fingerprint(HTTPS_PORT),
               "printed fingerprint matches the certificate served on the HTTPS listener" if printed else "not printed")
         upgrade_code = operator_login.setup_code(out)
-        second = operator_login.bootstrap(f"http://127.0.0.1:{AGENT_PORT}", upgrade_code, raw_request, username="operator-b")
+        second = operator_login.bootstrap(f"http://127.0.0.1:{AGENT_PORT}", upgrade_code, raw_request, username="operator-b",
+                                          member_base=f"http://127.0.0.1:{MEMBER_PORT}")
         session.update(second.headers)
         check("setup code printed by the upgrade creates an operator", True)
         status = agent("/api/v1/status")

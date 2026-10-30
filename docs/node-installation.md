@@ -157,3 +157,9 @@ The site serves:
   is protected only by HTTPS until index and manifest signing exists.
 - Nothing listens publicly. The Agent, UI and Jellyfin are bound to loopback
   by the release Compose file, and enrollment is outbound to Core.
+- The Agent has two loopback ports: management on `127.0.0.1:8082` (operator
+  and management APIs) and member on `127.0.0.1:8086` (`ARKNET_MEMBER_PORT`:
+  health and member/operator login). Routes answer `404` on the wrong port, so
+  a reverse proxy can expose the member port without exposing management. The
+  member port still serves operator sign-in and first-operator setup, so block
+  `/api/v1/operator/` at that proxy unless operators need it there.

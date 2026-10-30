@@ -21,6 +21,7 @@ type config struct {
 	heartbeatInterval         time.Duration
 	coreURL                   string
 	addr                      string
+	memberAddr                string
 	databaseURL               string
 	logLevel                  slog.Level
 	shutdownTimeout           time.Duration
@@ -44,7 +45,7 @@ func loadConfig(getenv func(string) string) (config, error) {
 			return config{}, fmt.Errorf("ARKNET_HEARTBEAT_INTERVAL must be a Go duration between 5s and 5m")
 		}
 	}
-	cfg := config{heartbeatInterval: interval, addr: "127.0.0.1:8081", logLevel: slog.LevelInfo, shutdownTimeout: 10 * time.Second, transferReconcileInterval: 30 * time.Second}
+	cfg := config{heartbeatInterval: interval, addr: "127.0.0.1:8081", memberAddr: "127.0.0.1:8082", logLevel: slog.LevelInfo, shutdownTimeout: 10 * time.Second, transferReconcileInterval: 30 * time.Second}
 	allocationGiB := getenv("ARKNET_MEDIA_STORAGE_ALLOCATION_GIB")
 	allocationBytes := getenv("ARKNET_MEDIA_STORAGE_ALLOCATION_BYTES")
 	if allocationGiB != "" && allocationBytes != "" {
@@ -68,16 +69,21 @@ func loadConfig(getenv func(string) string) (config, error) {
 		}
 		cfg.mediaStorageAllocation = allocation
 	}
-	if value := getenv("ARKNET_AGENT_ADDR"); value != "" {
-		_, port, err := net.SplitHostPort(value)
-		if err != nil {
-			return config{}, fmt.Errorf("ARKNET_AGENT_ADDR must be host:port: %w", err)
+	for _, binding := range []struct {
+		key    string
+		target *string
+	}{{"ARKNET_AGENT_ADDR", &cfg.addr}, {"ARKNET_MEMBER_ADDR", &cfg.memberAddr}} {
+		if value := getenv(binding.key); value != "" {
+			_, port, err := net.SplitHostPort(value)
+			if err != nil {
+				return config{}, fmt.Errorf("%s must be host:port: %w", binding.key, err)
+			}
+			n, err := strconv.Atoi(port)
+			if err != nil || n < 0 || n > 65535 {
+				return config{}, fmt.Errorf("%s port must be between 0 and 65535", binding.key)
+			}
+			*binding.target = value
 		}
-		n, err := strconv.Atoi(port)
-		if err != nil || n < 0 || n > 65535 {
-			return config{}, fmt.Errorf("ARKNET_AGENT_ADDR port must be between 0 and 65535")
-		}
-		cfg.addr = value
 	}
 	if value := getenv("ARKNET_AGENT_LOG_LEVEL"); value != "" {
 		if err := cfg.logLevel.UnmarshalText([]byte(value)); err != nil {

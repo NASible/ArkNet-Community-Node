@@ -25,11 +25,16 @@ import (
 )
 
 func run(ctx context.Context, cfg config, logger *slog.Logger) error {
-	listener, err := net.Listen("tcp", cfg.addr)
+	managementListener, err := net.Listen("tcp", cfg.addr)
 	if err != nil {
-		return fmt.Errorf("listen: %w", err)
+		return fmt.Errorf("management listen: %w", err)
 	}
-	defer listener.Close()
+	defer managementListener.Close()
+	memberListener, err := net.Listen("tcp", cfg.memberAddr)
+	if err != nil {
+		return fmt.Errorf("member listen: %w", err)
+	}
+	defer memberListener.Close()
 	connectCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	database, err := postgres.Open(connectCtx, cfg.databaseURL)
 	cancel()
@@ -83,7 +88,7 @@ func run(ctx context.Context, cfg config, logger *slog.Logger) error {
 	if transferService != nil {
 		opts = append(opts, transferOpt{service: transferService})
 	}
-	handler := newHandler(database, opts...)
+	managementHandler, memberHandler := newListenerHandlers(database, opts...)
 	var reconcileDone <-chan struct{}
 	if transferService != nil && jellyfinAdapter != nil && cfg.jellyfinAPIKey != "" && cfg.transferStagingDir != "" && cfg.mediaDir != "" {
 		reconciler := transferReconciler{
@@ -114,15 +119,29 @@ func run(ctx context.Context, cfg config, logger *slog.Logger) error {
 		missDone := runMediaMissSync(workerCtx, cfg.heartbeatInterval, syncer, func(error) { logger.Warn("media_miss_sync_failed") })
 		defer func() { stopWorker(); <-missDone }()
 	}
-	server := &http.Server{
-		Handler:           handler,
-		ReadHeaderTimeout: 5 * time.Second,
-		ReadTimeout:       15 * time.Second,
-		WriteTimeout:      30 * time.Second,
-		IdleTimeout:       60 * time.Second,
-		ErrorLog:          slog.NewLogLogger(logger.Handler(), slog.LevelError),
+	server := func(handler http.Handler) *http.Server {
+		return &http.Server{
+			Handler:           handler,
+			ReadHeaderTimeout: 5 * time.Second,
+			ReadTimeout:       15 * time.Second,
+			WriteTimeout:      30 * time.Second,
+			IdleTimeout:       60 * time.Second,
+			ErrorLog:          slog.NewLogLogger(logger.Handler(), slog.LevelError),
+		}
 	}
-	return serve(ctx, server, listener, cfg.shutdownTimeout, logger)
+	serverCtx, stopServers := context.WithCancel(ctx)
+	defer stopServers()
+	results := make(chan error, 2)
+	go func() {
+		results <- serve(serverCtx, server(managementHandler), managementListener, cfg.shutdownTimeout, logger.With("listener", "management"))
+	}()
+	go func() {
+		results <- serve(serverCtx, server(memberHandler), memberListener, cfg.shutdownTimeout, logger.With("listener", "member"))
+	}()
+	first := <-results
+	stopServers()
+	second := <-results
+	return errors.Join(first, second)
 }
 
 // newConfiguredHandler wires routes from configuration without authorization;

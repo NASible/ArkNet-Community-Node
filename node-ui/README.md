@@ -19,7 +19,7 @@ Use npm and a supported Node.js version: 22.22.2+, 24.15.0+, or 26+ (the tooling
 supports these version branches). Go 1.25+ and a configured PostgreSQL database
 are needed to run the Agent standalone. See [Agent database configuration](../node-agent/README.md).
 For the easiest workflow, start the Node Compose stack, then run local Vite with
-`ARKNET_AGENT_URL=http://127.0.0.1:8082 npm run dev`.
+`ARKNET_AGENT_URL=http://127.0.0.1:8082 ARKNET_MEMBER_URL=http://127.0.0.1:8086 npm run dev`.
 
 If using a standalone Agent with a configured database, start it in one terminal
 from the repository root:
@@ -38,17 +38,19 @@ npm run dev
 ```
 
 Open **http://127.0.0.1:5173/**. No Core service is required. The UI development
-server binds to loopback and proxies `/api` to `http://127.0.0.1:8081` by default.
+server binds to loopback. It proxies login and session routes to the Agent's
+member listener (`http://127.0.0.1:8082` by default) and the rest of `/api` to the
+management listener (`http://127.0.0.1:8081` by default).
 The browser fetches `/api/v1/status` on its own origin; the Agent needs no CORS
 changes and is not exposed on additional interfaces.
 
-To use another local Agent address, configure the server-side proxy target:
+To use other local Agent addresses, configure the server-side proxy targets:
 
 ```sh
-ARKNET_AGENT_URL=http://127.0.0.1:9081 npm run dev
+ARKNET_AGENT_URL=http://127.0.0.1:9081 ARKNET_MEMBER_URL=http://127.0.0.1:9082 npm run dev
 ```
 
-`ARKNET_AGENT_URL` may also be set in an ignored `.env.local` file. It is not a
+`ARKNET_AGENT_URL` (management) and `ARKNET_MEMBER_URL` (member) may also be set in an ignored `.env.local` file. Neither is a
 browser credential or Core address. Restart Vite after changing proxy settings.
 Never place secrets in `VITE_*` variables, which are exposed to browser code.
 

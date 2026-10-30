@@ -95,9 +95,10 @@ with tunnel(machine, 8082) as agent:
         owner['node_id'] = node_id
         save_secrets(secrets)
     request(core + '/api/identity/v1/home-node', 'PUT', {'node_id': node_id}, session)
-    # Verify the actual pairwise login path, not merely account creation.
-    _, global_login = request(agent + '/api/v1/global-users/sessions', 'POST',
-                               {'member_id': owner['member_id'], 'password': owner['password']})
+    # Verify the actual pairwise login path on the separate member listener.
+    with tunnel(machine, 8086) as member:
+        _, global_login = request(member + '/api/v1/global-users/sessions', 'POST',
+                                  {'member_id': owner['member_id'], 'password': owner['password']})
     assert global_login.get('token')
     request(core + '/api/identity/v1/session', 'DELETE', headers=session, expected=(200, 204))
     print('NODE_CONNECTED_OWNER_MEMBERSHIP_LOGIN_VERIFIED', args.host, owner['username'], flush=True)

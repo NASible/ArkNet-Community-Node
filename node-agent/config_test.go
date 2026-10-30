@@ -13,7 +13,7 @@ func TestLoadConfigDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.addr != "127.0.0.1:8081" || cfg.logLevel != slog.LevelInfo || cfg.shutdownTimeout != 10*time.Second {
+	if cfg.addr != "127.0.0.1:8081" || cfg.memberAddr != "127.0.0.1:8082" || cfg.logLevel != slog.LevelInfo || cfg.shutdownTimeout != 10*time.Second {
 		t.Fatalf("unexpected defaults: %+v", cfg)
 	}
 }
@@ -21,6 +21,7 @@ func TestLoadConfigDefaults(t *testing.T) {
 func TestLoadConfigOverrides(t *testing.T) {
 	env := map[string]string{
 		"ARKNET_AGENT_ADDR":             ":9000",
+		"ARKNET_MEMBER_ADDR":            ":9001",
 		"ARKNET_AGENT_LOG_LEVEL":        "debug",
 		"ARKNET_AGENT_SHUTDOWN_TIMEOUT": "2s",
 	}
@@ -28,7 +29,7 @@ func TestLoadConfigOverrides(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.addr != ":9000" || cfg.logLevel != slog.LevelDebug || cfg.shutdownTimeout != 2*time.Second {
+	if cfg.addr != ":9000" || cfg.memberAddr != ":9001" || cfg.logLevel != slog.LevelDebug || cfg.shutdownTimeout != 2*time.Second {
 		t.Fatalf("unexpected config: %+v", cfg)
 	}
 }
@@ -38,6 +39,8 @@ func TestLoadConfigRejectsInvalidValues(t *testing.T) {
 		{"ARKNET_AGENT_ADDR", "missing-port"},
 		{"ARKNET_AGENT_ADDR", "localhost:bad"},
 		{"ARKNET_AGENT_ADDR", ":65536"},
+		{"ARKNET_MEMBER_ADDR", "missing-port"},
+		{"ARKNET_MEMBER_ADDR", ":65536"},
 		{"ARKNET_AGENT_LOG_LEVEL", "verbose"},
 		{"ARKNET_AGENT_SHUTDOWN_TIMEOUT", "not-a-duration"},
 		{"ARKNET_AGENT_SHUTDOWN_TIMEOUT", "0s"},

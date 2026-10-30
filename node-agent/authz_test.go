@@ -71,6 +71,36 @@ func registeredPatterns(t *testing.T) []string {
 	return patterns
 }
 
+func TestListenerPartitionsFollowRegisteredPermissionMatrix(t *testing.T) {
+	clock := time.Unix(1_800_000_000, 0)
+	accounts := newMemoryOperators(func() time.Time { return clock })
+	repo, opts := allRouteOptions(accounts, func() time.Time { return clock })
+	management, member := newListenerHandlers(repo, opts...)
+	for _, pattern := range registeredPatterns(t) {
+		permission := routePermissions[pattern]
+		operatorRoute := permission == permOperator || permission == permStepUp
+		right, wrong, rightName, wrongName := member, management, "member", "management"
+		if operatorRoute {
+			right, wrong, rightName, wrongName = management, member, "management", "member"
+		}
+		// Wrong listener: 404 before anything behind the partition runs.
+		w, reached := serveSpy(wrong, requestFor(pattern))
+		if reached != "" || w.Code != http.StatusNotFound {
+			t.Errorf("%s on %s listener: HTTP %d, reached %q; want 404", pattern, wrongName, w.Code, reached)
+		}
+		// Right listener: the route is actually served. Without a session an
+		// operator route stops at authorization (401); a public/member route
+		// reaches its handler (a spy panics or the handler answers non-404).
+		w, reached = serveSpy(right, requestFor(pattern))
+		if operatorRoute && (reached != "" || w.Code != http.StatusUnauthorized) {
+			t.Errorf("%s on %s listener: HTTP %d, reached %q; want 401 from authorization", pattern, rightName, w.Code, reached)
+		}
+		if !operatorRoute && reached == "" && w.Code == http.StatusNotFound {
+			t.Errorf("%s is not served on the %s listener", pattern, rightName)
+		}
+	}
+}
+
 // Acceptance: generated from the registered routes. Adding a route without a
 // matrix entry fails here (and is denied at runtime).
 func TestEveryRegisteredRouteHasAPermission(t *testing.T) {

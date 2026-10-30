@@ -24,7 +24,7 @@ until index and manifest signing exists; see Limits.
 
 | Path | Purpose |
 |---|---|
-| `.env` | Operator settings and secrets. Must be mode 0600. Upgrades preserve existing settings; the first HTTPS-enabled upgrade appends `ARKNET_TLS_DIR` when absent. |
+| `.env` | Operator settings and secrets. Must be mode 0600. Upgrades preserve existing settings; the first HTTPS-enabled upgrade appends `ARKNET_TLS_DIR` when absent, and the first upgrade with a separate member listener appends `ARKNET_MEMBER_PORT=8086` when absent. |
 | `tls/` | Per-Node self-signed management certificate (`cert.pem`) and private key (`key.pem`, 0600). Mounted read-only into the UI; never sent to Core. |
 | *(permissions)* | `ARKNET_HOME`, `releases/` and each release directory must be searchable by others (0755), and `release.json` readable (0644). The Agent container runs as UID 10001 and bind-mounts its release's `release.json`; otherwise it reports `release: null`. The tool writes releases with these modes and refuses to run if they are missing. |
 | `state.json` | `arknet.node-install/v1`: installed `release`, `previous`, Compose `project`, and `compose_files` in use (e.g. only `compose.yaml`, or plus `compose.transfer.yaml`). |

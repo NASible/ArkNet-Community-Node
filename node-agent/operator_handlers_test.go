@@ -612,3 +612,19 @@ func TestStatusCommandReportsLocalState(t *testing.T) {
 		t.Fatal("bad flag accepted")
 	}
 }
+
+// The status CLI probes /health on the member listener: that is the only
+// listener serving public routes after 45C, so probing management would
+// report the Agent unhealthy and fail every upgrade.
+func TestDefaultAgentHealthProbesMemberListener(t *testing.T) {
+	management, member := newListenerHandlers(testRepository{})
+	managementServer := httptest.NewServer(management)
+	defer managementServer.Close()
+	memberServer := httptest.NewServer(member)
+	defer memberServer.Close()
+	cfg := config{addr: strings.TrimPrefix(managementServer.URL, "http://"), memberAddr: strings.TrimPrefix(memberServer.URL, "http://")}
+	env := defaultCLIEnv(func(string) string { return "" }, &bytes.Buffer{}, &bytes.Buffer{})
+	if !env.agentHealthy(context.Background(), cfg) {
+		t.Fatal("agent health probe did not reach the member listener's /health")
+	}
+}

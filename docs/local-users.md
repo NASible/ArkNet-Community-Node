@@ -54,6 +54,12 @@ and the Node-local operator session. Local-user bearer sessions do not confer
 management rights. The management listener is HTTPS on the LAN; its plain-HTTP
 listener is published only on host loopback.
 
+The login and session routes (`POST /api/v1/local-users/sessions`, and `GET`/
+`DELETE /api/v1/local-users/session`) are served on the member listener
+(`ARKNET_MEMBER_ADDR`, host `127.0.0.1:8086`), not the management listener; the
+account-administration routes stay on the management listener. Each answers
+`404` on the other listener.
+
 ## Verification
 
 A live check on 2026-10-25 ran two compiled Node Agents against separate
