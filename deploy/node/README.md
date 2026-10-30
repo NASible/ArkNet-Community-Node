@@ -68,6 +68,9 @@ The local configuration supports:
 - `POSTGRES_USER`: defaults to `arknet`.
 - `POSTGRES_DB`: defaults to `arknet_node`.
 - `ARKNET_UI_PORT`: defaults to `5174` on loopback.
+- `ARKNET_UI_HTTPS_BIND`: defaults to `0.0.0.0:8443` (LAN management HTTPS).
+- `ARKNET_TLS_DIR`: directory containing `cert.pem` and `key.pem`, mounted
+  read-only into the UI; defaults to `./tls` for direct Compose development.
 - `ARKNET_AGENT_PORT`: defaults to `8082` on loopback.
 - `ARKNET_AGENT_LOG_LEVEL`: defaults to `INFO`.
 - `PGSSLMODE`: defaults to `disable` only for the private local Docker network.
@@ -84,21 +87,31 @@ use ports `5173` and `8081`. If a host port is already occupied, change it in
 From `deploy/node/`:
 
 ```sh
+./arknet-node --home "$PWD" tls show   # generate a development certificate, print fingerprint
+
 docker compose up --build -d --wait
+docker compose exec -T arknet-agent arknet-agent operator setup-code
 docker compose ps
 ```
 
 For foreground development, `docker compose up --build` also starts all three
 services and streams logs.
 
-Open **http://127.0.0.1:5174/**. The UI proxies `/api/v1/status` internally to
-`http://arknet-agent:8081`, not to the host's standalone Agent.
+Open **https://<node-address>:8443/**, compare the printed fingerprint with the
+browser's certificate details, and choose **Set up operator** using the printed
+code. Subsequent visits require operator sign-in (password plus authenticator
+or recovery code); use **Sign out** to revoke the session. The UI proxies `/api`
+internally to `http://arknet-agent:8081`, not to the host's standalone Agent.
+Plain HTTP at **http://127.0.0.1:5174/** remains available only on loopback.
 
 ```sh
-curl --fail http://127.0.0.1:5174/api/v1/status
+docker compose exec -T arknet-agent arknet-agent status --json
 curl --fail http://127.0.0.1:8082/health
 docker compose logs --tail 50 arknet-agent arknet-ui postgres
 ```
+
+Anonymous calls to `/api/v1/status` now return 401. Shell-based checks use the
+local Agent CLI instead of bypassing HTTP authorization.
 
 Status also contains `node_id` and `state_changed_at`, persisted across restart.
 See the [state machine](../../docs/node-state-machine.md) for supported transitions.

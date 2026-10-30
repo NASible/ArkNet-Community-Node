@@ -24,6 +24,7 @@ uses only the Python 3 standard library and the Docker CLI.
 from __future__ import annotations
 
 import argparse
+import base64
 import contextlib
 import datetime as dt
 import fcntl
@@ -33,8 +34,10 @@ import json
 import os
 import re
 import shutil
+import socket
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.error
 import urllib.parse
@@ -233,6 +236,62 @@ def fetch(url: str, allow_http: bool, limit: int) -> bytes:
     if len(data) > limit:
         raise ValueError("response too large")
     return data
+
+
+# ------------------------------------------------------------------ TLS
+# The management UI's LAN HTTPS listener uses a per-Node self-signed
+# certificate (docs/node-operator-authentication.md, "LAN HTTPS listener").
+TLS_DAYS = 825
+HTTPS_PORT = 8443
+
+
+def host_addresses() -> list[str]:
+    """Loopback plus this host's primary outbound addresses (no packet is sent)."""
+    addresses = ["127.0.0.1", "::1"]
+    for family, target in ((socket.AF_INET, "192.0.2.1"), (socket.AF_INET6, "2001:db8::1")):
+        try:
+            with socket.socket(family, socket.SOCK_DGRAM) as probe:
+                probe.connect((target, 9))
+                address = probe.getsockname()[0]
+        except OSError:
+            continue
+        if not ipaddress.ip_address(address).is_loopback and address not in addresses:
+            addresses.append(address)
+    return addresses
+
+
+def certificate_fingerprint(cert: Path) -> str:
+    """SHA-256 of the DER certificate, as browsers show it (AB:CD:...)."""
+    text = cert.read_text()
+    body = text.split("-----BEGIN CERTIFICATE-----", 1)[1].split("-----END CERTIFICATE-----", 1)[0]
+    digest = hashlib.sha256(base64.b64decode("".join(body.split()))).hexdigest().upper()
+    return ":".join(digest[i:i + 2] for i in range(0, len(digest), 2))
+
+
+def create_certificate(directory: Path, hostname: str, addresses: list[str], run=subprocess.run) -> None:
+    """ECDSA P-256 self-signed certificate, using only openssl commands that
+    OpenSSL 1.1/3 and LibreSSL share."""
+    directory.mkdir(parents=True, exist_ok=True)
+    directory.chmod(0o755)
+    key, cert = directory / "key.pem", directory / "cert.pem"
+    names = [f"DNS:{n}" for n in dict.fromkeys([hostname, "localhost"])] + [f"IP:{a}" for a in addresses]
+    config = ("[req]\ndistinguished_name=dn\nprompt=no\nx509_extensions=ext\n[dn]\nCN=" + hostname +
+              "\n[ext]\nbasicConstraints=critical,CA:FALSE\nkeyUsage=critical,digitalSignature\n"
+              "extendedKeyUsage=serverAuth\nsubjectAltName=" + ",".join(names) + "\n")
+    with tempfile.TemporaryDirectory() as work:
+        conf, new_key, new_cert = Path(work) / "openssl.cnf", Path(work) / "key.pem", Path(work) / "cert.pem"
+        conf.write_text(config)
+        for args in (["openssl", "ecparam", "-name", "prime256v1", "-genkey", "-noout", "-out", str(new_key)],
+                     ["openssl", "req", "-new", "-x509", "-key", str(new_key), "-out", str(new_cert), "-days", str(TLS_DAYS),
+                      "-sha256", "-config", str(conf)]):
+            result = run(args, capture_output=True, text=True)
+            if result.returncode != 0:
+                raise Failure("tls", "Could not create the management UI certificate with openssl.",
+                              "Install openssl (`sudo apt-get install openssl`) and re-run.")
+        new_key.chmod(0o600)
+        shutil.move(str(new_key), key)
+        new_cert.chmod(0o644)
+        shutil.move(str(new_cert), cert)
 
 
 # -------------------------------------------------------------------- docker
@@ -505,7 +564,57 @@ class Node:
         return found
 
     # -- apply and validate
+    @property
+    def tls_dir(self) -> Path:
+        return self.home / "tls"
+
+    def ensure_tls(self, renew=False) -> str:
+        """Create the UI certificate once (never replaced silently) and point
+        Compose at it. Returns the certificate fingerprint."""
+        cert, key = self.tls_dir / "cert.pem", self.tls_dir / "key.pem"
+        if renew or not cert.is_file() or not key.is_file():
+            create_certificate(self.tls_dir, socket.gethostname(), host_addresses())
+        if cert.is_symlink() or key.is_symlink():
+            raise Failure("tls", "Management TLS files must not be symbolic links.",
+                          "Remove the links and run `sudo arknet-node tls renew`.")
+        key.chmod(0o600)
+        if os.geteuid() == 0:
+            os.chown(key, 0, 0)
+        if self.env_file.is_file() and "ARKNET_TLS_DIR" not in parse_env(self.env_file):
+            with open(self.env_file, "a") as stream:
+                stream.write(f"# Management UI certificate (created by arknet-node)\nARKNET_TLS_DIR={self.tls_dir}\n")
+        return certificate_fingerprint(cert)
+
+    def announce_management(self, project, paths) -> None:
+        """Print the HTTPS address, certificate fingerprint and, when no
+        operator exists yet, a one-time setup code (straight to the terminal)."""
+        env = parse_env(self.env_file) if self.env_file.is_file() else {}
+        port = env.get("ARKNET_UI_HTTPS_BIND", f"0.0.0.0:{HTTPS_PORT}").rsplit(":", 1)[-1] or str(HTTPS_PORT)
+        addresses = [a for a in host_addresses() if not ipaddress.ip_address(a).is_loopback]
+        host = addresses[0] if addresses else socket.gethostname()
+        if ":" in host:
+            host = f"[{host}]"
+        self.say(f"Management UI (this network): https://{host}:{port}")
+        self.say(f"  Certificate SHA-256 fingerprint: {certificate_fingerprint(self.tls_dir / 'cert.pem')}")
+        self.say("  The certificate is self-signed: compare this fingerprint with the one your browser shows before accepting it.")
+        result = self.docker.compose(project, self.env_file, paths, "exec", "-T", "arknet-agent", "arknet-agent",
+                                     "operator", "setup-code", "--if-none", check=False, stdout=None, timeout=60)
+        if result.returncode != 0:
+            self.say("  Could not ask the Agent for an operator setup code; run `sudo arknet-node operator setup-code`.")
+
+    def tls(self, renew: bool) -> int:
+        fingerprint = self.ensure_tls(renew=renew)
+        self.say(f"Management UI certificate: {self.tls_dir / 'cert.pem'}")
+        self.say(f"  SHA-256 fingerprint: {fingerprint}")
+        if renew and self.state_file.exists():
+            state = self.read_state()
+            _, paths = self.release(state["release"], state["compose_files"])
+            self.docker.compose(state["project"], self.env_file, paths, "restart", "arknet-ui")
+            self.say("  Management UI restarted with the new certificate.")
+        return EXIT_OK
+
     def apply(self, project, paths) -> None:
+        self.ensure_tls()
         self.docker.compose(project, self.env_file, paths, "up", "-d", "--wait", "--wait-timeout", str(WAIT_TIMEOUT),
                             "--remove-orphans", "--no-build", "--pull", "never", timeout=WAIT_TIMEOUT + 120)
 
@@ -603,6 +712,7 @@ class Node:
             self.say("[8/8] Validated ArkNet Agent, database and Jellyfin; persistent volumes preserved")
             self.write_state({**state, "release": target["version"], "previous": current["version"]})
             self.say(f"UPGRADED: ArkNet {current['version']} -> {target['version']}. Previous release kept for 'arknet-node rollback'.")
+            self.announce_management(project, target_paths)
             return EXIT_OK
 
         self.say(f"UPGRADE FAILED while applying ArkNet {target['version']}: {problem}")
@@ -713,6 +823,7 @@ class Node:
         port = env.get("ARKNET_UI_PORT") or "5174"
         self.say(f"Setup UI: http://127.0.0.1:{port} (local to this machine only).")
         self.say(f"  From another computer: ssh -L {port}:127.0.0.1:{port} <user>@<this-machine>, then open http://localhost:{port}")
+        self.announce_management(project, paths)
         return EXIT_OK
 
     def rollback(self) -> int:
@@ -751,6 +862,8 @@ class Node:
         """
         state = self.read_state()
         _, paths = self.release(state["release"], state["compose_files"])
+        if args[0] in ("setup-code", "recover"):
+            self.say(f"Certificate SHA-256 fingerprint: {self.ensure_tls()}")
         result = self.docker.compose(state["project"], self.env_file, paths, "exec", "-T", "arknet-agent",
                                      "arknet-agent", "operator", *args, check=False, stdout=None, timeout=60)
         if result.returncode not in (0, 1, 2):
@@ -798,6 +911,10 @@ def main(argv=None, docker=None, out=print) -> int:
                        ("disable", "disable an operator and sign it out everywhere")):
         op_sub.add_parser(name, help=text).add_argument("username")
     op_sub.add_parser("list", help="list operator accounts")
+    tls = sub.add_parser("tls", help="management UI certificate")
+    tls_sub = tls.add_subparsers(dest="tls_command", required=True)
+    tls_sub.add_parser("show", help="print the certificate fingerprint (creates the certificate if missing)")
+    tls_sub.add_parser("renew", help="issue a new certificate, for example after an address change")
     inst = sub.add_parser("install")
     inst.add_argument("--index")
     inst.add_argument("--channel", default="stable", choices=["stable", "development"])
@@ -811,6 +928,8 @@ def main(argv=None, docker=None, out=print) -> int:
                 return node.status()
             if args.command == "rollback":
                 return node.rollback()
+            if args.command == "tls":
+                return node.tls(renew=args.tls_command == "renew")
             if args.command == "operator":
                 extra = ["--additional"] if getattr(args, "additional", False) else []
                 name = [args.username] if hasattr(args, "username") else []

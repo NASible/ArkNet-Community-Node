@@ -9,6 +9,7 @@ import subprocess
 import tempfile
 import threading
 import unittest
+from unittest import mock
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -110,6 +111,8 @@ class FakeDocker:
             files = [args[i + 1] for i, a in enumerate(args) if a == "-f"]
             version = Path(files[0]).parent.name
             rest = args[args.index(files[-1]) + 1:]
+            if rest == ["restart", "arknet-ui"]:
+                return ok()
             if rest[0] == "config":
                 return bad("required variable X is missing") if self.fail_config else ok()
             if rest[0] == "up":
@@ -394,9 +397,63 @@ class UpgradeTests(unittest.TestCase):
             self.assertEqual(args, expected)
             # Codes are printed by the container straight to the terminal, never captured.
             self.assertIsNone(stdout)
+            if expected[0] in ("setup-code", "recover"):
+                self.assertIn("Certificate SHA-256 fingerprint:", self.text())
         self.docker.operator_exit = 1
         self.assertEqual(an.main(["--home", str(self.home), "operator", "setup-code"], docker=an.Docker(self.docker),
                                  out=self.output.append), 1)
+
+    def test_certificate_key_stays_owned_by_installing_root(self):
+        directory = self.home / "root-owned-tls"
+        with mock.patch.object(an.os, "geteuid", return_value=0), mock.patch.object(an.os, "chown") as chown:
+            an.create_certificate(directory, "node.example", ["127.0.0.1"])
+        chown.assert_not_called()
+
+    def test_existing_tls_key_permissions_and_root_owner_are_repaired(self):
+        directory = self.home / "tls"
+        directory.mkdir()
+        key, cert = directory / "key.pem", directory / "cert.pem"
+        key.write_text("existing-key")
+        key.chmod(0o644)
+        cert.write_text("existing-cert")
+        node = an.Node(self.home, an.Docker(self.docker), out=self.output.append)
+        with mock.patch.object(an, "certificate_fingerprint", return_value="fingerprint"), \
+             mock.patch.object(an.os, "geteuid", return_value=0), mock.patch.object(an.os, "chown") as chown:
+            self.assertEqual(node.ensure_tls(), "fingerprint")
+        self.assertEqual(key.stat().st_mode & 0o777, 0o600)
+        chown.assert_called_once_with(key, 0, 0)
+        self.assertEqual(key.read_text(), "existing-key")
+
+    def test_upgrade_creates_ui_certificate_once_and_announces_setup(self):
+        import ssl, stat
+        self.publish_newer()
+        self.assertEqual(self.run_cli("upgrade"), an.EXIT_OK, self.text())
+        cert, key = self.home / "tls" / "cert.pem", self.home / "tls" / "key.pem"
+        self.assertEqual(stat.S_IMODE(key.stat().st_mode), 0o600)
+        expected = hashlib.sha256(ssl.PEM_cert_to_DER_cert(cert.read_text())).hexdigest().upper()
+        expected = ":".join(expected[i:i + 2] for i in range(0, 64, 2))
+        self.assertIn(f"Certificate SHA-256 fingerprint: {expected}", self.text())
+        self.assertIn("Management UI (this network): https://", self.text())
+        text = subprocess.run(["openssl", "x509", "-noout", "-text", "-in", str(cert)], capture_output=True, text=True).stdout
+        for needle in ("DNS:localhost", "IP Address:127.0.0.1", "prime256v1", "TLS Web Server Authentication"):
+            self.assertIn(needle, text)
+        self.assertNotIn("PRIVATE KEY", self.text())
+        env = (self.home / ".env").read_text()
+        self.assertEqual(env.count("ARKNET_TLS_DIR="), 1)
+        self.assertIn(f"ARKNET_TLS_DIR={self.home / 'tls'}", env)
+        # The setup code comes from the Agent straight to the terminal, only when no operator exists.
+        self.assertIn((["setup-code", "--if-none"], None), self.docker.operator_calls)
+        # Re-applying never replaces the certificate silently; renew does.
+        before = cert.read_bytes()
+        self.assertEqual(self.run_cli("rollback"), an.EXIT_OK, self.text())
+        self.assertEqual(cert.read_bytes(), before)
+        self.assertEqual((self.home / ".env").read_text().count("ARKNET_TLS_DIR="), 1)
+        self.output.clear()
+        self.assertEqual(an.main(["--home", str(self.home), "tls", "renew"], docker=an.Docker(self.docker), out=self.output.append), an.EXIT_OK)
+        self.assertNotEqual(cert.read_bytes(), before)
+        self.assertIn("SHA-256 fingerprint:", self.text())
+        self.assertTrue(any(c[-2:] == ["restart", "arknet-ui"] for c in self.docker.calls),
+                        "renew must restart the UI so it serves the new certificate")
 
     def test_health_check_uses_local_status_command(self):
         self.publish_newer()

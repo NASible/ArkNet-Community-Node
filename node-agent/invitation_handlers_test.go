@@ -14,7 +14,7 @@ import (
 )
 
 func invitationHandler(create invitationCreator) http.Handler {
-	return newHandler(testRepository{}, mediaOpt{repository: &selectionRepository{}, coreURL: "https://core.example", createInvitation: create})
+	return newRoutes(testRepository{}, mediaOpt{repository: &selectionRepository{}, coreURL: "https://core.example", createInvitation: create})
 }
 
 func TestOperatorCreatesInvitationThroughAgent(t *testing.T) {

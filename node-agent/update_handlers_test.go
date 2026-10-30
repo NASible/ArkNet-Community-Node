@@ -76,7 +76,7 @@ func updatesHandler(t *testing.T, indexURL string, settings *memoryUpdateSetting
 		u, _ := url.Parse(indexURL)
 		checker = &updates.Checker{IndexURL: u}
 	}
-	return newHandler(testRepository{}, releaseOpt{&current}, updatesOpt{monitor: updates.NewMonitor(checker, &current), settings: settings})
+	return newRoutes(testRepository{}, releaseOpt{&current}, updatesOpt{monitor: updates.NewMonitor(checker, &current), settings: settings})
 }
 
 func updatesCall(t *testing.T, h http.Handler, method, path, body string) (int, map[string]any) {
@@ -165,7 +165,7 @@ func TestAutomaticUpdatesDefaultOnAndOperatorCanDisable(t *testing.T) {
 func TestUpdatesWithoutCurrentReleaseNeverFetch(t *testing.T) {
 	server, hits := newerRelease(t, "0.0.2-dev")
 	u, _ := url.Parse(server.URL + "/index.json")
-	h := newHandler(testRepository{}, updatesOpt{monitor: updates.NewMonitor(&updates.Checker{IndexURL: u}, nil), settings: &memoryUpdateSettings{}})
+	h := newRoutes(testRepository{}, updatesOpt{monitor: updates.NewMonitor(&updates.Checker{IndexURL: u}, nil), settings: &memoryUpdateSettings{}})
 	code, body := updatesCall(t, h, "POST", "/api/v1/updates/check", "{}")
 	if code != 200 || body["current_version"] != nil || body["channel"] != nil || body["discovery"].(map[string]any)["state"] != "NO_CURRENT_RELEASE" || *hits != 0 {
 		t.Fatalf("no release: %d %v hits=%d", code, body, *hits)

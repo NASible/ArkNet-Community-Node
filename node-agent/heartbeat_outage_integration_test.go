@@ -68,22 +68,10 @@ func TestRunCoreOutageKeepsAPIAndAutomaticallyRecovers(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("API not started")
 	}
+	cookie := startupOperatorCookie(t, cfg, "http://"+addr)
 	readStatus := func() nodeStatus {
 		t.Helper()
-		client := http.Client{Timeout: time.Second}
-		r, err := client.Get("http://" + addr + "/api/v1/status")
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer r.Body.Close()
-		if r.StatusCode != 200 {
-			t.Fatal(r.StatusCode)
-		}
-		var status nodeStatus
-		if json.NewDecoder(r.Body).Decode(&status) != nil {
-			t.Fatal("invalid status")
-		}
-		return status
+		return startupStatus(t, "http://"+addr, cookie)
 	}
 	waitStatus := func(want localstate.State) nodeStatus {
 		t.Helper()

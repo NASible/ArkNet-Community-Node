@@ -103,7 +103,7 @@ func (s *fakeTransferService) Cancel(context.Context, string) (transfer.Status, 
 }
 
 func transferTestHandler(repo *selectionRepository, service transfer.Service, object catalog.Object, fetchErr error) http.Handler {
-	return newHandler(testRepository{}, mediaOpt{repository: repo, allocation: 8192, coreURL: "https://core.example", fetchCatalog: func(context.Context, enrollment.Identity) ([]catalog.Object, error) {
+	return newRoutes(testRepository{}, mediaOpt{repository: repo, allocation: 8192, coreURL: "https://core.example", fetchCatalog: func(context.Context, enrollment.Identity) ([]catalog.Object, error) {
 		return []catalog.Object{object}, fetchErr
 	}, grantTransfer: func(context.Context, enrollment.Identity, string) (catalog.TransferGrant, error) {
 		return catalog.TransferGrant{TrackerURL: "https://tracker.example/announce/grant", WebSeedURL: "https://core.example/api/web-seed/v1/media/" + selectionID + "/grant", TorrentURL: "https://core.example/api/torrent/v1/media/" + selectionID + "/grant"}, nil
@@ -262,7 +262,7 @@ func TestRealStartReceivesContentWhilePeerServingIsOff(t *testing.T) {
 		},
 	}
 	settings := &testSettings{peerServing: false}
-	h := newHandler(testRepository{}, media, transferOpt{service: service}, settingsOpt{settings})
+	h := newRoutes(testRepository{}, media, transferOpt{service: service}, settingsOpt{settings})
 	status := transferAction(t, h, "start", 200)
 	if status.Mock || len(service.requests) != 1 || service.requests[0].TrackerURL == "" || service.requests[0].WebSeedURL == "" || repo.objects[0].LocalState != mediaselection.Downloading {
 		t.Fatalf("status=%+v requests=%+v selection=%+v", status, service.requests, repo.objects[0])

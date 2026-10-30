@@ -162,6 +162,8 @@ apt_install() {
 missing=""
 command -v curl >/dev/null 2>&1 || missing="$missing curl"
 command -v python3 >/dev/null 2>&1 || missing="$missing python3"
+# arknet-node creates the management UI's self-signed HTTPS certificate with openssl.
+command -v openssl >/dev/null 2>&1 || missing="$missing openssl"
 # shellcheck disable=SC2086 # intentional word splitting of package names
 [ -z "$missing" ] || apt_install $missing
 python3 -c 'import sys; sys.exit(sys.version_info < (3, 8))' || fail "Python 3.8 or newer is required for arknet-node."
@@ -249,5 +251,8 @@ if [ $code -ne 0 ]; then
     printf '\nThe installer stopped; see the message above. Re-running it is safe.\n' >&2
     exit $code
 fi
-printf '\nNext: approve this Node in ArkNet Core (if a Core URL was given), then open the setup UI shown above.\n'
+printf '\nNext: open the management UI shown above, check the certificate fingerprint, and create the first\n'
+printf 'operator with the setup code (a new one: sudo arknet-node operator setup-code). Then approve this\n'
+printf 'Node in ArkNet Core (if a Core URL was given).\n'
 printf 'Manage releases later with: sudo arknet-node status | upgrade | rollback\n'
+printf 'Operator access: sudo arknet-node operator setup-code | recover NAME | list | disable NAME\n'

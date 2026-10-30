@@ -57,6 +57,39 @@ def check(name, condition, detail=""):
         raise AssertionError(name)
 
 
+def agent_status():
+    """Host-shell validation remains available without a browser session."""
+    command = (f"sudo docker compose -p arknet-node --env-file /opt/arknet/.env "
+               f"-f /opt/arknet/releases/{VERSION}/compose.yaml "
+               "exec -T arknet-agent arknet-agent status --json")
+    return json.loads(vm(command, check=True).stdout)
+
+
+def redact_setup_codes(text):
+    return re.sub(r"[A-Z2-7]{4}(?:-[A-Z2-7]{4}){7}", "[REDACTED setup code]", text)
+
+
+def check_management(output):
+    check("installer prints a one-time operator setup code",
+          re.search(r"[A-Z2-7]{4}(?:-[A-Z2-7]{4}){7}", output) is not None)
+    address = re.search(r"Management UI \(this network\): (https://([^/:]+):8443)", output)
+    check("installer prints a LAN HTTPS management address",
+          address is not None and address[2] not in ("127.0.0.1", "localhost", "0.0.0.0"))
+    printed = re.search(r"Certificate SHA-256 fingerprint: ([0-9A-F:]{95})", output)
+    actual = vm("sudo openssl x509 -in /opt/arknet/tls/cert.pem -noout -sha256 -fingerprint", check=True).stdout
+    check("printed fingerprint matches the Node certificate", printed is not None and printed[1] in actual)
+    response = vm("sudo curl --noproxy '*' --cacert /opt/arknet/tls/cert.pem -fsS -o /dev/null "
+                  f"-w '%{{http_code}}' {address[1]}/", check=True).stdout
+    check("LAN HTTPS serves the UI with the Node certificate", response == "200")
+    published = json.loads(vm("sudo docker inspect $(sudo docker compose -p arknet-node "
+                              f"--env-file /opt/arknet/.env -f /opt/arknet/releases/{VERSION}/compose.yaml "
+                              "ps -q arknet-ui) --format '{{json .NetworkSettings.Ports}}'", check=True).stdout)
+    http = published.get("5173/tcp") or []
+    https = published.get("8443/tcp") or []
+    check("plain HTTP is published only on loopback", bool(http) and all(p["HostIp"] in ("127.0.0.1", "::1") for p in http))
+    check("HTTPS is published on LAN interfaces", any(p["HostIp"] in ("0.0.0.0", "::") for p in https))
+
+
 def image(component):
     return f"{REGISTRY}/arknet/{component}:{VERSION}"
 
@@ -128,7 +161,7 @@ def main():
         # ---- Images and registry
         sh("docker", "run", "-d", "--name", REGISTRY_NAME, "-p", f"127.0.0.1:{REGISTRY_PORT}:5000", "registry:latest")
         sh("docker", "build", "-q", "--build-arg", f"ARKNET_VERSION={VERSION}", "-t", image("arknet-agent"), str(ROOT / "node-agent"))
-        sh("docker", "tag", "arknet-ui:0.0.1-dev", image("arknet-ui"))
+        sh("docker", "build", "-q", "-t", image("arknet-ui"), str(ROOT / "node-ui"))
         sh("docker", "tag", "arknet-transfer:0.0.1-dev", image("arknet-transfer"))
         for component in ("arknet-agent", "arknet-ui", "arknet-transfer"):
             for _ in range(10):
@@ -176,12 +209,13 @@ def main():
         out = vm(f"curl -fsSLO http://{GATEWAY}:{SITE_PORT}/install.sh && "
                  f"sudo sh install.sh --core-url http://{GATEWAY}:{CORE_PORT} --allow-insecure-http")
         minutes = (time.monotonic() - started) / 60
-        print("\n".join("    | " + line for line in (out.stdout + out.stderr).splitlines()), flush=True)
+        print("\n".join("    | " + line for line in redact_setup_codes(out.stdout + out.stderr).splitlines()), flush=True)
+        check_management(out.stdout)
         node_id = (re.search(r"Node ID: (node_[0-9a-f]+)", out.stdout) or [None, None])[1]
         check("installer completed", out.returncode == 0 and "INSTALLED: ArkNet 0.1.0 (stable)" in out.stdout, f"exit {out.returncode}, {minutes:.1f} min")
         check("ACCEPTANCE fresh VM reaches ENROLLMENT_PENDING", "Node state: ENROLLMENT_PENDING" in out.stdout and node_id is not None, node_id)
         check("Core lists the Node as pending enrollment", node_id in pending())
-        status = json.loads(vm("curl -fsS http://127.0.0.1:8082/api/v1/status").stdout)
+        status = agent_status()
         check("Agent reports the installed release and healthy services",
               status["release"] == {"version": VERSION, "channel": "stable"} and status["jellyfin_healthy"] is True
               and status["state"] == "ENROLLMENT_PENDING")
@@ -194,7 +228,7 @@ def main():
 
         # ---- Re-run safety
         out = vm(f"sudo sh install.sh --core-url http://{GATEWAY}:{CORE_PORT} --allow-insecure-http")
-        status = json.loads(vm("curl -fsS http://127.0.0.1:8082/api/v1/status").stdout)
+        status = agent_status()
         check("re-running the installer is safe", out.returncode == 0 and "already installed" in out.stdout
               and vm("sudo sha256sum /opt/arknet/.env").stdout == env_hash and status["node_id"] == node_id
               and status["state"] == "ENROLLMENT_PENDING" and pending().count(node_id) == 1)

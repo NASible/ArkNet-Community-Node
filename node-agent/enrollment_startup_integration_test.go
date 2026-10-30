@@ -94,11 +94,11 @@ func TestRunLocalAPIStartsWhileCoreBlockedAndWorkerJoins(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("local API blocked on Core")
 	}
-	response, err := http.Get("http://" + addr + "/api/v1/status")
-	if err != nil {
-		t.Fatal(err)
+	cookie := startupOperatorCookie(t, cfg, "http://"+addr)
+	status := startupStatus(t, "http://"+addr, cookie)
+	if !status.AgentHealthy || !status.DatabaseHealthy {
+		t.Fatal("local API is unhealthy while Core is blocked")
 	}
-	response.Body.Close()
 	cancel()
 	select {
 	case err := <-done:

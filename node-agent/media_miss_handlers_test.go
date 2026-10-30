@@ -123,7 +123,7 @@ func newMissHarness(t *testing.T, allocation int64, coreMisses []catalog.Miss) *
 	h.service = &fakeTransferService{real: true}
 	h.syncer = mediaMissSyncer{media: h.media, repository: h.misses, transfers: transferOpt{service: h.service, media: h.media},
 		fetchMisses: func(context.Context, enrollment.Identity) ([]catalog.Miss, error) { return coreMisses, nil }}
-	h.handler = newHandler(testRepository{}, h.media, mediaMissOpt{h.misses}, transferOpt{service: h.service})
+	h.handler = newRoutes(testRepository{}, h.media, mediaMissOpt{h.misses}, transferOpt{service: h.service})
 	return h
 }
 

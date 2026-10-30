@@ -48,6 +48,7 @@ func TestRunLearnsApprovalAndRebootDoesNotReenroll(t *testing.T) {
 	}))
 	defer core.Close()
 	cfg.coreURL = core.URL
+	var cookie *http.Cookie
 	for range 2 {
 		logs := &startupLogCapture{started: make(chan string, 1)}
 		ctx, cancel := context.WithCancel(context.Background())
@@ -60,21 +61,12 @@ func TestRunLearnsApprovalAndRebootDoesNotReenroll(t *testing.T) {
 			cancel()
 			t.Fatal("startup timed out")
 		}
+		if cookie == nil {
+			cookie = startupOperatorCookie(t, cfg, "http://"+addr)
+		}
 		deadline := time.Now().Add(3 * time.Second)
-		var status nodeStatus
-		client := &http.Client{Timeout: time.Second}
 		for {
-			response, err := client.Get("http://" + addr + "/api/v1/status")
-			if err != nil {
-				cancel()
-				t.Fatal(err)
-			}
-			err = json.NewDecoder(response.Body).Decode(&status)
-			response.Body.Close()
-			if err != nil {
-				cancel()
-				t.Fatal(err)
-			}
+			status := startupStatus(t, "http://"+addr, cookie)
 			if status.State == localstate.Connected && status.CoreConnectivity == "CONNECTED" {
 				break
 			}

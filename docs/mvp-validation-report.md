@@ -3,18 +3,24 @@
 Run date: **2026-10-27 (America/Anchorage, AKDT)**. All 20 Prompt 43 items were
 run on one frozen source tree. Result: **20 PASS, 0 FAIL**.
 
+**Subsequent security change:** Prompt 45B closed ARKSEC-002 on 2026-10-28
+with operator permission enforcement, bootstrap/upgrade and browser HTTPS proof.
+See [Prompt 45B validation](development/prompt45b-validation.md). The dated Phase
+19A findings below remain a historical snapshot; use
+[Security follow-ups](security-follow-ups.md) for current statuses.
+
 ## Verdict
 
 - **Is the MVP functionally complete? Yes.** Every Prompt 43 item passes in an
   end-to-end run on the final tree. Fresh install, update discovery and
   whole-stack upgrade pass in their own final-tree checks. The standalone
   product swarm check also passes, with Peer Serving OFF/ON/OFF measurements.
-- **Is it ready for hostile multi-operator production? No.** The functional
-  table does not change this answer. The reusable global password crosses the
-  untrusted Node (ARKSEC-001). The Node management API has no operator
-  authentication (ARKSEC-002). Private relay is not the default (ARKSEC-004).
-  Revocation does not terminate active transfers (ARKSEC-006). The remaining
-  medium items (ARKSEC-005, 007, 008, 009) are also open.
+- **Was it ready for hostile multi-operator production at this run? No.** The
+  functional table did not change this answer. The reusable global password
+  crossed the untrusted Node (ARKSEC-001), and the Node management API lacked
+  operator authentication (ARKSEC-002, subsequently closed by Prompt 45B).
+  Private relay was not the default (ARKSEC-004). Revocation did not terminate
+  active transfers (ARKSEC-006). The remaining medium items were also open.
 
 ## Evidence rules
 
@@ -167,7 +173,7 @@ The acceptance criteria for each ID are tracked in
 | ID | Limitation | Related items |
 | --- | --- | --- |
 | [ARKSEC-001](security-follow-ups.md#arksec-001) | **Open, critical.** The global password transits the Node, and the Node keeps a password-derived offline verifier. A malicious operator can capture a credential that works at Core. | 13 passes functionally only. |
-| [ARKSEC-002](security-follow-ups.md#arksec-002) | **Open, high.** The Node management API is unauthenticated. Network isolation and the bearer-protected transfer API do not protect the Agent management API from a caller who can reach it. | 20 passes for cross-Node isolation only. |
+| [ARKSEC-002](security-follow-ups.md#arksec-002) | **Closed later (Prompt 45B).** At this Phase 19A run the management API was unauthenticated; Prompt 45B added Node-local operator sessions, route-matrix/spy enforcement and LAN HTTPS. | Prompt 45B reran operator-authenticated item 20 and the full E2E; see its validation report. |
 | [ARKSEC-003](security-follow-ups.md#arksec-003) | **Fixed.** Live product measurement P meets the acceptance criteria. The OFF window has a 2,900-byte total-transmit bound rather than a literal payload counter. | 11 |
 | [ARKSEC-004](security-follow-ups.md#arksec-004) | **Open, high.** Private relay is not the default. Item 11 uses peers connected directly on a private Docker network, which does not prove origin-address privacy. | 11 |
 | [ARKSEC-005](security-follow-ups.md#arksec-005) | **Open.** Core administration uses one broad development bearer, and one Node key spans several federation capabilities. | — |

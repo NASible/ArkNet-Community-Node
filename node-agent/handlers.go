@@ -56,7 +56,21 @@ type applicationOpt struct{ application.Adapter }
 
 func (a applicationOpt) isOption() {}
 
+// newHandler is the production handler: every route behind the permission
+// matrix (authz.go).
 func newHandler(repository localstate.Repository, opts ...handlerOption) http.Handler {
+	var accounts operatorOpt
+	for _, opt := range opts {
+		if o, ok := opt.(operatorOpt); ok {
+			accounts = o
+		}
+	}
+	return authorize(newRoutes(repository, opts...), accounts.repository, accounts.now, accounts.logger)
+}
+
+// newRoutes registers every route without authorization. Only newHandler and
+// route-logic tests use it directly.
+func newRoutes(repository localstate.Repository, opts ...handlerOption) *routeMux {
 	var monitor *heartbeat.Monitor
 	var managedApplication application.Adapter
 	var media mediaOpt
@@ -100,7 +114,7 @@ func newHandler(repository localstate.Repository, opts ...handlerOption) http.Ha
 			}
 		}
 	}
-	mux := http.NewServeMux()
+	mux := newRouteMux()
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
 		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
 		defer cancel()

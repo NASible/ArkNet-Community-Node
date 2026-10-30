@@ -123,7 +123,7 @@ func globalHandler(repo *memoryGlobalAuth, authorize func(context.Context, enrol
 	identity := func(context.Context) (enrollment.Identity, error) {
 		return enrollment.Identity{NodeID: "node_" + strings.Repeat("a", 64), CoreURL: "https://core.invalid", Status: "APPROVED", PrivateSeed: make([]byte, 32)}, nil
 	}
-	return newHandler(testRepository{}, globalAuthOpt{repository: repo, identity: identity, authorize: authorize})
+	return newRoutes(testRepository{}, globalAuthOpt{repository: repo, identity: identity, authorize: authorize})
 }
 func globalLogin(t *testing.T, h http.Handler, id, password string) (*httptest.ResponseRecorder, map[string]any) {
 	t.Helper()

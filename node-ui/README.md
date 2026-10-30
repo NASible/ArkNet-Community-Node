@@ -7,8 +7,11 @@ offline” from a local failure.
 
 The interface is deliberately data-dense and uses semantic HTML, text plus color
 status indicators, responsive layouts, system fonts, and local assets only. It
-contains no credentials or enrollment actions. Its Settings page contains the
-local Peer Serving opt-in.
+uses no third-party assets or remote credential service. Operator setup and
+sign-in use Node-local password plus TOTP (or a one-time recovery code). The
+session is an HttpOnly cookie; credentials and operator data are never written
+to localStorage or sessionStorage. Its Settings page contains the local Peer
+Serving opt-in.
 
 ## Run locally
 
@@ -48,6 +51,36 @@ ARKNET_AGENT_URL=http://127.0.0.1:9081 npm run dev
 `ARKNET_AGENT_URL` may also be set in an ignored `.env.local` file. It is not a
 browser credential or Core address. Restart Vite after changing proxy settings.
 Never place secrets in `VITE_*` variables, which are exposed to browser code.
+
+## Operator setup and HTTPS
+
+Create the first operator using `sudo arknet-node operator setup-code` on an
+installed Node (or `docker compose exec -T arknet-agent arknet-agent operator
+setup-code` in the development stack). In the UI choose **Set up operator**,
+enroll an authenticator and save the displayed recovery codes. After setup,
+use **Sign in** and **Sign out** in the header. The Agent enforces permissions
+independently of the UI; anonymous/member calls to management routes return 401.
+
+The Docker image starts `node server.mjs`: Vite serves port 5173, and the HTTPS
+listener serves 8443 when `/etc/arknet/tls/cert.pem` and `key.pem` exist.
+`install.sh` and upgrades generate that certificate; see
+[Node installation](../docs/node-installation.md). Plain HTTP is published only
+on loopback; HTTPS is published to the LAN. Standalone HTTPS development can use
+`ARKNET_UI_TLS_CERT` and `ARKNET_UI_TLS_KEY` with `node server.mjs`.
+
+Browser acceptance against a disposable real Agent/Postgres/UI stack:
+
+```sh
+# From the repository root; Playwright and its Chromium must be installed.
+PLAYWRIGHT_MODULE=/absolute/path/to/node_modules/playwright \
+  python3 scripts/check-operator-https.py
+```
+
+The harness discovers a LAN address (or accepts `--lan-address`), confirms a
+positive loopback HTTP request and refused LAN HTTP connection, then signs in,
+reloads, signs out and replays the revoked cookie over HTTPS. It checks
+Secure/HttpOnly/SameSite flags and empty localStorage/sessionStorage, logs no
+credentials or cookie values, and removes its scoped resources.
 
 ## Media selections
 

@@ -136,7 +136,7 @@ type diagnosticsDeps struct {
 	release    *releaseSummary
 }
 
-func registerDiagnostics(mux *http.ServeMux, d diagnosticsDeps) {
+func registerDiagnostics(mux *routeMux, d diagnosticsDeps) {
 	mux.HandleFunc("GET /api/v1/diagnostics", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Cache-Control", "no-store")

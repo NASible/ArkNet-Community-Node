@@ -17,13 +17,13 @@ import (
 
 func TestHealth(t *testing.T) {
 	response := httptest.NewRecorder()
-	newHandler(testRepository{}).ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/health", nil))
+	newRoutes(testRepository{}).ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/health", nil))
 	checkJSON(t, response, `{"healthy":true,"database_healthy":true}`)
 }
 
 func TestInitialStatus(t *testing.T) {
 	response := httptest.NewRecorder()
-	newHandler(testRepository{}).ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/status", nil))
+	newRoutes(testRepository{}).ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/status", nil))
 	checkJSON(t, response, `{"version":"0.0.1-dev","state":"PROVISIONING","core_connectivity":"NOT_IMPLEMENTED","state_changed_at":"2026-01-01T00:00:00Z","node_id":"node_`+strings.Repeat("a", 64)+`","enrollment_state":"NOT_ENROLLED","last_successful_core_contact_at":null,"database_healthy":true,"agent_healthy":true,"jellyfin_healthy":null,"release":null}`)
 	var got nodeStatus
 	if err := json.Unmarshal(response.Body.Bytes(), &got); err != nil {
@@ -62,7 +62,7 @@ func checkJSON(t *testing.T, response *httptest.ResponseRecorder, expected strin
 func TestEndpointsRejectPost(t *testing.T) {
 	for _, path := range []string{"/health", "/api/v1/status"} {
 		response := httptest.NewRecorder()
-		newHandler(testRepository{}).ServeHTTP(response, httptest.NewRequest(http.MethodPost, path, nil))
+		newRoutes(testRepository{}).ServeHTTP(response, httptest.NewRequest(http.MethodPost, path, nil))
 		if response.Code != http.StatusMethodNotAllowed {
 			t.Errorf("%s: status = %d", path, response.Code)
 		}
@@ -71,7 +71,7 @@ func TestEndpointsRejectPost(t *testing.T) {
 
 func TestUnknownRoute(t *testing.T) {
 	response := httptest.NewRecorder()
-	newHandler(testRepository{}).ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/unknown", nil))
+	newRoutes(testRepository{}).ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/unknown", nil))
 	if response.Code != http.StatusNotFound {
 		t.Fatalf("status = %d", response.Code)
 	}
@@ -108,7 +108,7 @@ func (s *testSettings) SetPeerServing(_ context.Context, enabled bool) error {
 
 func TestPeerServingSettingDefaultsOffAndCanBeChanged(t *testing.T) {
 	settings := &testSettings{}
-	handler := newHandler(testRepository{}, settingsOpt{settings})
+	handler := newRoutes(testRepository{}, settingsOpt{settings})
 
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/settings/peer-serving", nil))
@@ -130,7 +130,7 @@ func TestPeerServingSettingRejectsNonExactInput(t *testing.T) {
 		w := httptest.NewRecorder()
 		r := httptest.NewRequest(http.MethodPut, "/api/v1/settings/peer-serving", strings.NewReader(body))
 		r.Header.Set("Content-Type", "application/json")
-		newHandler(testRepository{}, settingsOpt{settings}).ServeHTTP(w, r)
+		newRoutes(testRepository{}, settingsOpt{settings}).ServeHTTP(w, r)
 		if w.Code != http.StatusBadRequest || settings.writes != 0 {
 			t.Fatalf("body %q: status=%d writes=%d", body, w.Code, settings.writes)
 		}
@@ -170,7 +170,7 @@ func (s testRepository) Snapshot(ctx context.Context) (localstate.Snapshot, erro
 func TestStatusExposesPersistedEnrollmentAndLastContact(t *testing.T) {
 	contact := time.Date(2026, 2, 3, 4, 5, 6, 789000000, time.UTC)
 	w := httptest.NewRecorder()
-	newHandler(testRepository{enrollmentState: "APPROVED", lastSuccessfulCoreContact: contact}).ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/status", nil))
+	newRoutes(testRepository{enrollmentState: "APPROVED", lastSuccessfulCoreContact: contact}).ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/status", nil))
 	var got map[string]any
 	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
 		t.Fatal(err)
@@ -193,7 +193,7 @@ func TestDatabaseFailureHealthAndStatus(t *testing.T) {
 	for _, repo := range []localstate.Repository{nil, testRepository{failure: true}} {
 		for _, path := range []string{"/health", "/api/v1/status"} {
 			w := httptest.NewRecorder()
-			newHandler(repo).ServeHTTP(w, httptest.NewRequest("GET", path, nil))
+			newRoutes(repo).ServeHTTP(w, httptest.NewRequest("GET", path, nil))
 			if w.Code != 503 || strings.Contains(w.Body.String(), "SECRET") {
 				t.Fatalf("unsafe failure response: %d %s", w.Code, w.Body.String())
 			}
@@ -206,7 +206,7 @@ func TestDatabaseFailureHealthAndStatus(t *testing.T) {
 
 func TestStatusUsesPersistedState(t *testing.T) {
 	w := httptest.NewRecorder()
-	newHandler(testRepository{state: localstate.Connected}).ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/status", nil))
+	newRoutes(testRepository{state: localstate.Connected}).ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/status", nil))
 	var got nodeStatus
 	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
 		t.Fatal(err)
@@ -220,7 +220,7 @@ func TestHealthCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	w := httptest.NewRecorder()
-	newHandler(testRepository{}).ServeHTTP(w, httptest.NewRequest("GET", "/health", nil).WithContext(ctx))
+	newRoutes(testRepository{}).ServeHTTP(w, httptest.NewRequest("GET", "/health", nil).WithContext(ctx))
 	if w.Code != 503 {
 		t.Fatal(w.Code)
 	}
@@ -228,7 +228,7 @@ func TestHealthCancellation(t *testing.T) {
 
 func TestStatusExposesPersistedTransitionTimestamp(t *testing.T) {
 	w := httptest.NewRecorder()
-	newHandler(testRepository{}).ServeHTTP(w, httptest.NewRequest("GET", "/api/v1/status", nil))
+	newRoutes(testRepository{}).ServeHTTP(w, httptest.NewRequest("GET", "/api/v1/status", nil))
 	var got map[string]any
 	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
 		t.Fatal(err)
@@ -243,7 +243,7 @@ func TestStatusWithMonitorAndJellyfin(t *testing.T) {
 	// Monitor defaults to "UNKNOWN" connectivity; verify monitor is still
 	// wired through even when it has not yet recorded a state transition.
 	w := httptest.NewRecorder()
-	newHandler(testRepository{}, monitorOpt{monitor}, applicationOpt{&testApplication{healthy: true}}).ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/status", nil))
+	newRoutes(testRepository{}, monitorOpt{monitor}, applicationOpt{&testApplication{healthy: true}}).ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/status", nil))
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d", w.Code)
 	}
@@ -259,7 +259,7 @@ func TestStatusWithMonitorAndJellyfin(t *testing.T) {
 
 func TestStatusReportsManagedApplicationUnhealthy(t *testing.T) {
 	w := httptest.NewRecorder()
-	newHandler(testRepository{}, applicationOpt{&testApplication{healthy: false}}).ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/status", nil))
+	newRoutes(testRepository{}, applicationOpt{&testApplication{healthy: false}}).ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/status", nil))
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d", w.Code)
 	}
@@ -281,7 +281,7 @@ func (a *testApplication) Healthy(context.Context) bool { return a.healthy }
 
 func TestJellyfinHealthyReturnsNilWhenNoClient(t *testing.T) {
 	w := httptest.NewRecorder()
-	newHandler(testRepository{}).ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/status", nil))
+	newRoutes(testRepository{}).ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/status", nil))
 	if w.Code != http.StatusOK {
 		t.Fatal(w.Code)
 	}

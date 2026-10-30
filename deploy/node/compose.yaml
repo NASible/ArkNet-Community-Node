@@ -72,8 +72,13 @@ services:
       context: ../../node-ui
     environment:
       ARKNET_AGENT_URL: http://arknet-agent:8081
+    # Plain HTTP stays on loopback (SSH tunnels). The HTTPS listener serves the
+    # LAN with the Node's self-signed certificate, created by arknet-node.
+    volumes:
+      - ${ARKNET_TLS_DIR:-./tls}:/etc/arknet/tls:ro
     ports:
       - "127.0.0.1:${ARKNET_UI_PORT:-5174}:5173"
+      - "${ARKNET_UI_HTTPS_BIND:-0.0.0.0:8443}:8443"
     networks:
       - node
     depends_on:

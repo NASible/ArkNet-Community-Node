@@ -42,7 +42,7 @@ func TestStateTransitionLoggerUsesOnlyStateFields(t *testing.T) {
 func TestHandlerHeartbeatMonitor(t *testing.T) {
 	m := heartbeat.NewMonitor()
 	w := httptest.NewRecorder()
-	newHandler(testRepository{}, monitorOpt{m}).ServeHTTP(w, httptest.NewRequest("GET", "/api/v1/status", nil))
+	newRoutes(testRepository{}, monitorOpt{m}).ServeHTTP(w, httptest.NewRequest("GET", "/api/v1/status", nil))
 	var got nodeStatus
 	json.Unmarshal(w.Body.Bytes(), &got)
 	if got.CoreConnectivity != "UNKNOWN" {

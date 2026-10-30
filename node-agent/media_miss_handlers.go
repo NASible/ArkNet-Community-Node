@@ -33,7 +33,7 @@ func readExactJSON(w http.ResponseWriter, r *http.Request, keys ...string) (map[
 	return exactLocalObject(body, keys...)
 }
 
-func registerMediaMisses(mux *http.ServeMux, opt mediaMissOpt) {
+func registerMediaMisses(mux *routeMux, opt mediaMissOpt) {
 	repo := opt.repository
 	unavailable := func(w http.ResponseWriter) { mediaError(w, http.StatusServiceUnavailable, "media_misses_unavailable") }
 	mux.HandleFunc("GET /api/v1/settings/media-miss-policy", func(w http.ResponseWriter, r *http.Request) {

@@ -64,19 +64,34 @@ Setup UI: http://127.0.0.1:5174 (local to this machine only).
 - **Enrollment:** the Node has asked Core to enroll it. A Core administrator
   approves it by Node ID, after which the state becomes `CONNECTED`. Without
   `--core-url` the Node runs locally and stays in `PROVISIONING`.
-- **Setup UI:** it listens only on the machine's loopback interface, because
-  the local management UI has no login. Reach it over SSH:
+- **Management UI:** open `https://<node-address>:8443` on your LAN. The
+  installer generates a per-Node self-signed certificate and prints its SHA-256
+  fingerprint alongside the setup code. Compare the fingerprint with the
+  browser's certificate details before accepting the certificate warning.
+  Plain HTTP remains loopback-only: for an SSH tunnel, use
   `ssh -L 5174:127.0.0.1:5174 user@node`, then browse to
-  `http://localhost:5174`.
+  `http://localhost:5174`. Operator sign-in is required for management actions.
 - **Releases:** run `sudo arknet-node status`, `upgrade`, or `rollback`. See
   [Node upgrade](node-upgrade.md).
 - **Operator accounts:** `sudo arknet-node operator setup-code` prints a
   one-time, 1-hour code for creating the first operator (password plus an
   authenticator app). `operator recover NAME`, `operator list` and
   `operator disable NAME` handle lost access, all from the local shell. Codes
-  are printed to the terminal only and never logged. The management UI does not
-  require operator sign-in yet; that arrives with Prompt 45B. See
+  are printed to the terminal only and never logged. In the UI choose **Set up
+  operator**, enter the code, choose a username and password (at least 12
+  characters), and add the displayed key to an authenticator app. Confirm the
+  current six-digit code, then save the one-time recovery codes somewhere safe.
+  Sign in with your password plus an authenticator code (or a recovery code).
+  **Sign out** revokes the server-side session. The UI stores no operator data
+  in localStorage or sessionStorage. See
   [Node operator authentication](node-operator-authentication.md).
+- **HTTPS certificate:** `/opt/arknet/tls/key.pem` is mode 0600 and readable by
+  the UI container user; `cert.pem` is public. Both stay on the Node, mounted
+  read-only into the UI. `sudo arknet-node tls show` prints the fingerprint.
+  `sudo arknet-node tls renew` explicitly replaces the certificate after an
+  address change or before its 825-day expiry; it restarts the installed UI
+  with the new certificate. Compare the new
+  fingerprint before accepting it. Certificates are not silently replaced.
 
 ## Options
 

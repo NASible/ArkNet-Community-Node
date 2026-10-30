@@ -29,6 +29,7 @@ if str(ROOT) not in sys.path:
 
 from scripts.check_multi_node_result import result_document
 from scripts import e2e_diagnostics
+from scripts import operator_login
 
 
 METER_PROXY = r'''
@@ -114,7 +115,16 @@ def main(argv=None):
     args = parser.parse_args(argv)
     p25 = load_prompt25()
     p25["verify_prerequisites"]()
-    run, request, request_json = p25["run"], p25["request"], p25["request_json"]
+    run, request, raw_request_json = p25["run"], p25["request"], p25["request_json"]
+    operator_headers = {}  # Agent base URL -> operator cookie header (Prompt 45B)
+
+    def request_json(url, method="GET", body=None, headers=None, expected=(200,)):
+        """Management calls to a Node's Agent carry that Node's operator session."""
+        merged = dict(headers or {})
+        for base, cookie in operator_headers.items():
+            if url.startswith(base + "/api/v1/"):
+                merged = {**cookie, **merged}
+        return raw_request_json(url, method, body, merged, expected=expected)
     wait_until, jellyfin_setup = p25["wait_until"], p25["jellyfin_setup"]
     free_port = p25["free_port"]
 
@@ -155,6 +165,7 @@ def main(argv=None):
         node_configs[label]["jelly_cache"].mkdir(mode=0o755)
         node_configs[label]["env"] = dict(os.environ, POSTGRES_USER="arknet", POSTGRES_DB="arknet_node",
             POSTGRES_PASSWORD=password, PGSSLMODE="disable", ARKNET_AGENT_PORT=str(node_configs[label]["agent_port"]),
+            ARKNET_UI_HTTPS_BIND="127.0.0.1:", ARKNET_TLS_DIR=str(temporary / ("tls-" + label)),
             JELLYFIN_BIND=f"127.0.0.1:{node_configs[label]['jellyfin_port']}",
             ARKNET_CORE_URL="http://arknet-core-origin:8080", ARKNET_CORE_ALLOW_HTTP="true",
             ARKNET_HEARTBEAT_INTERVAL="5s", ARKNET_MEDIA_STORAGE_ALLOCATION_GIB="1",
@@ -295,6 +306,12 @@ def main(argv=None):
             cfg["env"]["JELLYFIN_API_KEY"] = key
             node_compose(label, "up", "-d", "--wait", "--wait-timeout", "180", "arknet-agent")
             cfg["base"] = f"http://127.0.0.1:{cfg['agent_port']}"
+            code = operator_login.setup_code(node_compose(label, "exec", "-T", "arknet-agent", "arknet-agent", "operator",
+                                                          "setup-code", capture=True))
+            known_secrets.extend((code, code.replace("-", "")))
+            signed_in = operator_login.bootstrap(cfg["base"], code, request, username=f"operator-{label}")
+            known_secrets.extend(signed_in.secrets)
+            operator_headers[cfg["base"]] = signed_in.headers
 
         admin_headers = {"Authorization": "Bearer " + admin_token}
         for label in ("a", "b"):

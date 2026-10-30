@@ -48,7 +48,8 @@ type cliEnv struct {
 const cliUsage = `usage: arknet-agent <command>
 
   status [--json]                    Node status from local state (for arknet-node)
-  operator setup-code [--additional] print a one-time operator setup code (1 hour)
+  operator setup-code [--additional|--if-none]
+                                     print a one-time operator setup code (1 hour)
   operator recover USERNAME          sign USERNAME out everywhere and print a recovery code
   operator list                      list operator accounts (no secrets)
   operator disable USERNAME          disable USERNAME and sign it out everywhere`
@@ -165,9 +166,20 @@ func runOperatorCLI(ctx context.Context, args []string, store operators.Reposito
 	switch args[0] {
 	case "setup-code":
 		additional := len(args) == 2 && args[1] == "--additional"
-		if len(args) > 2 || len(args) == 2 && !additional {
+		ifNone := len(args) == 2 && args[1] == "--if-none"
+		if len(args) > 2 || len(args) == 2 && !additional && !ifNone {
 			say("%s", cliUsage)
 			return 2
+		}
+		if ifNone { // used by install and upgrade: quiet when operators exist
+			count, err := store.CountActiveOperators(ctx)
+			if err != nil {
+				return fail("database", "cannot read operator accounts; has the Agent initialized the database?")
+			}
+			if count > 0 {
+				say("Operator accounts exist; sign in to the management UI.")
+				return 0
+			}
 		}
 		code, digest, err := operators.NewSetupCode()
 		if err != nil {

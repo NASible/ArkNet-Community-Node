@@ -186,8 +186,10 @@ A successful action returns status. Agent errors include:
 
 The UI polls sequentially while the Media view is mounted and displays synthetic
 byte progress and terminal reports separately from the real local media state.
-The local Agent management API remains within its documented trusted-local,
-loopback-only development boundary; no operator authentication is added here.
+The transfer endpoints on the local Agent management API require a Node-local
+operator session. Member bearer credentials do not grant management access.
+The shipped UI exposes this plane through the self-signed LAN HTTPS listener;
+plain HTTP is host-loopback only.
 
 ## Run the mock
 

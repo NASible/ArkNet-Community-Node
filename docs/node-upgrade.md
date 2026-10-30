@@ -24,7 +24,8 @@ until index and manifest signing exists; see Limits.
 
 | Path | Purpose |
 |---|---|
-| `.env` | Operator settings and secrets. Must be mode 0600. Never modified by upgrades. |
+| `.env` | Operator settings and secrets. Must be mode 0600. Upgrades preserve existing settings; the first HTTPS-enabled upgrade appends `ARKNET_TLS_DIR` when absent. |
+| `tls/` | Per-Node self-signed management certificate (`cert.pem`) and private key (`key.pem`, 0600). Mounted read-only into the UI; never sent to Core. |
 | *(permissions)* | `ARKNET_HOME`, `releases/` and each release directory must be searchable by others (0755), and `release.json` readable (0644). The Agent container runs as UID 10001 and bind-mounts its release's `release.json`; otherwise it reports `release: null`. The tool writes releases with these modes and refuses to run if they are missing. |
 | `state.json` | `arknet.node-install/v1`: installed `release`, `previous`, Compose `project`, and `compose_files` in use (e.g. only `compose.yaml`, or plus `compose.transfer.yaml`). |
 | `releases/<version>/` | The verified `release.json` and Compose files of each installed release. The running release mounts its own `release.json` into the Agent. |
@@ -45,10 +46,34 @@ The [installer](node-installation.md) creates this layout through
 | 5. Compose | `docker compose config` on the new files with this Node's `.env`, e.g. to catch new required settings. | Abort |
 | 6. Backup | `pg_dump -Fc` of the Node database, and a record of every project volume and its creation time. | Abort |
 | 7. Apply | `docker compose -p <project> up -d --wait --remove-orphans --no-build --pull never` with the new release's files. Containers are replaced; **volumes are never removed**, because no `down` or `-v` is used. | Roll back |
-| 8. Validate | Every pre-existing volume still exists with the same creation time. The Agent status API reports healthy, database healthy, Jellyfin healthy, and **`release.version` = target**, which proves it parsed the new manifest. Jellyfin `/health` returns `Healthy`. Retries for up to 120 s. | Roll back |
+| 8. Validate | Every pre-existing volume still exists with the same creation time. The Agent's local `status --json` command reports healthy, database healthy, Jellyfin healthy, and **`release.version` = target**, which proves it parsed the new manifest. Jellyfin `/health` returns `Healthy`. Retries for up to 120 s. | Roll back |
 
 Only after step 8 does `state.json` record the new release, with the old one
 kept as `previous`. Concurrent runs are refused by a lock.
+
+### First upgrade with operator authentication
+
+Refresh the host tool by rerunning the published `install.sh`, then run
+`sudo arknet-node upgrade`. The upgrade creates a per-Node ECDSA P-256
+certificate when missing and enables `https://<node-address>:8443`. Plain HTTP
+stays on loopback. It preserves an existing certificate, repairs the private
+key to mode 0600/root ownership. All UI code imported before privilege drop is
+root-owned and non-writable by the runtime account; the UI clears supplementary
+groups and drops root after reading the key and before opening either listener.
+
+After validation it prints the certificate's SHA-256 fingerprint. If the Node
+has no active operator, it also prints a single-use setup code valid for one
+hour, directly to the terminal, not `upgrade.log`. Compare the fingerprint in
+your browser, choose **Set up operator**, and enroll a password and authenticator
+app. Existing operators keep their accounts and sign in normally; upgrades do
+not issue another setup code while an active operator exists.
+
+An expired or lost code can be replaced with
+`sudo arknet-node operator setup-code`. Lost operator access is recovered only
+from the local shell with `sudo arknet-node operator recover NAME`. Health
+validation uses `arknet-agent status --json` inside the container, not the
+now-operator-only HTTP status endpoint. See
+[operator authentication](node-operator-authentication.md).
 
 ### Reporting
 

@@ -429,8 +429,18 @@ func TestOperatorBootstrapIsSingleUseAndStartsCookieSession(t *testing.T) {
 	if out, exit := h.cli("operator", "setup-code"); exit != 1 || displayCode.MatchString(out) {
 		t.Fatalf("setup code issued while an operator exists: %d %q", exit, out)
 	}
+	if out, exit := h.cli("operator", "setup-code", "--if-none"); exit != 0 || displayCode.MatchString(out) || !strings.Contains(out, "exist") {
+		t.Fatalf("--if-none with an operator: %d %q", exit, out)
+	}
 	if _, exit := h.cli("operator", "setup-code", "--additional"); exit != 0 {
 		t.Fatal("--additional refused")
+	}
+}
+
+func TestSetupCodeIfNonePrintsACodeOnlyWithoutOperators(t *testing.T) {
+	h := newOperatorHarness(t)
+	if code := h.code("operator", "setup-code", "--if-none"); code == "" {
+		t.Fatal("no code on a Node without operators")
 	}
 }
 

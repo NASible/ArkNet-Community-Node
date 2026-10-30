@@ -37,6 +37,7 @@ import sys  # noqa: E402  (repository root import path for sibling helper module
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 from scripts import e2e_diagnostics  # noqa: E402
+from scripts import operator_login  # noqa: E402
 
 ITEMS = {
     2: "Enrollment", 3: "Node restart", 4: "Global user", 5: "Local-only user",
@@ -142,6 +143,7 @@ def main(argv=None):
         cfg["jelly_config"].mkdir(mode=0o755); cfg["jelly_cache"].mkdir(mode=0o755)
         cfg["env"] = dict(os.environ, POSTGRES_USER="arknet", POSTGRES_DB="arknet_node", POSTGRES_PASSWORD=password,
                           PGSSLMODE="disable", ARKNET_AGENT_PORT=str(cfg["agent_port"]),
+                          ARKNET_UI_HTTPS_BIND="127.0.0.1:", ARKNET_TLS_DIR=str(temporary / f"tls-{label}"),
                           JELLYFIN_BIND=f"127.0.0.1:{cfg['jellyfin_port']}", ARKNET_CORE_URL="http://arknet-core:8080",
                           ARKNET_CORE_ALLOW_HTTP="true", ARKNET_HEARTBEAT_INTERVAL="5s",
                           ARKNET_MEDIA_STORAGE_ALLOCATION_GIB="1", ARKNET_MEDIA_STORAGE_ALLOCATION_BYTES="",
@@ -183,8 +185,13 @@ def main(argv=None):
     def dump(compose, database):
         return compose("exec", "-T", "postgres", "pg_dump", "-U", "arknet", "-d", database, capture=True, timeout=120)
 
+    def op(label):
+        """Operator session headers for a Node (management routes need them)."""
+        return nodes[label]["operator"].headers
+
     def agent(label, path, method="GET", body=None, expected=(200,), headers=None):
-        return request_json(nodes[label]["base"] + path, method, body, headers, expected=expected)[2]
+        merged = {**(op(label) if "operator" in nodes[label] else {}), **(headers or {})}
+        return request_json(nodes[label]["base"] + path, method, body, merged, expected=expected)[2]
 
     def status(label):
         return agent(label, "/api/v1/status")
@@ -333,6 +340,12 @@ def main(argv=None):
             known_secrets.extend((access, key)); cfg["jelly_access"], cfg["jelly_key"] = access, key
             cfg["env"]["JELLYFIN_API_KEY"] = key
             node_compose(label, "up", "-d", "--wait", "--wait-timeout", "180", "arknet-agent")
+            # Management routes require an operator (Prompt 45B): sign in the way an operator does.
+            code = operator_login.setup_code(node_compose(label, "exec", "-T", "arknet-agent", "arknet-agent", "operator",
+                                                          "setup-code", capture=True))
+            known_secrets.extend((code, code.replace("-", "")))
+            cfg["operator"] = operator_login.bootstrap(cfg["base"], code, request, username=f"operator-{label}")
+            known_secrets.extend(cfg["operator"].secrets)
         print("SETUP: Core, tracker, web seed, Node A and Node B are running", flush=True)
         if args.inject_failure == "after-setup":
             # The message deliberately carries a known secret: the bundle must redact it.
@@ -457,7 +470,7 @@ def main(argv=None):
             results.evidence(10, f"Core stopped and transfer container restarted mid-download; progress retained ({after} bytes)")
             core_compose("start", "arknet-core")
             wait_until("Core", lambda: request(core_base + "/health")[0] == 200, 90)
-            request_json(nodes["a"]["base"] + f"/api/v1/media/{video['id']}/transfer/resume", "POST", {}, expected=(200, 409))
+            request_json(nodes["a"]["base"] + f"/api/v1/media/{video['id']}/transfer/resume", "POST", {}, op("a"), expected=(200, 409))
             wait_until("AVAILABLE", lambda: (media_object("a", video["id"]) or {}).get("local_state") == "AVAILABLE", 300)
             final = transfer_status("a", video["id"])
             assert final["state"] == "COMPLETED" and final["completed_bytes"] == video["size"]
@@ -481,6 +494,10 @@ def main(argv=None):
             session = agent("a", "/api/v1/global-users/sessions", "POST",
                             {"member_id": nodes["a"]["member_id"], "password": global_password}, (200, 201))
             assert session["kind"] == "GLOBAL" and session["member_id"] == nodes["a"]["member_id"]
+            nodes["member_token"] = session["token"]
+            known_secrets.append(session["token"])
+            # A global-member session never confers operator rights (ARKSEC-002).
+            assert request(nodes["a"]["base"] + "/api/v1/status", headers={"Authorization": "Bearer " + session["token"]})[0] == 401
             results.evidence(13, "online global-member login on Node A verified by Core and cached Node-locally")
         item(13, online_global_login)
 
@@ -565,7 +582,7 @@ def main(argv=None):
                 media_object("a", video["id"])), 120)
             results.evidence(15, "Core tombstone propagated; Node A state " + retained["local_state"])
             assert jellyfin_stream("a", video["sha256"], video["size"])
-            again = request(nodes["a"]["base"] + f"/api/v1/media/{video['id']}/selection", "POST", {})
+            again = request(nodes["a"]["base"] + f"/api/v1/media/{video['id']}/selection", "POST", {}, op("a"))
             assert again[0] == 409
             sources = core_sql(f"SELECT count(*) FROM media_replicas r JOIN media_objects m ON m.id=r.media_object_id "
                                f"WHERE m.public_id='{video['id']}' AND m.state='ACTIVE'")
@@ -585,7 +602,7 @@ def main(argv=None):
             bundle = "".join(p.read_text(errors="replace") for p in (ROOT / "node-ui/dist/assets").glob("*.js"))
             assert bundle and "global-members" not in bundle
             for label in ("a", "b"):
-                surfaces = "".join(request(nodes[label]["base"] + p)[2].decode(errors="replace")
+                surfaces = "".join(request(nodes[label]["base"] + p, headers=op(label))[2].decode(errors="replace")
                                    for p in ("/api/v1/status", "/api/v1/local-users", "/api/v1/media", "/api/v1/diagnostics"))
                 assert "alice-e2e" not in surfaces and nodes["user_id"] not in surfaces
             results.evidence(19, "Agent and Core membership listing routes return 404; Core has no user listing; operator API"
@@ -633,15 +650,32 @@ def main(argv=None):
                  "-v", str(ROOT / "scripts/node-enrollment-auth-probe.go") + ":/src/probe/main.go:ro", images["agent-build"],
                  "go", "run", "-trimpath", "-p=1", "./probe"], env=env, timeout=600)
             results.evidence(20, "Node A's federation credential presented for Node B's Core route was rejected (401)")
+            # Node B's management address refuses callers without B's operator session (ARKSEC-002).
+            denied = []
+            for method, path, body in (("GET", "/api/v1/status", None), ("GET", "/api/v1/local-users", None),
+                                       ("POST", "/api/v1/invitations", {}), ("PUT", "/api/v1/settings/peer-serving", {"enabled": True}),
+                                       ("POST", "/api/v1/updates/check", {})):
+                callers = [("anonymous", None), ("Node A operator", op("a"))]
+                if nodes.get("member_token"):
+                    callers.append(("global member bearer", {"Authorization": "Bearer " + nodes["member_token"]}))
+                for caller, headers in callers:
+                    status = request(nodes["b"]["base"] + path, method, body, headers)[0]
+                    if status not in (401, 403):
+                        denied.append(f"{method} {path} as {caller}: {status}")
+            assert not denied, denied
+            assert agent("b", "/api/v1/settings/peer-serving") == {"enabled": False}, "an unauthenticated write changed Node B"
+            results.evidence(20, "Node B's management address returned 401 to anonymous callers, to Node A's operator"
+                                 " session and to a member bearer token on status, users, invitations, settings and updates")
         item(20, isolation)
 
         # --------------------------------------------------- 16 revocation
         def revocation():
             decision = request_json(core_base + f"/api/admin/v1/nodes/{nodes['b']['node_id']}/revoke", "POST", headers=admin)[2]
             assert decision["enrollment_status"] == "REVOKED" and decision["trust_status"] == "BLOCKED"
-            request(nodes["b"]["base"] + f"/api/v1/media/{later['id']}/selection", "POST", {})
-            started = request(nodes["b"]["base"] + f"/api/v1/media/{later['id']}/transfer/start", "POST", {})
-            assert started[0] != 200, "revoked Node B started a new authorized transfer"
+            request(nodes["b"]["base"] + f"/api/v1/media/{later['id']}/selection", "POST", {}, op("b"))
+            started = request(nodes["b"]["base"] + f"/api/v1/media/{later['id']}/transfer/start", "POST", {}, op("b"))
+            # The operator is signed in, so a refusal here is Core's, not the management plane's.
+            assert started[0] not in (200, 401, 403), f"revoked Node B transfer start: HTTP {started[0]}"
             assert transfer_status("b", later["id"]) is None
             results.evidence(16, "after revocation Node B could not obtain a new swarm authorization (transfer start refused)")
             wait_until("B REVOKED", lambda: in_state("b", "REVOKED"), 120)

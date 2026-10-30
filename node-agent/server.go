@@ -125,6 +125,8 @@ func run(ctx context.Context, cfg config, logger *slog.Logger) error {
 	return serve(ctx, server, listener, cfg.shutdownTimeout, logger)
 }
 
+// newConfiguredHandler wires routes from configuration without authorization;
+// tests use it to exercise route logic. Production uses newHandler in run.
 func newConfiguredHandler(repository localstate.Repository, cfg config, monitor *heartbeat.Monitor) http.Handler {
 	opts := make([]handlerOption, 0, 2)
 	if monitor != nil {
@@ -152,7 +154,7 @@ func newConfiguredHandler(repository localstate.Repository, cfg config, monitor 
 	if cfg.transferURL != "" && cfg.transferToken != "" {
 		opts = append(opts, transferOpt{service: transfer.New(cfg.transferURL, cfg.transferToken)})
 	}
-	return newHandler(repository, opts...)
+	return newRoutes(repository, opts...)
 }
 
 // loadCurrentRelease never stops the Agent: local services keep running and

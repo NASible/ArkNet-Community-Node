@@ -49,10 +49,10 @@ does not restore them.
 | `GET` | `/api/v1/local-users/session` | Resolve a local bearer session. |
 | `DELETE` | `/api/v1/local-users/session` | Sign out the current local session. |
 
-Mutation routes use Go's cross-origin request protection and strict JSON
-parsing. The management API still has no operator authentication in this
-bootstrap release. Keep its default loopback exposure or place it behind the
-Node's trusted operator access control; do not publish it directly.
+Mutation routes use Go's cross-origin request protection, strict JSON parsing
+and the Node-local operator session. Local-user bearer sessions do not confer
+management rights. The management listener is HTTPS on the LAN; its plain-HTTP
+listener is published only on host loopback.
 
 ## Verification
 

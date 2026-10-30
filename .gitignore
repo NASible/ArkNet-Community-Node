@@ -77,3 +77,6 @@ tmp/
 *~
 .DS_Store
 Thumbs.db
+
+# Node TLS material created by arknet-node (never committed)
+deploy/node/tls/

@@ -113,7 +113,7 @@ func sessionView(s operators.Session) operatorSessionView {
 	return operatorSessionView{s.OperatorID, s.Username, s.AuthenticatedAt.UTC(), s.IdleExpiresAt.UTC(), s.ExpiresAt.UTC()}
 }
 
-func registerOperators(mux *http.ServeMux, opt operatorOpt) {
+func registerOperators(mux *routeMux, opt operatorOpt) {
 	protect := func(h http.HandlerFunc) http.Handler { return http.NewCrossOriginProtection().Handler(h) }
 	repo := opt.repository
 	logger := opt.logger

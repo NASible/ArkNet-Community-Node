@@ -43,7 +43,7 @@ func globalInvalid(w http.ResponseWriter) {
 	mediaError(w, http.StatusUnauthorized, "invalid_global_credentials")
 }
 
-func registerGlobalAuth(mux *http.ServeMux, opt globalAuthOpt) {
+func registerGlobalAuth(mux *routeMux, opt globalAuthOpt) {
 	repo := opt.repository
 	protect := func(h http.HandlerFunc) http.Handler { return http.NewCrossOriginProtection().Handler(h) }
 	unavailable := func(w http.ResponseWriter) {

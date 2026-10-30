@@ -24,7 +24,7 @@ type peerServingResponse struct {
 	Enabled bool `json:"enabled"`
 }
 
-func registerPeerServingSettings(mux *http.ServeMux, settings peerServingSettings) {
+func registerPeerServingSettings(mux *routeMux, settings peerServingSettings) {
 	mux.HandleFunc("GET /api/v1/settings/peer-serving", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Cache-Control", "no-store")

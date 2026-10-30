@@ -147,7 +147,7 @@ func localNode(t *testing.T) (http.Handler, *memoryLocalUsers, *recordingCore) {
 	t.Cleanup(server.Close)
 	repo := newMemoryLocalUsers()
 	identity := &coreIdentityRepository{coreURL: server.URL}
-	h := newHandler(testRepository{}, mediaOpt{repository: identity, coreURL: server.URL}, localUsersOpt{repository: repo})
+	h := newRoutes(testRepository{}, mediaOpt{repository: identity, coreURL: server.URL}, localUsersOpt{repository: repo})
 	return h, repo, core
 }
 

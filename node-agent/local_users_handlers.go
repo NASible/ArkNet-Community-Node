@@ -67,7 +67,7 @@ func localSessionDigest(r *http.Request) ([32]byte, bool) {
 	return localusers.SessionDigest(token)
 }
 
-func registerLocalUsers(mux *http.ServeMux, local localUsersOpt) {
+func registerLocalUsers(mux *routeMux, local localUsersOpt) {
 	repo := local.repository
 	protect := func(handler http.HandlerFunc) http.Handler {
 		return http.NewCrossOriginProtection().Handler(handler)

@@ -33,9 +33,11 @@ than one 16 KiB block. It uploaded 3,725,555 bytes while ON, and transmitted
 
 ARKSEC-006 remains **open**: cooperative seeds are unseeded when the Node is not
 CONNECTED, but active downloads are not forcibly cancelled and established
-malicious-peer sessions are not immediately revoked. ARKSEC-001, ARKSEC-002 and
-ARKSEC-004 remain open despite passing functional authentication, isolation and
-swarm checks.
+malicious-peer sessions are not immediately revoked. ARKSEC-001 and ARKSEC-004
+remain open despite passing functional authentication, isolation and swarm checks.
+ARKSEC-002 was subsequently closed by Prompt 45B's generated permission/spies,
+operator-authenticated E2E/upgrade and real browser HTTPS proof; see
+[Prompt 45B validation](development/prompt45b-validation.md).
 
 ## Requirement results
 
@@ -68,9 +70,11 @@ swarm checks.
 ## Open risk
 
 The authoritative tracked list is [Security follow-ups](security-follow-ups.md).
-`ARKSEC-001`, `ARKSEC-002` and `ARKSEC-004` are open release blockers for the
-stated zero-trust and privacy architecture; `ARKSEC-003` was closed in Phase 19A. The development-only Core admin token and loopback-only
-Node management plane must not be treated as production authorization.
+`ARKSEC-001` and `ARKSEC-004` remain open release blockers for the stated
+zero-trust and privacy architecture; `ARKSEC-003` was closed in Phase 19A and
+`ARKSEC-002` in Phase 20B. The development-only Core admin token must not be
+treated as production authorization. Node management now requires an operator
+session; network reachability alone grants no management permission.
 
 ## Verification
 

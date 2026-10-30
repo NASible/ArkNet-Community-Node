@@ -10,6 +10,10 @@ uses only `deploy/node/arknet-node` to:
   3. roll back automatically from a release that fails after apply;
   4. roll back manually to A.
 
+Management routes need an operator (Prompt 45B). The check signs in at A,
+disables that operator, and expects `arknet-node upgrade` to print a one-time
+setup code plus the HTTPS certificate fingerprint, which it then uses.
+
 Everything created is removed at the end. Requires Docker with Compose v2.
 """
 import functools
@@ -20,13 +24,18 @@ import os
 import re
 import secrets
 import shutil
+import ssl
 import subprocess
 import sys
 import tempfile
 import threading
 import time
+import urllib.error
 import urllib.request
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from scripts import operator_login  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 NODE_DIR = ROOT / "deploy" / "node"
@@ -34,7 +43,9 @@ TOOL = NODE_DIR / "arknet-node"
 PROJECT = "arknet-upgrade-test"
 REGISTRY_NAME = "arknet-upgrade-test-registry"
 REGISTRY = "localhost:15039"
-AGENT_PORT, UI_PORT, JELLYFIN_PORT = 18110, 18111, 18112
+AGENT_PORT, UI_PORT, JELLYFIN_PORT, HTTPS_PORT = 18110, 18111, 18112, 18113
+UI_SOURCE_IMAGE = "arknet-ui:upgrade-test-source"
+session = {}  # operator cookie header for agent()
 A, B, BROKEN, UNPULLABLE = "0.0.2-dev.1", "0.0.2-dev.2", "0.0.2-dev.3", "0.0.2-dev.4"
 results = {}
 
@@ -52,11 +63,31 @@ def check(name, condition, detail=""):
 
 def agent(path, method="GET", body=None):
     data = None if body is None else json.dumps(body).encode()
-    request = urllib.request.Request(f"http://127.0.0.1:{AGENT_PORT}{path}", data=data, method=method)
+    request = urllib.request.Request(f"http://127.0.0.1:{AGENT_PORT}{path}", data=data, method=method, headers=dict(session))
     if data is not None:
         request.add_header("Content-Type", "application/json")
     with urllib.request.urlopen(request, timeout=10) as response:
         return json.loads(response.read())
+
+
+def raw_request(url, method="GET", body=None, headers=None):
+    data = None if body is None else json.dumps(body).encode()
+    request = urllib.request.Request(url, data=data, method=method, headers={"Content-Type": "application/json", **(headers or {})})
+    try:
+        with urllib.request.urlopen(request, timeout=20) as response:
+            return response.status, dict(response.headers), response.read()
+    except urllib.error.HTTPError as error:
+        return error.code, dict(error.headers), error.read()
+
+
+def served_fingerprint(port):
+    """SHA-256 of the certificate the HTTPS listener presents, browser style."""
+    import socket
+    context = ssl._create_unverified_context()  # compare the self-signed certificate explicitly below
+    with socket.create_connection(("127.0.0.1", port), timeout=10) as connection:
+        with context.wrap_socket(connection, server_hostname="localhost") as secured:
+            digest = hashlib.sha256(secured.getpeercert(binary_form=True)).hexdigest().upper()
+    return ":".join(digest[i:i + 2] for i in range(0, 64, 2))
 
 
 def image(name, version):
@@ -103,13 +134,15 @@ def main():
     try:
         # Registry and images.
         sh("docker", "run", "-d", "--name", REGISTRY_NAME, "-p", f"127.0.0.1:{REGISTRY.split(':')[1]}:5000", "registry:latest")
+        # The UI image under test (HTTPS listener) is built from this checkout.
+        sh("docker", "build", "-q", "-t", UI_SOURCE_IMAGE, str(ROOT / "node-ui"))
         for version, build in ((A, True), (B, True), (BROKEN, False)):
             agent_ref = image("arknet-agent", version)
             if build:
                 sh("docker", "build", "-q", "--build-arg", f"ARKNET_VERSION={version}", "-t", agent_ref, str(ROOT / "node-agent"))
             else:
                 sh("docker", "tag", image("arknet-agent", B), agent_ref)
-            sh("docker", "tag", "arknet-ui:0.0.1-dev", image("arknet-ui", version))
+            sh("docker", "tag", UI_SOURCE_IMAGE, image("arknet-ui", version))
             sh("docker", "tag", "arknet-transfer:0.0.1-dev", image("arknet-transfer", version))
             for component in ("arknet-agent", "arknet-ui", "arknet-transfer"):
                 ref = image(component, version)
@@ -150,6 +183,7 @@ def main():
         old = os.umask(0o077)
         env_file.write_text(f"POSTGRES_PASSWORD={secrets.token_hex(24)}\nARKNET_AGENT_PORT={AGENT_PORT}\n"
                             f"ARKNET_UI_PORT={UI_PORT}\nJELLYFIN_BIND=127.0.0.1:{JELLYFIN_PORT}\n"
+                            f"ARKNET_UI_HTTPS_BIND=127.0.0.1:{HTTPS_PORT}\n"
                             f"ARKNET_RELEASE_INDEX_URL={agent_index_url}\nARKNET_RELEASE_INDEX_ALLOW_HTTP=true\n")
         os.umask(old)
         shutil.copytree(site / "releases" / A, home / "releases" / A)
@@ -164,6 +198,12 @@ def main():
             sh("docker", "pull", "-q", image(component, A))
         sh("docker", "compose", "-p", PROJECT, "--env-file", str(env_file), "-f", str(home / "releases" / A / "compose.yaml"),
            "up", "-d", "--wait", "--wait-timeout", "300")
+        compose_a = ["docker", "compose", "-p", PROJECT, "--env-file", str(env_file), "-f", str(home / "releases" / A / "compose.yaml")]
+        status, _, _ = raw_request(f"http://127.0.0.1:{AGENT_PORT}/api/v1/status")
+        check("management API refuses an anonymous caller", status == 401, f"HTTP {status}")
+        code = operator_login.setup_code(sh(*compose_a, "exec", "-T", "arknet-agent", "arknet-agent", "operator", "setup-code").stdout)
+        first = operator_login.bootstrap(f"http://127.0.0.1:{AGENT_PORT}", code, raw_request, username="operator-a")
+        session.update(first.headers)
         status = agent("/api/v1/status")
         check("release A installed and running", status["release"] == {"version": A, "channel": "development"}, status["release"])
 
@@ -180,7 +220,8 @@ def main():
         def tool(*args):
             started = time.monotonic()
             result = sh(sys.executable, "-I", str(TOOL), "--home", str(home), *args, check=False)
-            print("\n".join("    | " + l for l in result.stdout.splitlines()), flush=True)
+            # Setup codes are secrets shown once: never echo them into the check's own output.
+            print("\n".join("    | " + l for l in operator_login.redact_codes(result.stdout).splitlines()), flush=True)
             return result.returncode, result.stdout, time.monotonic() - started
 
         def preserved(release):
@@ -202,9 +243,23 @@ def main():
               f"state {discovered['discovery']['state']}, current {discovered['current_version']}, "
               f"available {(discovered['available'] or {}).get('version')}")
 
+        # Leave the Node without an active operator, as an existing pre-45B Node is.
+        sh(*compose_a, "exec", "-T", "arknet-agent", "arknet-agent", "operator", "disable", "operator-a")
+        session.clear()
+        check("disabled operator's session no longer works",
+              raw_request(f"http://127.0.0.1:{AGENT_PORT}/api/v1/status", headers=first.headers)[0] == 401)
+
         # 2. Acceptance: A -> B with only arknet-node.
         absent = sh("docker", "image", "inspect", image("arknet-agent", B), check=False).returncode != 0
         code, out, seconds = tool("upgrade", "--index", index_url)
+        printed = re.search(r"Certificate SHA-256 fingerprint: ([0-9A-F:]{95})", out)
+        check("upgrade printed the management HTTPS address and certificate fingerprint",
+              printed is not None and f"https://" in out and printed.group(1) == served_fingerprint(HTTPS_PORT),
+              "printed fingerprint matches the certificate served on the HTTPS listener" if printed else "not printed")
+        upgrade_code = operator_login.setup_code(out)
+        second = operator_login.bootstrap(f"http://127.0.0.1:{AGENT_PORT}", upgrade_code, raw_request, username="operator-b")
+        session.update(second.headers)
+        check("setup code printed by the upgrade creates an operator", True)
         status = agent("/api/v1/status")
         check("ACCEPTANCE upgrade A -> B succeeded via arknet-node", code == 0 and "UPGRADED" in out and status["release"]["version"] == B,
               f"exit {code}, {seconds:.0f}s, Agent reports {status['release']}")
@@ -241,7 +296,8 @@ def main():
         check("data preserved through rollback", preserved(A))
         log = (home / "upgrade.log").read_text()
         password = env_file.read_text().split("POSTGRES_PASSWORD=")[1].split("\n")[0]
-        check("upgrade log contains no secrets", password not in log)
+        check("upgrade log contains no secrets", password not in log and upgrade_code not in log
+              and upgrade_code.replace("-", "") not in log and "PRIVATE KEY" not in log)
     except Exception:
         logs = sh("docker", "logs", f"{PROJECT}-arknet-agent-1", check=False)
         print("Agent log (release/startup lines):")
@@ -259,6 +315,7 @@ def main():
             server.shutdown()
             server.server_close()
         sh("docker", "rm", "-f", "-v", REGISTRY_NAME, check=False)
+        sh("docker", "rmi", UI_SOURCE_IMAGE, check=False)
         for version in (A, B, BROKEN):
             for component in ("arknet-agent", "arknet-ui", "arknet-transfer"):
                 sh("docker", "rmi", image(component, version), check=False)

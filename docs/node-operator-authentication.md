@@ -1,10 +1,11 @@
 # Node Operator Authentication (design)
 
-Status: **accounts, bootstrap, sessions and shell recovery implemented
-(Prompt 45A); management routes are not protected yet.** Prompt 45B enforces the
-permission matrix, adds the UI and the LAN HTTPS listener, and closes
-[ARKSEC-002](security-follow-ups.md#arksec-002). Until then
-[ARKSEC-002](security-follow-ups.md#arksec-002) stays open.
+Status: **accounts, bootstrap, sessions, shell recovery, permission enforcement,
+operator UI and LAN HTTPS listener implemented (Prompts 45A/45B).**
+[ARKSEC-002](security-follow-ups.md#arksec-002) is closed by the
+[Prompt 45B validation](development/prompt45b-validation.md): generated permission
+and spy tests, operator-authenticated E2E/upgrade, and real Chromium HTTPS
+sign-in/logout with loopback-only plain HTTP.
 
 This design follows decision **D2** from the
 [Phase 20 prompt pack](development/hermes-phase20-prompts.md), confirmed by the
@@ -14,9 +15,9 @@ see [Decisions](#decisions).
 
 ## Problem
 
-Every Agent management route is protected only by `http.NewCrossOriginProtection`,
-which stops browser cross-site requests and nothing else. Anyone who can send an
-HTTP request to the Agent can do all of the following:
+Before Prompt 45B, every Agent management route was protected only by
+`http.NewCrossOriginProtection`, which stops browser cross-site requests and
+nothing else. Anyone able to send an HTTP request to the Agent could:
 
 - create invitations and receive their secrets;
 - create, disable and enable local users;
@@ -128,9 +129,10 @@ tooling unless the database itself is backed up.
 
 ## First-operator bootstrap
 
-There is no default account and no default password. While no ACTIVE operator
-exists, every operator route returns `401 {"error":"operator_setup_required"}`.
-Routes are never open, not even briefly.
+There is no default account and no default password. Operator routes without a
+session return `401 {"error":"operator_required"}` without consulting any
+repository. Routes are never open, not even briefly. On a new Node, the printed
+setup code and the sign-in page's **Set up operator** action begin enrollment.
 
 1. **Issue a setup code from the local shell.**
 

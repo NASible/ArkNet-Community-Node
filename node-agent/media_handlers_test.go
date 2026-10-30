@@ -70,7 +70,7 @@ func catalogTestObject() catalog.Object {
 	return catalog.Object{ID: selectionID, Title: "A movie", Size: 4096, ContentType: catalog.Video, State: catalog.Active, CreatedAt: time.Now(), UpdatedAt: time.Now()}
 }
 func selectionHandler(s *selectionRepository, objects []catalog.Object, fetchErr error) http.Handler {
-	return newHandler(testRepository{}, mediaOpt{repository: s, allocation: 8192, coreURL: "https://core.example",
+	return newRoutes(testRepository{}, mediaOpt{repository: s, allocation: 8192, coreURL: "https://core.example",
 		fetchCatalog: func(context.Context, enrollment.Identity) ([]catalog.Object, error) { return objects, fetchErr },
 	})
 }
@@ -124,7 +124,7 @@ func TestDeleteRemovedRetainedMediaIsExplicitAndLocal(t *testing.T) {
 		t.Fatal(err)
 	}
 	repo := &selectionRepository{objects: []mediaselection.Object{{ID: selectionID, Title: "Retained", Size: 8, State: catalog.Removed, LocalState: mediaselection.RemovedRetained}}}
-	handler := newHandler(testRepository{}, mediaOpt{repository: repo, mediaDir: mediaDir})
+	handler := newRoutes(testRepository{}, mediaOpt{repository: repo, mediaDir: mediaDir})
 	request := httptest.NewRequest(http.MethodDelete, "/api/v1/media/"+selectionID+"/retained", nil)
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
@@ -146,7 +146,7 @@ func TestCoreRemovalKeepsAvailableFileUntilOperatorDeletesIt(t *testing.T) {
 		t.Fatal(err)
 	}
 	repo := &selectionRepository{objects: []mediaselection.Object{{ID: selectionID, Title: "Retained", Size: 8, State: catalog.Active, LocalState: mediaselection.Available}}}
-	handler := newHandler(testRepository{}, mediaOpt{repository: repo, mediaDir: mediaDir, coreURL: "https://core.example", fetchCatalog: func(context.Context, enrollment.Identity) ([]catalog.Object, error) {
+	handler := newRoutes(testRepository{}, mediaOpt{repository: repo, mediaDir: mediaDir, coreURL: "https://core.example", fetchCatalog: func(context.Context, enrollment.Identity) ([]catalog.Object, error) {
 		object := catalogTestObject()
 		object.State = catalog.Removed
 		return []catalog.Object{object}, nil
@@ -177,7 +177,7 @@ func TestMediaQueueRejectsUntrustedRequestsBeforeCoreOrStorage(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			s := &selectionRepository{}
 			calls := 0
-			h := newHandler(testRepository{}, mediaOpt{repository: s, allocation: 8192, coreURL: "https://core.example", fetchCatalog: func(context.Context, enrollment.Identity) ([]catalog.Object, error) {
+			h := newRoutes(testRepository{}, mediaOpt{repository: s, allocation: 8192, coreURL: "https://core.example", fetchCatalog: func(context.Context, enrollment.Identity) ([]catalog.Object, error) {
 				calls++
 				return []catalog.Object{catalogTestObject()}, nil
 			}})

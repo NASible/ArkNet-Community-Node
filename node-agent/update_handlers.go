@@ -80,7 +80,7 @@ func readEmptyJSON(w http.ResponseWriter, r *http.Request) bool {
 	return true
 }
 
-func registerUpdates(mux *http.ServeMux, o updatesOpt) {
+func registerUpdates(mux *routeMux, o updatesOpt) {
 	unavailable := func(w http.ResponseWriter) {
 		writeUpdates(w, http.StatusServiceUnavailable, map[string]string{"error": "updates_unavailable"})
 	}

@@ -92,7 +92,7 @@ func TestStatusReportsCurrentRelease(t *testing.T) {
 		t.Fatalf("shipped manifest not loaded: %s", logs.String())
 	}
 	w := httptest.NewRecorder()
-	newHandler(testRepository{}, current).ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/status", nil))
+	newRoutes(testRepository{}, current).ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/status", nil))
 	var status struct {
 		Version string         `json:"version"`
 		Release map[string]any `json:"release"`
@@ -125,7 +125,7 @@ func TestInvalidOrMismatchedManifestKeepsAgentRunningWithoutRelease(t *testing.T
 			t.Fatalf("%s: manifest=%v logs=%s", name, current.manifest, logs.String())
 		}
 		w := httptest.NewRecorder()
-		newHandler(testRepository{}, current).ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/status", nil))
+		newRoutes(testRepository{}, current).ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/status", nil))
 		if w.Code != 200 || !strings.Contains(w.Body.String(), `"release":null`) {
 			t.Fatalf("%s status: %d %s", name, w.Code, w.Body)
 		}

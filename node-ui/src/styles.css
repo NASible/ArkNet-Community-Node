@@ -123,3 +123,10 @@ button:focus-visible { outline: 3px solid #7d91ff; outline-offset: 3px; }
 .diagnostics-headline.tone-healthy { border-left-color: #67d391; }
 .diagnostics-headline.tone-warning { border-left-color: #e5b95f; }
 .diagnostics-headline.tone-error { border-left-color: #f27d86; }
+
+.operator { margin-left: auto; display: flex; gap: .75rem; align-items: center; }
+.card { max-width: 32rem; margin: 2rem auto; }
+.card form { display: grid; gap: .75rem; }
+.card label { display: grid; gap: .25rem; }
+button.link { background: none; border: none; padding: 0; color: inherit; text-decoration: underline; cursor: pointer; }
+.hint { font-size: .9em; opacity: .8; }

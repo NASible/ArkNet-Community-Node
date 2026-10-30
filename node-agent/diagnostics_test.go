@@ -45,7 +45,7 @@ func (l listTransfers) List(context.Context) ([]transfer.Status, error) { return
 func diagnose(t *testing.T, repo localstate.Repository, opts ...handlerOption) map[string]any {
 	t.Helper()
 	w := httptest.NewRecorder()
-	newHandler(repo, opts...).ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/diagnostics", nil))
+	newRoutes(repo, opts...).ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/diagnostics", nil))
 	if w.Code != 200 {
 		t.Fatalf("diagnostics: %d %s", w.Code, w.Body)
 	}
@@ -239,7 +239,7 @@ func TestProbeURLClassifiesRealFailures(t *testing.T) {
 
 func TestDiagnosticsRejectsQuery(t *testing.T) {
 	w := httptest.NewRecorder()
-	newHandler(testRepository{}, diagnosticsOpt{}).ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/diagnostics?verbose=1", nil))
+	newRoutes(testRepository{}, diagnosticsOpt{}).ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/diagnostics?verbose=1", nil))
 	if w.Code != 400 {
 		t.Fatalf("query: %d", w.Code)
 	}
