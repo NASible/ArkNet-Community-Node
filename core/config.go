@@ -18,6 +18,7 @@ type config struct {
 	devAdminToken   string
 	tracker         *trackerGrantIssuer
 	webSeed         *webSeedConfig
+	nodeLogin       *nodeLoginConfig
 }
 
 func loadConfig(getenv func(string) string) (config, error) {
@@ -91,5 +92,10 @@ func loadConfig(getenv func(string) string) (config, error) {
 		return config{}, err
 	}
 	cfg.webSeed = webSeed
+	nodeLogin, err := loadNodeLoginConfig(getenv, tracker)
+	if err != nil {
+		return config{}, err
+	}
+	cfg.nodeLogin = nodeLogin
 	return cfg, nil
 }

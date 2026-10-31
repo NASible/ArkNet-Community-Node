@@ -1,7 +1,8 @@
 # Global login assertions (design)
 
-Status: **design only** (Prompt 46, ARKSEC-001). Nothing here is implemented
-yet. Prompt 46A builds the Core side and Prompt 46B the Agent side. The user
+Status: Prompt 46 (ARKSEC-001). The Core side is implemented (Prompt 46A; see
+[Core implementation](#core-implementation-46a)). The Agent side, offline model
+and migration are Prompt 46B and not implemented yet. The user
 answered the blocking questions on 2026-10-29; see [Decisions](#decisions).
 
 Decisions this design depends on:
@@ -85,10 +86,10 @@ Browser            Node (member listener)                Core
    │                        │  nonce N (256 bit, random)   │
    │                        │  verifier V; digest H(V)     │
    │<───────────────────────│ Set-Cookie: login state      │
-   │  302 → Core /login?node_id&nonce=N&challenge=H(V)     │
+   │  302 → Core /node-login?node_id&nonce=N&challenge=H(V)&redirect_uri
    │──────────────────────────────────────────────────────>│
    │                 user authenticates at Core (password, │
-   │                 later passkey); Core checks session,  │
+   │                 later passkey); Core checks           │
    │                 ACTIVE user, membership on node_id,   │
    │                 Node APPROVED + TRUSTED,              │
    │                 redirect origin registered for node   │
@@ -107,15 +108,17 @@ Browser            Node (member listener)                Core
    Core determines it from the signed-in user and the Node.
 2. **Authenticate (Core).** The browser goes to Core's login page with
    `node_id`, `nonce` and `challenge = SHA-256(verifier)`. The user signs in
-   at Core's origin. Core requires all of the following, then issues **at
+   at Core's origin by entering the global password; 46A keeps no Core
+   browser session. Core requires all of the following, then issues **at
    most one** assertion per `(node_id, nonce)`:
-   - an active Core session;
-   - an `ACTIVE` user with a membership on `node_id`;
-   - the Node is `APPROVED` and `TRUSTED`.
+   - valid credentials of an `ACTIVE` user with a membership on `node_id`;
+   - the Node is `APPROVED` and `TRUSTED`;
+   - `redirect_uri` is one of that Node's registered callbacks.
 
-   The page names the Node by the operator-chosen display name Core already
-   holds and asks for confirmation. Unknown Node, not a member, and untrusted
-   Node all show one identical error.
+   The page names the Node by a shortened Node ID and shows the callback
+   origin the browser will return to; signing in is the confirmation. Unknown
+   Node, untrusted Node and unregistered callback all show one identical
+   error, and none of them redirects.
 3. **Return.** Core redirects only to a callback origin the Node registered in
    advance over its signed federation channel (see
    [Q2](#decisions)). The assertion travels in the URL **fragment**.
@@ -179,8 +182,12 @@ Core publishes a small key set:
 GET /api/federation/v1/assertion-keys
 ```
 
-Each entry is `{key_id, public_key, not_before, not_after}`. It is
-unauthenticated and cacheable (`Cache-Control: max-age=3600`).
+Each entry is `{key_id, algorithm, public_key, status}`: `key_id` is the hex
+of the first 8 bytes of SHA-256 of the public key, `algorithm` is `Ed25519`,
+`public_key` is unpadded base64url, and `status` is `active` (the one signing
+key) or `published` (listed but not signing: the next key before a rotation,
+or a retired key). It is unauthenticated and cacheable
+(`Cache-Control: public, max-age=3600`).
 
 - The Agent fetches it over the same verified HTTPS connection it uses for
   federation and **persists** it, so offline login and restarts don't depend on
@@ -192,6 +199,39 @@ unauthenticated and cacheable (`Cache-Control: max-age=3600`).
   Core URL. An attacker who can make the Agent fetch a different key set
   already controls what that Node talks to, which is a Node-local compromise
   only. Per [Q4](#decisions), there is no separate pinning of the first key.
+
+### Core implementation (46A)
+
+| Piece | Where |
+| --- | --- |
+| Assertion format, signer and reference verifier | `core/internal/assertions` (byte offsets in the package comment) |
+| Login page | `GET /node-login?node_id&nonce&challenge&redirect_uri` renders a server-side form; `POST /node-login` (form-encoded, same-origin only) authenticates and answers `303` to `redirect_uri#assertion=…` |
+| Callback registration | `PUT /api/federation/v1/nodes/{node_id}/login-callbacks` with a signed `{"callback_urls":[…]}`, 1–4 canonical HTTPS URLs with a path (plain HTTP only for loopback); replaces the set |
+| Key set | `GET /api/federation/v1/assertion-keys` |
+| Storage | migration `0012_node_login.sql`: `node_login_callbacks`, and `node_login_nonces` (SHA-256 of the nonce, kept 10 minutes, pruned on the next claim) |
+| Configuration | `ARKNET_ASSERTION_SIGNING_KEY_FILE` (dedicated key; refused if equal to the tracker key), `ARKNET_ASSERTION_PUBLISHED_KEYS_FILE`, `ARKNET_ASSERTION_OFFLINE_WINDOW` (≤ `720h`); overlay `deploy/core/compose.node-login.yaml`. Login is off when no key is set. |
+
+The page sends `Content-Security-Policy: default-src 'none'; base-uri 'none';
+frame-ancestors 'none'; form-action 'self' <callback origin>` (form-action also
+covers the redirect after submission), plus `X-Frame-Options: DENY`,
+`Referrer-Policy: no-referrer` and `Cache-Control: no-store`. The nonce is
+claimed only after the password and membership checks succeed, so a failed
+attempt cannot burn the user's link. Core logs only `node_login_denied` with a
+reason and `node_login_assertion_issued` with the Node ID and key ID; never a
+username, password, member ID, nonce, challenge or assertion.
+
+Callback hosts must be ASCII DNS names (IDNs as punycode) or IP literals, with
+a port of 1–65535 if present, because the origin is shown to the user and
+written into the CSP. Accepted for now, from the 46A review:
+
+- **HTTPS is not enforced by Core itself.** Core has no trusted-proxy
+  configuration, so the page cannot tell whether a TLS proxy is in front of
+  it. Deployments must serve Core over HTTPS. Enforcement and HSTS belong with
+  the supported TLS ingress (ARKSEC-007, Prompt 49B).
+- **A Node may register any origin, including another Node's.** The page would
+  then name the wrong return address, but the assertion is still bound to the
+  registering Node and every other Node rejects it.
+- **Plain-HTTP loopback callbacks** are accepted for local development.
 
 ## Offline model
 

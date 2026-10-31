@@ -1,0 +1,19 @@
+# Explicit Core-bound Node login overlay (Prompt 46A). Core signs one-time Node
+# login assertions with a dedicated key; Nodes receive only the public key set.
+services:
+  arknet-core:
+    environment:
+      ARKNET_ASSERTION_SIGNING_KEY_FILE: /run/secrets/arknet-assertion-signing-key
+      ARKNET_ASSERTION_PUBLISHED_KEYS_FILE: /run/config/arknet-assertion-published-keys
+      ARKNET_ASSERTION_OFFLINE_WINDOW: ${ARKNET_ASSERTION_OFFLINE_WINDOW:-720h}
+    volumes:
+      - type: bind
+        source: ${ARKNET_ASSERTION_SIGNING_KEY_FILE:?Set the host path to the Core assertion-signing key}
+        target: /run/secrets/arknet-assertion-signing-key
+        read_only: true
+      # Extra public keys published but never used for signing (next/retired).
+      # May be empty.
+      - type: bind
+        source: ${ARKNET_ASSERTION_PUBLISHED_KEYS_FILE:?Set the host path to the published assertion keys file (may be empty)}
+        target: /run/config/arknet-assertion-published-keys
+        read_only: true

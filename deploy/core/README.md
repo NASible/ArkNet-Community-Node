@@ -180,6 +180,38 @@ paths and preserves peer source addresses. The tracker is attached only to its
 own `tracker-edge` network; it receives no database password or Core credential.
 See [private tracker design and grant format](../../docs/private-tracker.md).
 
+## Optional Core-bound Node login
+
+Global members sign in to Nodes through Core's `/node-login` page. Core signs a
+one-time assertion with a dedicated Ed25519 key, which must not be the tracker
+key. Provision the key, then set:
+
+```dotenv
+ARKNET_ASSERTION_SIGNING_KEY_FILE=/host/secret/path/assertion-private.key
+# The next key before a rotation, retired keys afterwards. May be empty.
+ARKNET_ASSERTION_PUBLISHED_KEYS_FILE=/host/config/path/assertion-published.keys
+```
+
+The private file uses the tracker-key format. Make it readable by UID 10001 and
+no one else. Start the overlay with:
+
+```sh
+docker compose -f compose.yaml -f compose.node-login.yaml up --build -d --wait
+curl --fail http://127.0.0.1:${ARKNET_CORE_PORT:-8083}/api/federation/v1/assertion-keys
+```
+
+To rotate the key:
+
+1. Add the new public key to the published-keys file and restart. Then wait
+   at least one hour (the key-set cache lifetime) so Nodes fetch it.
+2. Make the new key the signing key and move the old public key into the
+   published-keys file. Restart.
+3. Remove the old public key once the offline window (30 days by default) has
+   passed.
+
+Serve Core over HTTPS: the login page takes the global password. See
+[global login assertions](../../docs/global-login-assertions.md).
+
 ## Optional Core HTTP web seed
 
 The web seed is an explicit Core overlay and requires the tracker-signing

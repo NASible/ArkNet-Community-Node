@@ -37,8 +37,12 @@ func run(ctx context.Context, cfg config, logger *slog.Logger) error {
 		authorizer = developmentAdminAuthorizer(cfg.devAdminToken)
 		logger.Warn("development_administrative_authorization_enabled")
 	}
+	if cfg.nodeLogin != nil {
+		cfg.nodeLogin.logger = logger
+		logger.Info("node_login_enabled", "key_id", cfg.nodeLogin.signer.KeyID().String(), "published_keys", len(cfg.nodeLogin.published))
+	}
 	server := &http.Server{
-		Handler:           withAdministration(newHandlerWithWebSeed(database, cfg.tracker, cfg.webSeed, database), database, authorizer),
+		Handler:           withAdministration(newCoreHandler(database, cfg.tracker, cfg.webSeed, cfg.nodeLogin, database), database, authorizer),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
 		WriteTimeout:      30 * time.Second,

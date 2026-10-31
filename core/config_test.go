@@ -330,3 +330,87 @@ func TestLoadConfigAllowsHTTPWebSeedOnlyForLoopbackAndExactCoreSidecar(t *testin
 		})
 	}
 }
+
+func writeFile(t *testing.T, name, content string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), name)
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func envOf(values map[string]string) func(string) string {
+	return func(key string) string { return values[key] }
+}
+
+func TestLoadConfigNodeLoginIsOptInAndUsesDedicatedKey(t *testing.T) {
+	cfg, err := loadConfig(envOf(nil))
+	if err != nil || cfg.nodeLogin != nil {
+		t.Fatalf("Node login must be off by default: %+v %v", cfg.nodeLogin, err)
+	}
+	keyPath := writeTrackerSigningKey(t) // same file format as the tracker key
+	_, next, _ := ed25519.GenerateKey(rand.Reader)
+	_, retired, _ := ed25519.GenerateKey(rand.Reader)
+	published := writeFile(t, "published", "# next key\n"+
+		base64.StdEncoding.EncodeToString(next.Public().(ed25519.PublicKey))+"\n\n"+
+		base64.StdEncoding.EncodeToString(retired.Public().(ed25519.PublicKey))+"\n")
+	cfg, err = loadConfig(envOf(map[string]string{
+		"ARKNET_ASSERTION_SIGNING_KEY_FILE":    keyPath,
+		"ARKNET_ASSERTION_PUBLISHED_KEYS_FILE": published,
+		"ARKNET_ASSERTION_OFFLINE_WINDOW":      "168h",
+	}))
+	if err != nil || cfg.nodeLogin == nil || cfg.nodeLogin.signer == nil || len(cfg.nodeLogin.published) != 2 {
+		t.Fatalf("Node login config: %+v %v", cfg.nodeLogin, err)
+	}
+	if !cfg.nodeLogin.published[0].Equal(next.Public()) || !cfg.nodeLogin.published[1].Equal(retired.Public()) {
+		t.Fatal("published keys not loaded in order")
+	}
+	// The Compose overlay always mounts the published-keys file; empty is valid.
+	cfg, err = loadConfig(envOf(map[string]string{"ARKNET_ASSERTION_SIGNING_KEY_FILE": keyPath,
+		"ARKNET_ASSERTION_PUBLISHED_KEYS_FILE": writeFile(t, "empty", "")}))
+	if err != nil || cfg.nodeLogin == nil || len(cfg.nodeLogin.published) != 0 {
+		t.Fatalf("empty published-keys file: %v", err)
+	}
+}
+
+func TestLoadConfigRejectsUnsafeNodeLoginConfiguration(t *testing.T) {
+	keyPath := writeTrackerSigningKey(t)
+	activePublic := func() string {
+		data, _ := os.ReadFile(keyPath)
+		raw, _ := base64.StdEncoding.DecodeString(string(data))
+		return base64.StdEncoding.EncodeToString(ed25519.PrivateKey(raw).Public().(ed25519.PublicKey))
+	}()
+	_, other, _ := ed25519.GenerateKey(rand.Reader)
+	otherPublic := base64.StdEncoding.EncodeToString(other.Public().(ed25519.PublicKey))
+	cases := map[string]map[string]string{
+		"published without signing key": {"ARKNET_ASSERTION_PUBLISHED_KEYS_FILE": writeFile(t, "p", otherPublic+"\n")},
+		"window without signing key":    {"ARKNET_ASSERTION_OFFLINE_WINDOW": "24h"},
+		"missing key file":              {"ARKNET_ASSERTION_SIGNING_KEY_FILE": filepath.Join(t.TempDir(), "absent")},
+		"malformed key":                 {"ARKNET_ASSERTION_SIGNING_KEY_FILE": writeFile(t, "k", "not a key")},
+		"same key as tracker": {"ARKNET_ASSERTION_SIGNING_KEY_FILE": keyPath, "ARKNET_TRACKER_SIGNING_KEY_FILE": keyPath,
+			"ARKNET_TRACKER_ANNOUNCE_URL": "https://tracker.example"},
+		"window above 30 days": {"ARKNET_ASSERTION_SIGNING_KEY_FILE": keyPath, "ARKNET_ASSERTION_OFFLINE_WINDOW": "721h"},
+		"window not duration":  {"ARKNET_ASSERTION_SIGNING_KEY_FILE": keyPath, "ARKNET_ASSERTION_OFFLINE_WINDOW": "30d"},
+		"published active key": {"ARKNET_ASSERTION_SIGNING_KEY_FILE": keyPath, "ARKNET_ASSERTION_PUBLISHED_KEYS_FILE": writeFile(t, "p", activePublic+"\n")},
+		"duplicate published":  {"ARKNET_ASSERTION_SIGNING_KEY_FILE": keyPath, "ARKNET_ASSERTION_PUBLISHED_KEYS_FILE": writeFile(t, "p", otherPublic+"\n"+otherPublic+"\n")},
+		"malformed published":  {"ARKNET_ASSERTION_SIGNING_KEY_FILE": keyPath, "ARKNET_ASSERTION_PUBLISHED_KEYS_FILE": writeFile(t, "p", "abc\n")},
+		"tracker public key published": func() map[string]string {
+			trackerKey := writeTrackerSigningKey(t)
+			data, _ := os.ReadFile(trackerKey)
+			raw, _ := base64.StdEncoding.DecodeString(string(data))
+			public := base64.StdEncoding.EncodeToString(ed25519.PrivateKey(raw).Public().(ed25519.PublicKey))
+			return map[string]string{"ARKNET_ASSERTION_SIGNING_KEY_FILE": keyPath, "ARKNET_TRACKER_SIGNING_KEY_FILE": trackerKey,
+				"ARKNET_TRACKER_ANNOUNCE_URL": "https://tracker.example", "ARKNET_ASSERTION_PUBLISHED_KEYS_FILE": writeFile(t, "p", public+"\n")}
+		}(),
+		"private key published": {"ARKNET_ASSERTION_SIGNING_KEY_FILE": keyPath,
+			"ARKNET_ASSERTION_PUBLISHED_KEYS_FILE": writeFile(t, "p", base64.StdEncoding.EncodeToString(other)+"\n")},
+	}
+	for name, env := range cases {
+		if _, err := loadConfig(envOf(env)); err == nil {
+			t.Errorf("%s accepted", name)
+		} else if strings.Contains(err.Error(), activePublic) || strings.Contains(err.Error(), otherPublic) {
+			t.Errorf("%s: error leaks key material", name)
+		}
+	}
+}

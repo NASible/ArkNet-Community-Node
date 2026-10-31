@@ -50,6 +50,9 @@ the normal local workflow rather than exposing that database just to run Core.
 | `ARKNET_TRACKER_SIGNING_KEY_FILE` | Unset | File containing exactly the canonical base64 encoding of a 64-byte Ed25519 private key. Must be set together with the tracker origin. |
 | `ARKNET_CORE_WEB_SEED_ORIGIN` | Unset | Public Core origin used to construct authorized web-seed URLs. Must be HTTPS except for loopback or the exact `arknet-core` development sidecar, and must be paired with the web-seed root. |
 | `ARKNET_CORE_WEB_SEED_ROOT` | Unset | Absolute, clean, non-root directory containing files named exactly by opaque media ID. Must be paired with the web-seed origin and requires tracker signing configuration. |
+| `ARKNET_ASSERTION_SIGNING_KEY_FILE` | Unset | Enables Core-bound Node login. Same format as the tracker key (a single trailing newline is allowed). It must be a dedicated key, not the tracker key. |
+| `ARKNET_ASSERTION_PUBLISHED_KEYS_FILE` | Unset | Optional extra Ed25519 public keys to publish without signing: the next key before a rotation, retired keys afterwards. Canonical base64, one per line, `#` comments allowed, at most 8. |
+| `ARKNET_ASSERTION_OFFLINE_WINDOW` | `720h` | Offline login window written into assertions; a Go duration from `1h` to `720h` (30 days, decision D3). |
 | `DATABASE_URL` | Unset | Full PostgreSQL connection URL; overrides the `PG*` variables below. |
 | `PGHOST` | `127.0.0.1` | Database host. |
 | `PGPORT` | `5432` | Database TCP port. |
@@ -288,6 +291,18 @@ permissions, validation time, and bounded expiration. Signed reconnect refresh
 reports current authority for already cached pairwise IDs, including explicit
 revocation for disabled or removed members. See
 [cached global authorization](../docs/cached-global-authorization.md).
+
+## Core-bound Node login
+
+With `ARKNET_ASSERTION_SIGNING_KEY_FILE` set, Core serves a minimal login page
+at `/node-login`. A Node sends the browser there with its `node_id`, a nonce, a
+PKCE-style challenge and a callback it registered with
+`PUT /api/federation/v1/nodes/{node_id}/login-callbacks` (signed). After the
+user signs in, Core checks the membership, claims the nonce once, and
+redirects to the callback with a one-time, Node-bound assertion in the URL
+fragment. Nodes verify it with the key set at
+`GET /api/federation/v1/assertion-keys`. The Node never sees the password. See
+[global login assertions](../docs/global-login-assertions.md#core-implementation-46a).
 
 ## Primary home node
 

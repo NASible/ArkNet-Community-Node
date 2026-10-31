@@ -1,6 +1,7 @@
 package main
 
 import (
+	"arknet/core/internal/assertions"
 	"arknet/core/internal/media"
 	"arknet/core/internal/memberships"
 	"arknet/core/internal/nodes"
@@ -30,6 +31,12 @@ func newHandlerWithTracker(database databaseHealth, tracker *trackerGrantIssuer,
 }
 
 func newHandlerWithWebSeed(database databaseHealth, tracker *trackerGrantIssuer, webSeed *webSeedConfig, repositories ...nodes.EnrollmentRepository) http.Handler {
+	return newCoreHandler(database, tracker, webSeed, nil, repositories...)
+}
+
+// newCoreHandler wires every public route. A nil login disables Core-bound Node
+// login (the login page, callback registration and the assertion key set).
+func newCoreHandler(database databaseHealth, tracker *trackerGrantIssuer, webSeed *webSeedConfig, login *nodeLoginConfig, repositories ...nodes.EnrollmentRepository) http.Handler {
 	var catalogStore store.MediaCatalogRepository
 	var replicaStore store.MediaReplicaRepository
 	for _, repository := range repositories {
@@ -59,6 +66,9 @@ func newHandlerWithWebSeed(database databaseHealth, tracker *trackerGrantIssuer,
 	identities, _ := repository.(users.Repository)
 	if identities != nil {
 		registerIdentityRoutes(mux, identities)
+		if loginRepository, ok := repository.(assertions.Repository); ok && login != nil {
+			registerNodeLogin(mux, login, loginRepository, identities, handshake)
+		}
 	}
 	if invitations, ok := repository.(memberships.Repository); ok {
 		mux.HandleFunc("POST /api/federation/v1/nodes/{node_id}/invitations", invitationCreateHandler(invitations, handshake))
