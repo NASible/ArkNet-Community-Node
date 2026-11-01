@@ -28,6 +28,8 @@ import urllib.request
 
 from ops import HERE, MACHINES, load_secrets, save_secrets, ssh
 from private_api import TLS, request, wait
+sys.path.insert(0, str(HERE.parent.parent))
+from scripts import global_login  # noqa: E402
 
 PENDING = HERE / 'secrets' / 'rotation-pending.json'
 ACCESS = HERE / 'secrets' / 'access.txt'
@@ -138,9 +140,14 @@ def jellyfin_url(host):
     return 'https://jellyfin-' + host[-1] + '.nodenet.arknet.media'
 
 
-def node_login(host, member_id, password):
-    return request(member_url(host) + '/api/v1/global-users/sessions', 'POST',
-                   {'member_id': member_id, 'password': password}, expected=(201, 401))
+def node_login(host, username, password):
+    """Core-bound Node login (Prompt 46B); returns (status, session)."""
+    try:
+        session, _ = global_login.login(global_login.Browser(TLS), member_url(host), member_url(host) + '/login/callback',
+                                        username, password)
+        return 201, session
+    except AssertionError:
+        return 401, None
 
 
 def status_of(url, method='GET', body=None, headers=None):
@@ -212,11 +219,10 @@ def rotate_global_users(state, plan):
         assert core_login(name, old[name])[0] == 401, name + ': old password still accepted at Core'
         passed(name + ' Core: new password accepted, old rejected')
         host = user.get('node_host') or 'nodenet-node-' + name[-1]
-        # An online attempt with the old password makes the Agent revoke its cached
-        # verifier (Core answers "denied"), so the old password cannot work offline later.
-        assert node_login(host, user['member_id'], old[name])[0] == 401, name + ': old password accepted by its Node'
-        assert node_login(host, user['member_id'], new[name])[0] == 201, name + ': new password rejected by its Node'
-        passed(name + ' ' + host + ': new password accepted, old rejected (cached verifier revoked)')
+        # Nodes hold no password verifier (ARKSEC-001): sign-in happens at Core.
+        assert node_login(host, name, old[name])[0] == 401, name + ': old password accepted for its Node'
+        assert node_login(host, name, new[name])[0] == 201, name + ': new password rejected for its Node'
+        passed(name + ' ' + host + ': new password signs in through Core, old rejected')
         user['password'] = new[name]
         save_secrets(state)
 

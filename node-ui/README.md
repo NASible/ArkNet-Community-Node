@@ -41,6 +41,9 @@ Open **http://127.0.0.1:5173/**. No Core service is required. The UI development
 server binds to loopback. It proxies login and session routes to the Agent's
 member listener (`http://127.0.0.1:8082` by default) and the rest of `/api` to the
 management listener (`http://127.0.0.1:8081` by default).
+Global members sign in at `/member`: the button sends them to ArkNet Core,
+which returns them to `/login/callback` (configure that URL on the Agent with
+`ARKNET_GLOBAL_LOGIN_CALLBACK_URLS`). No global password field exists in this UI.
 The browser fetches `/api/v1/status` on its own origin; the Agent needs no CORS
 changes and is not exposed on additional interfaces.
 

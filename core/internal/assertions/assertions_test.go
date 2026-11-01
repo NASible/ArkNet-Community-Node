@@ -295,3 +295,24 @@ func TestSignedButInconsistentPayloadsAreRejected(t *testing.T) {
 		}
 	}
 }
+
+// The Node Agent's verifier (node-agent/internal/globalauth) checks the same
+// string in TestCoreIssuedGoldenAssertionVerifies.
+const goldenAssertion = "AQFWR1qnVGNHTKqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqu7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7sRERERERERERERERERERERERERERERERERERERERERESIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiUiQqHYXUZ3y4wZRHaVgQuwAAAABq5IbAAAAAAGrkhzgCAQAAAABrDBPA.CafrIteZ9LJqJeEuooQxW3gl7q7QwSKm8ZdjtkGk2T6ClJeRYZJppPRF2Tp8OVUfmH-sZorUtejj7XIkT8etBw"
+
+func TestGoldenAssertionMatchesNodeAgent(t *testing.T) {
+	seed := make([]byte, 32)
+	for i := range seed {
+		seed[i] = byte(i)
+	}
+	key := ed25519.NewKeyFromSeed(seed)
+	var nonce, challenge [32]byte
+	for i := range nonce {
+		nonce[i], challenge[i] = 0x11, 0x22
+	}
+	at := time.Date(2026, 10, 30, 12, 1, 0, 0, time.UTC)
+	claims, err := Verify(goldenAssertion, keysOf(key), Expectation{NodeID: nodeA, Nonce: nonce, Challenge: challenge}, at)
+	if err != nil || claims.MemberID != "member_"+strings.Repeat("b", 64) || claims.Role != memberships.RoleAdmin {
+		t.Fatalf("golden: %+v %v", claims, err)
+	}
+}

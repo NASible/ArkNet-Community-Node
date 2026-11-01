@@ -1,8 +1,9 @@
 # Global login assertions (design)
 
-Status: Prompt 46 (ARKSEC-001). The Core side is implemented (Prompt 46A; see
-[Core implementation](#core-implementation-46a)). The Agent side, offline model
-and migration are Prompt 46B and not implemented yet. The user
+Status: implemented. Core side in Prompt 46A (see
+[Core implementation](#core-implementation-46a)); Agent side, offline model
+Option A, migration and the `node-ui` member sign-in in Prompt 46B (see
+[Agent implementation](#agent-implementation-46b)). ARKSEC-001 is closed. The user
 answered the blocking questions on 2026-10-29; see [Decisions](#decisions).
 
 Decisions this design depends on:
@@ -232,6 +233,30 @@ written into the CSP. Accepted for now, from the 46A review:
   then name the wrong return address, but the assertion is still bound to the
   registering Node and every other Node rejects it.
 - **Plain-HTTP loopback callbacks** are accepted for local development.
+
+### Agent implementation (46B)
+
+| Piece | Where |
+| --- | --- |
+| Verifier (byte-compatible with Core; shared golden vector) | `node-agent/internal/globalauth/assertion.go` |
+| Key set fetch, callback registration, refresh client | `node-agent/internal/globalauth/client.go`; runs after each accepted heartbeat (`global_login_sync.go`, keys re-read every 10 minutes and at every login start) |
+| Routes | `POST /api/v1/global-users/login` (start or offline), `POST /api/v1/global-users/login/complete`; `POST /api/v1/global-users/sessions` answers `410` |
+| Storage and migration | `node-agent/internal/postgres/globalauth.go`, migration `0012_global_login_assertions.sql` |
+| Member UI | `node-ui` `/member` and `/login/callback` (`src/MemberLogin.tsx`) |
+| Configuration | `ARKNET_GLOBAL_LOGIN_CALLBACK_URLS`, `ARKNET_CORE_LOGIN_URL` |
+
+Implementation notes that refine the design above:
+
+- The browser's verifier is the HttpOnly login-state cookie itself; the
+  challenge is its SHA-256, so the Node stores only digests and a captured
+  assertion fails without that browser's cookie.
+- Offline login is attempted only when the key-set fetch at login start shows
+  Core unreachable; otherwise the browser is always sent to Core.
+- Core's refresh answers `expires_at = now + offline window`; the Agent applies
+  it shorten-only (and `ADMIN` → `MEMBER` only).
+- Core's minimum offline window is 1 minute so tests can prove expiry; 720h
+  stays the default and maximum.
+- Not implemented: the clock-skew warning from Core's `Date` header.
 
 ## Offline model
 

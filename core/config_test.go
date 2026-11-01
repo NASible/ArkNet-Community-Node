@@ -366,6 +366,11 @@ func TestLoadConfigNodeLoginIsOptInAndUsesDedicatedKey(t *testing.T) {
 	if !cfg.nodeLogin.published[0].Equal(next.Public()) || !cfg.nodeLogin.published[1].Equal(retired.Public()) {
 		t.Fatal("published keys not loaded in order")
 	}
+	// Short windows are allowed (the E2E proves rejection after the window).
+	if cfg, err := loadConfig(envOf(map[string]string{"ARKNET_ASSERTION_SIGNING_KEY_FILE": keyPath, "ARKNET_ASSERTION_OFFLINE_WINDOW": "3m"})); err != nil ||
+		cfg.nodeLogin.signer.OfflineWindow() != 3*time.Minute {
+		t.Fatalf("3m window: %v", err)
+	}
 	// The Compose overlay always mounts the published-keys file; empty is valid.
 	cfg, err = loadConfig(envOf(map[string]string{"ARKNET_ASSERTION_SIGNING_KEY_FILE": keyPath,
 		"ARKNET_ASSERTION_PUBLISHED_KEYS_FILE": writeFile(t, "empty", "")}))
@@ -390,11 +395,12 @@ func TestLoadConfigRejectsUnsafeNodeLoginConfiguration(t *testing.T) {
 		"malformed key":                 {"ARKNET_ASSERTION_SIGNING_KEY_FILE": writeFile(t, "k", "not a key")},
 		"same key as tracker": {"ARKNET_ASSERTION_SIGNING_KEY_FILE": keyPath, "ARKNET_TRACKER_SIGNING_KEY_FILE": keyPath,
 			"ARKNET_TRACKER_ANNOUNCE_URL": "https://tracker.example"},
-		"window above 30 days": {"ARKNET_ASSERTION_SIGNING_KEY_FILE": keyPath, "ARKNET_ASSERTION_OFFLINE_WINDOW": "721h"},
-		"window not duration":  {"ARKNET_ASSERTION_SIGNING_KEY_FILE": keyPath, "ARKNET_ASSERTION_OFFLINE_WINDOW": "30d"},
-		"published active key": {"ARKNET_ASSERTION_SIGNING_KEY_FILE": keyPath, "ARKNET_ASSERTION_PUBLISHED_KEYS_FILE": writeFile(t, "p", activePublic+"\n")},
-		"duplicate published":  {"ARKNET_ASSERTION_SIGNING_KEY_FILE": keyPath, "ARKNET_ASSERTION_PUBLISHED_KEYS_FILE": writeFile(t, "p", otherPublic+"\n"+otherPublic+"\n")},
-		"malformed published":  {"ARKNET_ASSERTION_SIGNING_KEY_FILE": keyPath, "ARKNET_ASSERTION_PUBLISHED_KEYS_FILE": writeFile(t, "p", "abc\n")},
+		"window above 30 days":  {"ARKNET_ASSERTION_SIGNING_KEY_FILE": keyPath, "ARKNET_ASSERTION_OFFLINE_WINDOW": "721h"},
+		"window below a minute": {"ARKNET_ASSERTION_SIGNING_KEY_FILE": keyPath, "ARKNET_ASSERTION_OFFLINE_WINDOW": "59s"},
+		"window not duration":   {"ARKNET_ASSERTION_SIGNING_KEY_FILE": keyPath, "ARKNET_ASSERTION_OFFLINE_WINDOW": "30d"},
+		"published active key":  {"ARKNET_ASSERTION_SIGNING_KEY_FILE": keyPath, "ARKNET_ASSERTION_PUBLISHED_KEYS_FILE": writeFile(t, "p", activePublic+"\n")},
+		"duplicate published":   {"ARKNET_ASSERTION_SIGNING_KEY_FILE": keyPath, "ARKNET_ASSERTION_PUBLISHED_KEYS_FILE": writeFile(t, "p", otherPublic+"\n"+otherPublic+"\n")},
+		"malformed published":   {"ARKNET_ASSERTION_SIGNING_KEY_FILE": keyPath, "ARKNET_ASSERTION_PUBLISHED_KEYS_FILE": writeFile(t, "p", "abc\n")},
 		"tracker public key published": func() map[string]string {
 			trackerKey := writeTrackerSigningKey(t)
 			data, _ := os.ReadFile(trackerKey)

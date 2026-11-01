@@ -73,14 +73,6 @@ type Member struct {
 	JoinedAt time.Time
 }
 
-// OfflineCredentials is Core-internal authentication material. Handlers must
-// verify PasswordHash inside Core and must never serialize it to a Node.
-type OfflineCredentials struct {
-	MemberID     string
-	PasswordHash string
-	Role         Role
-}
-
 // AuthorizationState is the Node-safe current state used to refresh a cache.
 type AuthorizationState struct {
 	MemberID   string
@@ -128,10 +120,10 @@ type Repository interface {
 	AcceptInvitation(ctx context.Context, secretDigest [32]byte, userID string) (Membership, error)
 }
 
-// OfflineAuthorizationRepository is a narrow Core-only extension so invitation
-// test doubles cannot accidentally gain access to password verifiers.
+// OfflineAuthorizationRepository answers a reconnected Node's refresh of the
+// pairwise members it holds grants for. It never exposes authentication
+// material (ARKSEC-001: Core no longer verifies Node-relayed passwords).
 type OfflineAuthorizationRepository interface {
-	OfflineCredentials(ctx context.Context, nodeID, memberID string) (OfflineCredentials, error)
 	AuthorizationStates(ctx context.Context, nodeID string, memberIDs []string) ([]AuthorizationState, error)
 }
 

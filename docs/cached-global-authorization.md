@@ -1,146 +1,139 @@
-# Cached global authorization
+# Global member login on a Node
 
-A previously approved ArkNet global member can authenticate to an authorized
-Node during a temporary Core outage. Core remains authoritative whenever it is
-reachable, and Nodes cache only bounded, Node-specific verification material.
+An ArkNet global member signs in to a Node through ArkNet Core. The global
+password is typed only on Core's own page and never reaches the Node. Core
+returns a one-time assertion bound to that Node, and the Node verifies it with
+Core's published key. If Core is unreachable later, the member can still sign
+in on that Node for a bounded time (at most 30 days, decision D3) from a
+browser that has signed in online before.
 
-## Identity and login
+This replaced the earlier design (Node-relayed password plus a Node-held
+password verifier) in Prompt 46B, closing
+[ARKSEC-001](security-follow-ups.md#arksec-001). The protocol, threat table and
+offline-model comparison are in
+[global login assertions](global-login-assertions.md).
 
-The Node login endpoint is:
+## Online login
 
-```http
-POST /api/v1/global-users/sessions
-Content-Type: application/json
-
-{"member_id":"member_…","password":"…"}
+```text
+browser ──POST /api/v1/global-users/login──────────────▶ Node member listener
+        ◀── 200 {"mode":"redirect","authorize_url":…} + login-state cookie
+browser ──GET /node-login?node_id&nonce&challenge&redirect_uri──▶ Core
+        (user enters username and password on Core's page)
+        ◀── 303 <registered callback>#assertion=…
+browser ──POST /api/v1/global-users/login/complete {"assertion":…}──▶ Node
+        ◀── 201 {member_id, kind: "GLOBAL", token, expires_at} + device cookie
 ```
 
-The member uses the pairwise membership ID returned when accepting the Node's
-invitation. The Node never asks for or stores the global username or Core
-`user_…` ID. A global and local account with similar names remain separate
-identity domains and use different endpoints, tables, IDs, and sessions.
+1. **Start.** The Agent fetches Core's key set (which also shows whether Core
+   is reachable), then creates a pending login: a random 256-bit nonce and a
+   random 256-bit login state held by the browser in the HttpOnly
+   `__Host-arknet_global_login` cookie (5 minutes, `SameSite=Lax`). The Node
+   stores only the nonce and `SHA-256(state)`, which is the challenge sent to
+   Core. Pending logins are capped at 1,000.
+2. **Core.** Core checks the password, the membership on this Node, and that
+   the Node is approved and trusted, then redirects only to a callback URL the
+   Node registered over its signed federation channel. The assertion travels in
+   the URL fragment, so it never appears in any HTTP request log.
+3. **Complete.** The member UI (`/login/callback` in `node-ui`) reads the
+   fragment, removes it from the address bar, and posts the assertion. The
+   Agent verifies, before changing any state: canonical encoding, a key from
+   Core's published set, the Ed25519 signature, purpose, this Node as the
+   audience, the nonce and challenge of *this browser's* pending login, and
+   the time window (120 s lifetime plus 60 s skew). If the key ID is unknown it
+   re-reads Core's key set once (key rotation). Then, in one transaction, it
+   consumes the pending login, records the assertion ID (single use), stores
+   the grant, issues a device credential, and creates the session.
 
-When Core is reachable, the Agent signs and sends the exact bounded request to:
+The member is identified only by the pairwise `member_id` inside the
+Core-signed assertion. The Node never learns the username or the Core
+`user_…` ID.
 
-```http
-POST /api/federation/v1/nodes/{node_id}/offline-authorizations
-```
+## Offline login
 
-Core requires an approved, trusted Node, an active global user, and membership
-on that exact Node. Password verification happens inside Core. The response
-contains only:
+`POST /api/v1/global-users/login` creates an offline session instead of a
+redirect only when **all** of these hold:
 
-- the pairwise `member_id`;
-- the allowed `node_id`;
-- membership role;
-- explicit permissions;
-- `validated_at`;
-- `expires_at`.
+- the key-set fetch failed because Core is unreachable (transport error,
+  timeout or 5xx). Malformed or unexpected Core answers fail closed;
+- the browser presents a device credential (`__Host-arknet_global_device`,
+  HttpOnly, `SameSite=Strict`) issued by this Node at an online login. The
+  Node stores only its SHA-256; at most 10 are kept per member;
+- the stored grant for that member has `offline_until` in the future;
+- the Node's clock is not earlier than the newest accepted `issued_at` minus
+  60 s (clock rollback);
+- the stored assertion still verifies with a persisted Core key and names this
+  Node.
 
-It contains no username, global user ID, Core password hash, or Core session.
-HTTPS is required except for the existing explicit loopback/development mode.
-As with any password entered into independently operated infrastructure, the
-Node process handles that login attempt's plaintext password in memory; the
-design does not claim a malicious Node cannot capture credentials.
+A browser without a device credential gets `503
+global_authentication_unavailable`; a device credential with no valid grant
+gets `401 offline_login_rejected`. When Core is reachable a device credential
+never bypasses Core.
 
-## Node cache
+## What the Node stores
 
-After successful online verification, the Agent creates a fresh independently
-salted argon2id verifier from the supplied password. It does **not** copy Core's
-reusable password hash. Different Nodes—and later refreshes on one Node—produce
-unrelated verifier strings.
+| Table | Contents |
+| --- | --- |
+| `cached_global_authorizations` | pairwise `member_id`, this Node's ID, role, `MEDIA_ACCESS`, `issued_at`, `offline_until` (≤ `issued_at` + 30 days, enforced by the schema), and the verified Core-signed assertion (the grant). No password, verifier, username or Core user ID. |
+| `global_device_credentials` | SHA-256 of each device credential and its member. |
+| `global_login_pending` | challenge (`SHA-256` of the browser's login state) and nonce, for at most 5 minutes. |
+| `global_login_assertions_used` | assertion IDs until they can no longer be accepted. |
+| `core_assertion_keys` | Core's published key set, as last fetched from the configured Core URL. |
+| `cached_global_sessions` | SHA-256 of session tokens; a session ends at the earlier of 12 hours and `offline_until`. |
 
-`cached_global_authorizations` stores only:
-
-- pairwise membership ID;
-- this Node's ID;
-- Node-specific argon2id verifier;
-- `MEMBER` or `ADMIN` membership role;
-- the exact offline permission `MEDIA_ACCESS`;
-- validation and expiration timestamps.
-
-The cache is limited to 1,000 active entries and each authorization expires no
-later than 24 hours after validation. Expired entries are rejected and pruned.
-The schema has no username, Core user ID, or global-user foreign key.
-
-Node sessions use random 256-bit bearer tokens; PostgreSQL stores only their
-SHA-256 digests. Session expiry is the earlier of 12 hours or the cached
-authorization expiry. API responses use `kind: "GLOBAL"` and identify the
-principal only by `member_id`.
-
-## Online-first and fail-closed behavior
-
-Every login tries Core first:
-
-- successful Core authorization replaces the verifier and cached state;
-- an authoritative Core denial deletes the cache and revokes its sessions;
-- only transport failure, timeout, or Core 5xx permits offline verification;
-- malformed success responses, redirects, unexpected status codes, wrong Node
-  IDs, unknown permissions, excessive lifetimes, and protocol errors fail
-  closed without cache fallback.
-
-Unknown members, wrong passwords, malformed identifiers, expired caches, and
-revoked members receive the same unauthorized response. Unknown offline
-members still perform bounded dummy argon2 work.
-
-Offline authorization grants only `MEDIA_ACCESS`. Membership administration,
-invitations, role changes, password changes, account recovery, and other
-security-sensitive global actions remain Core-only and unavailable offline.
-The cached `ADMIN` role never creates offline administrative permission.
+Migration `0012_global_login_assertions.sql` deleted every stored
+password-derived verifier (and, by cascade, every global session) and dropped
+the `password_hash` column. Affected members sign in online once.
 
 ## Reconnect refresh
 
-An accepted signed heartbeat triggers a separate signed refresh request for the
-bounded set of cached pairwise IDs:
+After each accepted heartbeat the Agent sends the signed refresh
 
 ```http
 POST /api/federation/v1/nodes/{node_id}/offline-authorizations/refresh
 ```
 
-No username, password, verifier, or global ID is sent. Core returns an explicit
-state for every requested pairwise ID. The Agent atomically refreshes current
-roles, permissions, validation times, and expiration, or deletes revoked,
-removed, and globally disabled authorizations. Applying refreshed state revokes
-existing Node global sessions so stale authority cannot survive reconnection.
+for the pairwise IDs it holds grants for. Core answers per member with
+`authorized` and, if authorized, `expires_at` = now plus Core's offline window.
+The Agent applies it **shorten-only**: it deletes revoked members (with their
+device credentials and sessions), lowers `offline_until` when Core's answer is
+earlier, and lowers `ADMIN` to `MEMBER`; it never extends a grant or raises a
+role. Any change ends the member's existing sessions. Extending offline access
+needs a new online login (D3: "since the last online verification").
 
-Refresh failure does not fabricate a heartbeat outage and does not partially
-modify the cache. Existing entries continue only until their prior absolute
-expiration.
+The former `POST …/offline-authorizations` (password relay) now answers
+`410 Gone` at Core, and the Node's `POST /api/v1/global-users/sessions`
+answers `410 global_password_login_removed`.
+
+## Configuration
+
+| Agent variable | Meaning |
+| --- | --- |
+| `ARKNET_GLOBAL_LOGIN_CALLBACK_URLS` | Comma-separated member UI callback URLs (1–4), for example `https://node.lan:8443/login/callback`. HTTPS with a path; plain HTTP only for loopback. Empty disables global login. The Agent registers them with Core after each start. |
+| `ARKNET_CORE_LOGIN_URL` | Core base URL that browsers use, when it differs from `ARKNET_CORE_URL` (for example when the Agent reaches Core over a private network). |
+
+Core needs the node-login overlay (`ARKNET_ASSERTION_SIGNING_KEY_FILE`, see
+`deploy/core/README.md`). `ARKNET_ASSERTION_OFFLINE_WINDOW` sets the offline
+window (default and maximum `720h`).
 
 ## Local session API
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| `POST` | `/api/v1/global-users/sessions` | Online-first global-member login with bounded offline fallback. |
-| `GET` | `/api/v1/global-users/session` | Resolve an unexpired Node global session. |
+| `POST` | `/api/v1/global-users/login` | Start a Core-bound login, or an offline login while Core is unreachable. |
+| `POST` | `/api/v1/global-users/login/complete` | Verify Core's assertion and create a session. |
+| `GET` | `/api/v1/global-users/session` | Resolve an unexpired Node global session (bearer token). |
 | `DELETE` | `/api/v1/global-users/session` | Delete the current Node global session. |
+| `POST` | `/api/v1/global-users/sessions` | Retired password login; always `410`. |
 
-All responses are `Cache-Control: no-store`. These session routes authenticate
-a global member to this Node; they do not issue or replace a Core session.
+All are on the member listener and answer `Cache-Control: no-store`. The POST
+routes use the Agent's cross-origin protection. Offline sessions grant only
+`MEDIA_ACCESS`; membership administration, invitations and account changes
+stay Core-only.
 
 ## Verification
 
-A live check on 2026-10-25 used compiled Core and Agent binaries with separate
-PostgreSQL databases:
-
-1. An approved global member authenticated online and populated the cache.
-2. Core was stopped; the same member authenticated from the Node cache.
-3. An unknown pairwise member was rejected.
-4. An expired cached authorization was rejected.
-5. Core restarted; the user was cached again, then Core was stopped and the
-   global user disabled in Core's database.
-6. On reconnect, the accepted heartbeat triggered refresh; the Agent deleted
-   the authorization and revoked its existing Node session.
-7. The Node schema contained no username or Core user ID, and service logs
-   contained no tested password or session token.
-
-Core and Agent suites also run against real PostgreSQL. Mutation tests prove
-that authoritative-denial fallback, expiration bypass, and removal of the
-reconnect hook are detected.
-
-## Not in this phase
-
-Passwordless/PAKE authentication, offline password changes or recovery,
-unbounded member caches, offline global administration, and retroactive
-revocation while Core remains unreachable are not implemented. A cache remains
-usable until its absolute expiry when Core cannot communicate revocation.
+See [Prompt 46B validation](development/prompt46b-validation.md): Agent unit
+and PostgreSQL tests, the Core/Agent golden assertion, and MVP E2E item 13
+(online login, offline login within the window, rejection after it, replay and
+cross-Node rejection, and the malicious-Node harness).

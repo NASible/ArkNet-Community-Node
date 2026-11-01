@@ -91,6 +91,19 @@ A successful login returns `201`:
 - Responses are `Cache-Control: no-store`. Serve Core over verified TLS and do
   not log `Authorization` headers.
 
+## Signing in to Nodes
+
+A global user signs in to a Node only through Core (Prompt 46B,
+[global login assertions](global-login-assertions.md)). The Node sends the
+browser to Core's `/node-login` page; the user enters the global password there,
+and Core returns a one-time assertion bound to that Node and to the user's
+pairwise member ID on it. The password, the Core session and the `user_…` ID
+never reach a Node, and nothing a Node receives signs in at Core or at another
+Node. Offline sign-in on a Node, for at most 30 days after the last online
+login, is described in [global member login on a Node](cached-global-authorization.md).
+Core no longer verifies passwords relayed by Nodes: that federation endpoint
+answers `410 Gone`.
+
 ## Not in this phase
 
 There is no per-account lockout or IP rate limiting yet beyond the bounded

@@ -30,6 +30,12 @@ services:
       # Empty by default: outbound enrollment is opt-in.
       ARKNET_CORE_URL: ${ARKNET_CORE_URL:-}
       ARKNET_CORE_ALLOW_HTTP: ${ARKNET_CORE_ALLOW_HTTP:-false}
+      # Core-bound global login (docs/global-login-assertions.md). Empty
+      # disables it. List the member UI callback URL(s), for example
+      # https://<node-host>:8443/login/callback. ARKNET_CORE_LOGIN_URL is the
+      # Core URL browsers use when it differs from ARKNET_CORE_URL.
+      ARKNET_GLOBAL_LOGIN_CALLBACK_URLS: ${ARKNET_GLOBAL_LOGIN_CALLBACK_URLS:-}
+      ARKNET_CORE_LOGIN_URL: ${ARKNET_CORE_LOGIN_URL:-}
       ARKNET_HEARTBEAT_INTERVAL: ${ARKNET_HEARTBEAT_INTERVAL:-30s}
       # Whole GiB allocation: 0 (unset default) disables new selections; -1 is unlimited.
       ARKNET_MEDIA_STORAGE_ALLOCATION_GIB: ${ARKNET_MEDIA_STORAGE_ALLOCATION_GIB:-}

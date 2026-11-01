@@ -22,6 +22,18 @@ class MVPHarnessTests(unittest.TestCase):
         self.assertIn('node-agent seed reconciler -> transfer service -> libtorrent worker', source)
         self.assertNotIn('NODE_A_SEEDER', source)
 
+    def test_item_13_covers_the_core_bound_login_model(self):
+        # Prompt 46B acceptance: online, offline in window, rejected after it,
+        # replay, cross-Node, and the malicious-Node recording harness.
+        source = PATH.read_text()
+        for needle in ('global_login.login(', 'global_login.RecordingRelay(', 'offline_login_rejected',
+                       'def after_window', 'OFFLINE_WINDOW_SECONDS', 'compose.node-login.yaml',
+                       '"/api/v1/global-users/sessions", "POST"'):
+            self.assertIn(needle, source)
+        self.assertNotIn('"password": global_password}, (200, 201))', source)
+        self.assertLess(source.index('def offline_auth'), source.index('def offline_playback'))
+        self.assertLess(source.index('def offline_playback'), source.index('def after_window'))
+
     def test_diagnostics_bundle_is_written_before_cleanup_on_any_failure(self):
         # Item failures are recorded without raising; diagnostics must not depend on an exception.
         source = PATH.read_text()

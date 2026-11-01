@@ -52,7 +52,7 @@ the normal local workflow rather than exposing that database just to run Core.
 | `ARKNET_CORE_WEB_SEED_ROOT` | Unset | Absolute, clean, non-root directory containing files named exactly by opaque media ID. Must be paired with the web-seed origin and requires tracker signing configuration. |
 | `ARKNET_ASSERTION_SIGNING_KEY_FILE` | Unset | Enables Core-bound Node login. Same format as the tracker key (a single trailing newline is allowed). It must be a dedicated key, not the tracker key. |
 | `ARKNET_ASSERTION_PUBLISHED_KEYS_FILE` | Unset | Optional extra Ed25519 public keys to publish without signing: the next key before a rotation, retired keys afterwards. Canonical base64, one per line, `#` comments allowed, at most 8. |
-| `ARKNET_ASSERTION_OFFLINE_WINDOW` | `720h` | Offline login window written into assertions; a Go duration from `1h` to `720h` (30 days, decision D3). |
+| `ARKNET_ASSERTION_OFFLINE_WINDOW` | `720h` | Offline login window written into assertions; a Go duration from `1m` to `720h` (30 days, decision D3). Short windows are for tests. |
 | `DATABASE_URL` | Unset | Full PostgreSQL connection URL; overrides the `PG*` variables below. |
 | `PGHOST` | `127.0.0.1` | Database host. |
 | `PGPORT` | `5432` | Database TCP port. |

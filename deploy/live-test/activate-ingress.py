@@ -59,6 +59,9 @@ server {
     server_name member-''' + label + '''.nodenet.arknet.media;
 ''' + common + '''    # Operator sign-in belongs to the VPN-restricted node-x UI, not here.
     location /api/v1/operator/ { return 404; }
+    # Member sign-in pages (Core returns members to /login/callback) come from the UI.
+    location ~ ^/(member|login/callback|assets/.*)$ { proxy_pass http://127.0.0.1:5174;
+''' + proxy_headers + '''    }
     location / { proxy_pass http://127.0.0.1:8086;
 ''' + proxy_headers + '''    }
 }

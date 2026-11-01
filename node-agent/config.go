@@ -34,6 +34,7 @@ type config struct {
 	releaseIndexURL           *url.URL
 	releaseIndexAllowHTTP     bool
 	trackerOrigin             string
+	globalLogin               *globalLoginConfig
 }
 
 func loadConfig(getenv func(string) string) (config, error) {
@@ -122,25 +123,14 @@ func loadConfig(getenv func(string) string) (config, error) {
 		cfg.databaseURL = u.String()
 	}
 	cfg.coreURL = getenv("ARKNET_CORE_URL")
-	if cfg.coreURL != "" {
-		u, err := url.Parse(cfg.coreURL)
-		invalid := err != nil
-		if !invalid {
-			invalid = u.Hostname() == "" || u.User != nil || u.Opaque != "" || u.RawQuery != "" || u.ForceQuery || strings.Contains(cfg.coreURL, "#") || strings.HasSuffix(u.Host, ":") || (u.EscapedPath() != "" && u.EscapedPath() != "/")
-			if u.Scheme != "https" {
-				ip := net.ParseIP(u.Hostname())
-				loopback := strings.EqualFold(u.Hostname(), "localhost") || (ip != nil && ip.IsLoopback())
-				invalid = invalid || u.Scheme != "http" || (!loopback && getenv("ARKNET_CORE_ALLOW_HTTP") != "true")
-			}
-			if u.Port() != "" {
-				port, err := strconv.Atoi(u.Port())
-				invalid = invalid || err != nil || port < 1 || port > 65535
-			}
-		}
-		if invalid {
-			return config{}, fmt.Errorf("ARKNET_CORE_URL must be a valid HTTPS base URL (HTTP requires loopback or explicit development opt-in)")
-		}
+	if cfg.coreURL != "" && !validCoreBaseURL(cfg.coreURL, getenv("ARKNET_CORE_ALLOW_HTTP") == "true") {
+		return config{}, fmt.Errorf("ARKNET_CORE_URL must be a valid HTTPS base URL (HTTP requires loopback or explicit development opt-in)")
 	}
+	globalLogin, err := loadGlobalLoginConfig(getenv, cfg.coreURL)
+	if err != nil {
+		return config{}, err
+	}
+	cfg.globalLogin = globalLogin
 	if value := getenv("JELLYFIN_API_URL"); value != "" {
 		if _, err := url.ParseRequestURI(value); err != nil {
 			return config{}, fmt.Errorf("JELLYFIN_API_URL must be a valid URL")
@@ -195,4 +185,24 @@ func loadConfig(getenv func(string) string) (config, error) {
 		}
 	}
 	return cfg, nil
+}
+
+// validCoreBaseURL accepts an HTTPS origin, or plain HTTP for loopback or with
+// the explicit development opt-in.
+func validCoreBaseURL(raw string, allowHTTP bool) bool {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return false
+	}
+	invalid := u.Hostname() == "" || u.User != nil || u.Opaque != "" || u.RawQuery != "" || u.ForceQuery || strings.Contains(raw, "#") || strings.HasSuffix(u.Host, ":") || (u.EscapedPath() != "" && u.EscapedPath() != "/")
+	if u.Scheme != "https" {
+		ip := net.ParseIP(u.Hostname())
+		loopback := strings.EqualFold(u.Hostname(), "localhost") || (ip != nil && ip.IsLoopback())
+		invalid = invalid || u.Scheme != "http" || (!loopback && !allowHTTP)
+	}
+	if u.Port() != "" {
+		port, err := strconv.Atoi(u.Port())
+		invalid = invalid || err != nil || port < 1 || port > 65535
+	}
+	return !invalid
 }

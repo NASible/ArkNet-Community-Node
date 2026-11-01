@@ -55,6 +55,8 @@ const (
 	// MaxOfflineWindow is decision D3: offline login on a Node for at most 30
 	// days since the last online verification.
 	MaxOfflineWindow = 30 * 24 * time.Hour
+	// MinOfflineWindow allows short windows for tests; shorter is only safer.
+	MinOfflineWindow = time.Minute
 	// NonceRetention keeps a claimed nonce longer than any Node pending login
 	// (5 minutes) and any assertion's acceptance window.
 	NonceRetention = 10 * time.Minute
@@ -143,13 +145,14 @@ func NewSigner(key ed25519.PrivateKey, offline time.Duration) (*Signer, error) {
 	if len(key) != ed25519.PrivateKeySize {
 		return nil, errors.New("assertion signing key must be an Ed25519 private key")
 	}
-	if offline < time.Hour || offline > MaxOfflineWindow {
-		return nil, fmt.Errorf("offline window must be between 1h and %s", MaxOfflineWindow)
+	if offline < MinOfflineWindow || offline > MaxOfflineWindow {
+		return nil, fmt.Errorf("offline window must be between %s and %s", MinOfflineWindow, MaxOfflineWindow)
 	}
 	return &Signer{key: key, id: KeyIDFor(key.Public().(ed25519.PublicKey)), offline: offline, now: time.Now}, nil
 }
 
 func (s *Signer) KeyID() KeyID                 { return s.id }
+func (s *Signer) OfflineWindow() time.Duration { return s.offline }
 func (s *Signer) PublicKey() ed25519.PublicKey { return s.key.Public().(ed25519.PublicKey) }
 
 // Issue signs one assertion. The caller must already have authenticated the

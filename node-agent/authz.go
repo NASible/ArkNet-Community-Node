@@ -59,6 +59,8 @@ var routePermissions = map[string]permission{
 	"GET /api/v1/local-users/session":           permMember,
 	"DELETE /api/v1/local-users/session":        permMember,
 	"POST /api/v1/global-users/sessions":        permPublic,
+	"POST /api/v1/global-users/login":           permPublic,
+	"POST /api/v1/global-users/login/complete":  permPublic,
 	"GET /api/v1/global-users/session":          permMember,
 	"DELETE /api/v1/global-users/session":       permMember,
 	"POST /api/v1/operator/setup":               permPublic,

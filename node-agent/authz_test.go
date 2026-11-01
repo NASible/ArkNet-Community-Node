@@ -120,7 +120,7 @@ func TestEveryRegisteredRouteHasAPermission(t *testing.T) {
 			t.Errorf("routePermissions lists %q, which is not registered", pattern)
 		}
 	}
-	if len(patterns) != 34 {
+	if len(patterns) != 36 {
 		t.Errorf("registered %d routes; update the matrix and this count deliberately", len(patterns))
 	}
 }

@@ -8,7 +8,7 @@ import (
 	"arknet/core/internal/memberships"
 )
 
-func TestOfflineCredentialsRemainCoreOnlyAndRefreshReflectsAuthority(t *testing.T) {
+func TestRefreshReflectsAuthority(t *testing.T) {
 	s := migratedStore(t)
 	ctx := context.Background()
 	node := approvedNode(t, s, 31)
@@ -17,10 +17,6 @@ func TestOfflineCredentialsRemainCoreOnlyAndRefreshReflectsAuthority(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	credentials, err := s.OfflineCredentials(ctx, node, membership.MemberID)
-	if err != nil || credentials.MemberID != membership.MemberID || credentials.Role != memberships.RoleAdmin || credentials.PasswordHash != testHash {
-		t.Fatalf("%+v %v", credentials, err)
-	}
 	unknown := "member_" + repeatCoreHex("f", 64)
 	states, err := s.AuthorizationStates(ctx, node, []string{membership.MemberID, unknown})
 	if err != nil || len(states) != 2 || !states[0].Authorized || states[0].Role != memberships.RoleAdmin || states[1].Authorized {
@@ -28,9 +24,6 @@ func TestOfflineCredentialsRemainCoreOnlyAndRefreshReflectsAuthority(t *testing.
 	}
 	if _, err := s.db.ExecContext(ctx, "UPDATE global_users SET status='DISABLED' WHERE public_id=$1", user); err != nil {
 		t.Fatal(err)
-	}
-	if _, err := s.OfflineCredentials(ctx, node, membership.MemberID); !errors.Is(err, memberships.ErrAuthorizationDenied) {
-		t.Fatalf("disabled credentials: %v", err)
 	}
 	states, err = s.AuthorizationStates(ctx, node, []string{membership.MemberID})
 	if err != nil || len(states) != 1 || states[0].Authorized {

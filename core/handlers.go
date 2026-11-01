@@ -89,8 +89,12 @@ func newCoreHandler(database databaseHealth, tracker *trackerGrantIssuer, webSee
 		}
 	}
 	if authorizations, ok := repository.(memberships.OfflineAuthorizationRepository); ok {
-		mux.HandleFunc("POST /api/federation/v1/nodes/{node_id}/offline-authorizations", globalAuthorizationHandler(authorizations, handshake))
-		mux.HandleFunc("POST /api/federation/v1/nodes/{node_id}/offline-authorizations/refresh", globalAuthorizationRefreshHandler(authorizations, handshake))
+		window := assertions.MaxOfflineWindow
+		if login != nil {
+			window = login.signer.OfflineWindow()
+		}
+		mux.HandleFunc("POST /api/federation/v1/nodes/{node_id}/offline-authorizations", retiredGlobalAuthorizationHandler)
+		mux.HandleFunc("POST /api/federation/v1/nodes/{node_id}/offline-authorizations/refresh", globalAuthorizationRefreshHandler(authorizations, handshake, window))
 	}
 
 	if catalogStore != nil {

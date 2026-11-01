@@ -2,38 +2,12 @@ package postgres
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 
 	"arknet/core/internal/memberships"
 	"arknet/core/internal/nodes"
 )
-
-// OfflineCredentials keeps the global password verifier inside Core. The Node
-// receives only the pairwise member ID, role, permissions, and bounded times.
-func (s *Store) OfflineCredentials(ctx context.Context, nodeID, memberID string) (memberships.OfflineCredentials, error) {
-	if !nodes.ValidPublicID(nodeID) || !memberships.ValidMemberID(memberID) {
-		return memberships.OfflineCredentials{}, memberships.ErrAuthorizationDenied
-	}
-	var credentials memberships.OfflineCredentials
-	err := s.db.QueryRowContext(ctx, `
-		SELECT m.public_id, u.password_hash, m.role
-		FROM node_memberships m
-		JOIN nodes n ON n.id = m.node_id
-		JOIN global_users u ON u.id = m.user_id
-		WHERE n.public_id = $1 AND m.public_id = $2
-		  AND n.enrollment_status = 'APPROVED' AND n.trust_status = 'TRUSTED'
-		  AND u.status = 'ACTIVE'`, nodeID, memberID).
-		Scan(&credentials.MemberID, &credentials.PasswordHash, &credentials.Role)
-	if errors.Is(err, sql.ErrNoRows) {
-		return memberships.OfflineCredentials{}, memberships.ErrAuthorizationDenied
-	}
-	if err != nil {
-		return memberships.OfflineCredentials{}, fmt.Errorf("get offline credentials: %w", err)
-	}
-	return credentials, nil
-}
 
 // AuthorizationStates returns one result per requested pairwise ID in request
 // order. Unknown, removed, or inactive memberships are explicitly unauthorized.

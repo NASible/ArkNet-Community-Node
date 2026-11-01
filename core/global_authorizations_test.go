@@ -3,18 +3,19 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"strings"
 	"testing"
 	"time"
 
+	"arknet/core/internal/assertions"
 	"arknet/core/internal/memberships"
 	"arknet/core/internal/users"
 )
 
-func (m *memoryInvitations) OfflineCredentials(_ context.Context, nodeID, memberID string) (memberships.OfflineCredentials, error) {
+// memberRole reports the pairwise member's role while the user is ACTIVE.
+func (m *memoryInvitations) memberRole(nodeID, memberID string) (memberships.Role, bool) {
 	m.imu.Lock()
 	defer m.imu.Unlock()
 	m.memoryUsers.mu.Lock()
@@ -24,23 +25,17 @@ func (m *memoryInvitations) OfflineCredentials(_ context.Context, nodeID, member
 			continue
 		}
 		user := m.byID[strings.TrimPrefix(key, nodeID+"|")]
-		if user == nil || user.user.Status != users.StatusActive {
-			break
-		}
-		return memberships.OfflineCredentials{MemberID: memberID, PasswordHash: user.hash, Role: member.Role}, nil
+		return member.Role, user != nil && user.user.Status == users.StatusActive
 	}
-	return memberships.OfflineCredentials{}, memberships.ErrAuthorizationDenied
+	return "", false
 }
 
 func (m *memoryInvitations) AuthorizationStates(_ context.Context, nodeID string, memberIDs []string) ([]memberships.AuthorizationState, error) {
 	states := make([]memberships.AuthorizationState, 0, len(memberIDs))
 	for _, id := range memberIDs {
-		credentials, err := m.OfflineCredentials(context.Background(), nodeID, id)
 		state := memberships.AuthorizationState{MemberID: id}
-		if err == nil {
-			state.Authorized, state.Role = true, credentials.Role
-		} else if !errors.Is(err, memberships.ErrAuthorizationDenied) {
-			return nil, err
+		if role, ok := m.memberRole(nodeID, id); ok {
+			state.Authorized, state.Role = true, role
 		}
 		states = append(states, state)
 	}
@@ -94,42 +89,41 @@ func (r *responseRecorder) Write(data []byte) (int, error) {
 	return r.Body.Write(data)
 }
 
-func TestGlobalAuthorizationUsesPairwiseIdentityAndGenericDenials(t *testing.T) {
+// ARKSEC-001: Core no longer accepts a global password relayed by a Node, so a
+// malicious Node cannot use Core as a password oracle.
+func TestNodeRelayedPasswordAuthorizationIsRetired(t *testing.T) {
 	repo, key := newMemoryInvitations(t)
 	memberID := globalMember(t, repo, "offline-user")
 	h := invitationServer(repo)
-
-	code, body := signedGlobalAuthorization(t, h, key, memberID, testPassword)
-	if code != http.StatusOK {
-		t.Fatalf("valid login: %d %s", code, body)
-	}
-	var view offlineAuthorizationView
-	if json.Unmarshal([]byte(body), &view) != nil || view.MemberID != memberID || view.NodeID != enrollmentID || view.Role != memberships.RoleMember ||
-		len(view.Permissions) != 1 || view.Permissions[0] != offlinePermissionMediaAccess || !view.ExpiresAtAfter(view.ValidatedAt) {
-		t.Fatalf("invalid response: %s", body)
-	}
-	if strings.Contains(body, "user_") || strings.Contains(body, "offline-user") || strings.Contains(body, "$argon2") || strings.Contains(body, testPassword) {
-		t.Fatalf("global identity or verifier leaked: %s", body)
-	}
-
-	var denied string
-	for _, attempt := range [][2]string{{memberID, testPassword + "!"}, {"member_" + strings.Repeat("f", 64), testPassword}, {"bad", "short"}} {
-		status, response := signedGlobalAuthorization(t, h, key, attempt[0], attempt[1])
-		if status != http.StatusUnauthorized {
-			t.Fatalf("%v: %d %s", attempt, status, response)
-		}
-		if denied == "" {
-			denied = response
-		} else if response != denied {
-			t.Fatalf("distinguishable denial: %q vs %q", response, denied)
+	for _, password := range []string{testPassword, testPassword + "!"} {
+		code, body := signedGlobalAuthorization(t, h, key, memberID, password)
+		if code != http.StatusGone || strings.Contains(body, memberID) || strings.Contains(body, "role") {
+			t.Fatalf("relayed password: %d %s", code, body)
 		}
 	}
 }
 
-func (v offlineAuthorizationView) ExpiresAtAfter(validated string) bool {
-	expires, e1 := time.Parse(time.RFC3339, v.ExpiresAt)
-	at, e2 := time.Parse(time.RFC3339, validated)
-	return e1 == nil && e2 == nil && expires.Sub(at) == offlineAuthorizationTTL
+func TestGlobalAuthorizationRefreshKeepsTheOfflineWindow(t *testing.T) {
+	repo, key := newMemoryInvitations(t)
+	memberID := globalMember(t, repo, "window-user")
+	h := invitationServer(repo)
+	body, _ := json.Marshal(map[string]any{"member_ids": []string{memberID}})
+	request := signedRequest("POST", fmt.Sprintf("/api/federation/v1/nodes/%s/offline-authorizations/refresh", enrollmentID), string(body), enrollmentID, key, fmt.Sprint(time.Now().Unix()))
+	response, raw := callRequest(t, h, request)
+	var decoded struct {
+		Authorizations []refreshedAuthorizationView `json:"authorizations"`
+	}
+	if response.Code != http.StatusOK || json.Unmarshal([]byte(raw), &decoded) != nil || len(decoded.Authorizations) != 1 {
+		t.Fatalf("refresh: %d %s", response.Code, raw)
+	}
+	view := decoded.Authorizations[0]
+	validated, e1 := time.Parse(time.RFC3339, view.ValidatedAt)
+	expires, e2 := time.Parse(time.RFC3339, view.ExpiresAt)
+	// The Agent applies refreshes as shorten-only, so a 24-hour answer would
+	// cut every 30-day grant (D3) to one day on reconnect.
+	if e1 != nil || e2 != nil || !view.Authorized || expires.Sub(validated) != assertions.MaxOfflineWindow {
+		t.Fatalf("refresh window: %+v", view)
+	}
 }
 
 func TestGlobalAuthorizationRefreshRevokesDisabledMember(t *testing.T) {

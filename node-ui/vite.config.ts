@@ -15,6 +15,8 @@ export default defineConfig(({ mode }) => {
         '/api/v1/operator/sessions': { target: env.ARKNET_MEMBER_URL || 'http://127.0.0.1:8082' },
         '/api/v1/local-users/sessions': { target: env.ARKNET_MEMBER_URL || 'http://127.0.0.1:8082' },
         '/api/v1/global-users/sessions': { target: env.ARKNET_MEMBER_URL || 'http://127.0.0.1:8082' },
+        // Core-bound member login (start and callback completion).
+        '/api/v1/global-users/login': { target: env.ARKNET_MEMBER_URL || 'http://127.0.0.1:8082' },
         // Exact match: single-session member reads/sign-out.
         '^/api/v1/(local|global)-users/session$': { target: env.ARKNET_MEMBER_URL || 'http://127.0.0.1:8082' },
         '/api': { target: env.ARKNET_AGENT_URL || 'http://127.0.0.1:8081' },

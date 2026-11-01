@@ -114,9 +114,6 @@ func TestNodesReceiveNoHomeOrCrossNodeMembershipData(t *testing.T) {
 	if err != nil || len(states) != 1 || states[0].Authorized {
 		t.Fatalf("cross-node pseudonym resolved: %+v %v", states, err)
 	}
-	if _, err := s.OfflineCredentials(ctx, nodeA, onB.MemberID); !errors.Is(err, memberships.ErrAuthorizationDenied) {
-		t.Fatalf("cross-node credentials: %v", err)
-	}
 	// Home designation is stored by internal keys only: no Node or user public
 	// IDs are denormalized into a table a Node-facing query could read.
 	var columns string

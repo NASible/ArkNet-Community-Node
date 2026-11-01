@@ -21,6 +21,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import runpy
 import secrets
 import shutil
@@ -38,13 +39,18 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 from scripts import e2e_diagnostics  # noqa: E402
 from scripts import operator_login  # noqa: E402
+from scripts import global_login  # noqa: E402
+
+# Core's offline window for this run. Short, so item 13 can prove rejection
+# after the window in real time (production default and maximum: 720h).
+OFFLINE_WINDOW_SECONDS = 180
 
 ITEMS = {
     2: "Enrollment", 3: "Node restart", 4: "Global user", 5: "Local-only user",
     6: "Pairwise node membership", 7: "Jellyfin", 8: "Media selection",
     9: "BitTorrent v2 Core -> Node transfer", 10: "Interrupted transfer/resume",
     11: "Node A -> Node B swarm contribution", 12: "Offline Jellyfin playback",
-    13: "Cached global authentication", 14: "Core reconnect",
+    13: "Core-bound global authentication", 14: "Core reconnect",
     15: "Removed-media retention", 16: "Node revocation",
     19: "Operator cannot enumerate global users",
     20: "Node A cannot arbitrarily access Node B",
@@ -143,6 +149,10 @@ def main(argv=None):
         cfg["jelly_config"].mkdir(mode=0o755); cfg["jelly_cache"].mkdir(mode=0o755)
         cfg["env"] = dict(os.environ, POSTGRES_USER="arknet", POSTGRES_DB="arknet_node", POSTGRES_PASSWORD=password,
                           PGSSLMODE="disable", ARKNET_AGENT_PORT=str(cfg["agent_port"]),
+                          # Core-bound login: browsers reach Core and this Node's member
+                          # listener on loopback; the Agent reaches Core over its uplink.
+                          ARKNET_GLOBAL_LOGIN_CALLBACK_URLS=f"http://127.0.0.1:{cfg['member_port']}/login/callback",
+                          ARKNET_CORE_LOGIN_URL=core_base,
                           ARKNET_MEMBER_PORT=str(cfg["member_port"]),
                           ARKNET_UI_HTTPS_BIND="127.0.0.1:", ARKNET_TLS_DIR=str(temporary / f"tls-{label}"),
                           JELLYFIN_BIND=f"127.0.0.1:{cfg['jellyfin_port']}", ARKNET_CORE_URL="http://arknet-core:8080",
@@ -157,6 +167,7 @@ def main(argv=None):
                           ARKNET_TRANSFER_RECONCILE_INTERVAL="30s", JELLYFIN_API_KEY="")
         cfg["base"] = f"http://127.0.0.1:{cfg['agent_port']}"
         cfg["member_base"] = f"http://127.0.0.1:{cfg['member_port']}"
+        cfg["callback"] = cfg["member_base"] + "/login/callback"
         cfg["jelly_base"] = f"http://127.0.0.1:{cfg['jellyfin_port']}"
         nodes[label] = cfg
     projects = (core_project, nodes["a"]["project"], nodes["b"]["project"])
@@ -165,6 +176,7 @@ def main(argv=None):
     def core_compose(*items, capture=False, check=True, timeout=600):
         return run(["docker", "compose", "-p", core_project, "-f", str(ROOT / "deploy/core/compose.yaml"),
                     "-f", str(ROOT / "deploy/core/compose.tracker.yaml"), "-f", str(ROOT / "deploy/core/compose.web-seed.yaml"),
+                    "-f", str(ROOT / "deploy/core/compose.node-login.yaml"),
                     "-f", str(core_override), *items], cwd=ROOT / "deploy/core", env=core_env,
                    capture=capture, check=check, timeout=timeout)
 
@@ -313,7 +325,16 @@ def main(argv=None):
         os.chmod(private_key, 0o644)  # disposable key; Core's non-root UID reads the bind mount
         core_env.update(ARKNET_TRACKER_SIGNING_KEY_FILE=str(private_key), ARKNET_TRACKER_VERIFY_KEY_FILE=str(public_key),
                         ARKNET_CORE_WEB_SEED_SOURCE=str(source))
-        verify_bind_sources(run, "postgres:18-alpine", (("file", private_key), ("file", public_key), ("directory", source)))
+        # A dedicated, disposable assertion-signing key (never the tracker key).
+        assertion_dir = temporary / "assertion-key"; assertion_dir.mkdir(mode=0o755)
+        run(["go", "run", str(key_helper), "keygen", str(assertion_dir)], timeout=120)
+        assertion_key, published_keys = assertion_dir / "tracker-private.key", temporary / "assertion-published.keys"
+        published_keys.write_text(""); os.chmod(published_keys, 0o644); os.chmod(assertion_key, 0o644)
+        known_secrets.extend((assertion_key.read_text().strip(), private_key.read_text().strip()))
+        core_env.update(ARKNET_ASSERTION_SIGNING_KEY_FILE=str(assertion_key), ARKNET_ASSERTION_PUBLISHED_KEYS_FILE=str(published_keys),
+                        ARKNET_ASSERTION_OFFLINE_WINDOW=f"{OFFLINE_WINDOW_SECONDS}s")
+        verify_bind_sources(run, "postgres:18-alpine", (("file", private_key), ("file", public_key), ("directory", source),
+                                                        ("file", assertion_key), ("file", published_keys)))
         print("PREFLIGHT: Docker sees the tracker key files and web-seed directory", flush=True)
         run(["docker", "build", "-t", images["helper"], "-"], input_text=p25["LIBTORRENT_DOCKERFILE"], timeout=900)
         run(["docker", "build", "--target", "build", "-t", images["agent-build"], str(ROOT / "node-agent")], timeout=900)
@@ -495,16 +516,75 @@ def main(argv=None):
         else:
             results.failed(10, "depends on item 9")
 
-        # -------------------------------- 13a cached auth online population
+        # ------------------------------ 13a Core-bound online login (ARKSEC-001)
+        def callbacks_registered(label):
+            return core_sql("SELECT count(*) FROM node_login_callbacks c JOIN nodes n ON n.id=c.node_id "
+                            f"WHERE n.public_id='{nodes[label]['node_id']}'") == "1"
+
+        def node_login(label, browser, base=None):
+            session, assertion = global_login.login(browser, base or nodes[label]["member_base"], nodes[label]["callback"],
+                                                    "alice-e2e", global_password)
+            known_secrets.extend((session["token"], assertion, *browser.cookie_values()))
+            return session, assertion
+
         def online_global_login():
-            session = member("a", "/api/v1/global-users/sessions", "POST",
-                            {"member_id": nodes["a"]["member_id"], "password": global_password}, (200, 201))
-            assert session["kind"] == "GLOBAL" and session["member_id"] == nodes["a"]["member_id"]
-            nodes["member_token"] = session["token"]
-            known_secrets.append(session["token"])
+            for label in ("a", "b"):
+                wait_until(label + " login callback registered at Core", lambda l=label: callbacks_registered(l), 120)
+            # The password route is gone from the Node (ARKSEC-001).
+            assert request(nodes["a"]["member_base"] + "/api/v1/global-users/sessions", "POST",
+                           {"member_id": nodes["a"]["member_id"], "password": global_password})[0] == 410
+            browser = global_login.Browser()
+            session, assertion = node_login("a", browser)
+            nodes["login_issued_at"] = time.time()
+            assert session["member_id"] == nodes["a"]["member_id"] and session["offline"] is False
+            assert request(nodes["a"]["member_base"] + "/api/v1/global-users/session",
+                           headers={"Authorization": "Bearer " + session["token"]})[0] == 200
+            nodes["member_token"], nodes["member_browser"] = session["token"], browser
             # A global-member session never confers operator rights (ARKSEC-002).
             assert request(nodes["a"]["base"] + "/api/v1/status", headers={"Authorization": "Bearer " + session["token"]})[0] == 401
-            results.evidence(13, "online global-member login on Node A verified by Core and cached Node-locally")
+            results.evidence(13, "online login: the password was typed only on Core's page; Core redirected to Node A's"
+                                 " registered callback; Node A verified the one-time assertion and created a session")
+            # Replay: the same assertion again, in the same browser and in a fresh login.
+            assert global_login.complete(browser, nodes["a"]["member_base"], assertion)[0] == 401
+            other = global_login.Browser()
+            assert global_login.start(other, nodes["a"]["member_base"], nodes["a"]["callback"])[0] == 200
+            assert global_login.complete(other, nodes["a"]["member_base"], assertion)[0] == 401
+            # Cross-Node: Node A's assertion presented to Node B in a login Node B started.
+            at_b = global_login.Browser()
+            assert global_login.start(at_b, nodes["b"]["member_base"], nodes["b"]["callback"])[0] == 200
+            assert global_login.complete(at_b, nodes["b"]["member_base"], assertion)[0] == 401
+            results.evidence(13, "replayed assertion rejected by Node A (same and new login); Node A's assertion rejected"
+                                 " by Node B")
+
+            # Malicious Node: record every byte Node A's Agent receives during a login.
+            relay = global_login.RecordingRelay("127.0.0.1", nodes["a"]["member_port"])
+            try:
+                node_login("a", global_login.Browser(), relay.base)
+            finally:
+                relay.close()
+            captured = relay.candidates()
+            joined = "\n".join(captured)
+            assert captured and global_password not in joined and nodes["core_session"] not in joined
+            for value in captured:
+                assert request(core_base + "/api/identity/v1/sessions", "POST",
+                               {"username": "alice-e2e", "password": value})[0] == 401, "captured value is a Core password"
+                assert request(core_base + "/api/identity/v1/session", headers={"Authorization": "Bearer " + value})[0] == 401
+                assert request(nodes["b"]["member_base"] + "/api/v1/global-users/session",
+                               headers={"Authorization": "Bearer " + value})[0] == 401
+                probe = global_login.Browser()
+                assert global_login.start(probe, nodes["b"]["member_base"], nodes["b"]["callback"])[0] == 200
+                assert global_login.complete(probe, nodes["b"]["member_base"], value)[0] == 401
+            # Node A's recorded login-state cookie plus its assertion, replayed at Node B.
+            recorded = bytes(relay.received).decode("latin-1")
+            stolen_cookies = dict(re.findall(r"(__Host-arknet_global_login)=([A-Za-z0-9_-]+)", recorded))
+            assert stolen_cookies, "the harness did not see the browser's login-state cookie"
+            stolen = global_login.Browser()
+            stolen.cookies[nodes["b"]["member_base"]] = stolen_cookies
+            for value in captured:
+                assert global_login.complete(stolen, nodes["b"]["member_base"], value)[0] == 401
+            results.evidence(13, f"malicious-Node harness: {len(relay.received)} bytes received by Node A's Agent during a"
+                                 f" login; none of {len(captured)} captured values contains the password or Core session,"
+                                 " signs in at Core (password or bearer), or opens a session at Node B (assertion or bearer)")
         item(13, online_global_login)
 
         # ------------------------- 12 offline playback, 13b offline auth, 14
@@ -514,26 +594,41 @@ def main(argv=None):
             results.evidence(14, "Core outage moved Node A to " + status("a")["state"] + " while the Agent kept serving")
         item(14, offline)
 
+        def offline_auth():
+            browser = nodes.get("member_browser")
+            assert browser is not None, "online login (13a) did not run"
+            remaining = nodes["login_issued_at"] + OFFLINE_WINDOW_SECONDS - time.time()
+            assert remaining > 15, f"too little of the offline window left ({remaining:.0f}s)"
+            code, session = global_login.start(browser, nodes["a"]["member_base"], nodes["a"]["callback"])
+            assert code == 201 and session["offline"] is True and session["member_id"] == nodes["a"]["member_id"], code
+            known_secrets.append(session["token"]); nodes["offline_token"] = session["token"]
+            assert global_login.start(global_login.Browser(), nodes["a"]["member_base"], nodes["a"]["callback"])[0] == 503
+            # Node A issued this device credential, so a malicious Node A has it: it is useless at Node B.
+            stolen = global_login.Browser()
+            stolen.cookies[nodes["b"]["member_base"]] = dict(browser.cookies[nodes["a"]["member_base"]])
+            code_b, refused = global_login.start(stolen, nodes["b"]["member_base"], nodes["b"]["callback"])
+            assert code_b == 401 and refused["error"] == "offline_login_rejected", code_b
+            local = request(nodes["a"]["member_base"] + "/api/v1/local-users/sessions", "POST", {"username": "local-bob", "password": local_password})
+            assert local[0] == 201
+            results.evidence(13, "Core offline: the browser's device credential and Node A's Core-signed grant gave an offline"
+                                 " session inside the window; a browser without a device credential was refused; Node A's"
+                                 " device credential was refused by Node B; local user still authenticates")
+        item(13, offline_auth)
+
         def offline_playback():
             assert jellyfin_stream("a", video["sha256"], video["size"])
             results.evidence(12, "with Core and tracker stopped, Jellyfin on Node A streamed the exact completed MP4")
         item(12, offline_playback)
 
-        def offline_auth():
-            session = member("a", "/api/v1/global-users/sessions", "POST",
-                            {"member_id": nodes["a"]["member_id"], "password": global_password}, (200, 201))
-            assert session["kind"] == "GLOBAL"
-            denied = request(nodes["a"]["member_base"] + "/api/v1/global-users/sessions", "POST",
-                             {"member_id": nodes["a"]["member_id"], "password": global_password + "x"})
-            assert denied[0] == 401
-            foreign = request(nodes["a"]["member_base"] + "/api/v1/global-users/sessions", "POST",
-                              {"member_id": nodes["b"]["member_id"], "password": global_password})
-            assert foreign[0] == 401
-            local = request(nodes["a"]["member_base"] + "/api/v1/local-users/sessions", "POST", {"username": "local-bob", "password": local_password})
-            assert local[0] == 201
-            results.evidence(13, "Core offline: cached member authenticated; wrong password and Node B's member ID rejected;"
-                                 " local user still authenticates")
-        item(13, offline_auth)
+        def after_window():
+            time.sleep(max(0, nodes["login_issued_at"] + OFFLINE_WINDOW_SECONDS + 10 - time.time()))
+            code, body = global_login.start(nodes["member_browser"], nodes["a"]["member_base"], nodes["a"]["callback"])
+            assert code == 401 and body["error"] == "offline_login_rejected", code
+            assert request(nodes["a"]["member_base"] + "/api/v1/global-users/session",
+                           headers={"Authorization": "Bearer " + nodes["offline_token"]})[0] == 401
+            results.evidence(13, f"after the {OFFLINE_WINDOW_SECONDS}s offline window, offline login was rejected and the"
+                                 " offline session had ended")
+        item(13, after_window)
 
         def reconnect():
             core_compose("start", "arknet-core", "arknet-tracker")

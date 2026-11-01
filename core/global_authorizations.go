@@ -10,23 +10,12 @@ import (
 
 	"arknet/core/internal/memberships"
 	"arknet/core/internal/nodes"
-	"arknet/core/internal/users"
 )
 
 const (
 	offlineAuthorizationBodyLimit = 64 << 10
-	offlineAuthorizationTTL       = 24 * time.Hour
 	offlinePermissionMediaAccess  = "MEDIA_ACCESS"
 )
-
-type offlineAuthorizationView struct {
-	MemberID    string           `json:"member_id"`
-	NodeID      string           `json:"node_id"`
-	Role        memberships.Role `json:"role"`
-	Permissions []string         `json:"permissions"`
-	ValidatedAt string           `json:"validated_at"`
-	ExpiresAt   string           `json:"expires_at"`
-}
 
 func authorizeOfflineNode(w http.ResponseWriter, r *http.Request, body []byte, identities nodes.HandshakeRepository) bool {
 	id := r.PathValue("node_id")
@@ -56,68 +45,13 @@ func authorizeOfflineNode(w http.ResponseWriter, r *http.Request, body []byte, i
 	return true
 }
 
-func denyGlobalAuthorization(w http.ResponseWriter) {
-	adminError(w, http.StatusUnauthorized, "invalid global credentials")
-}
-
-// globalAuthorizationHandler verifies the global password inside Core. The
-// global ID, username, and Core password hash never cross the Node boundary,
-// but the plaintext password currently transits the untrusted Node; ARKSEC-001
-// tracks replacing this bootstrap protocol with a Node-bound assertion.
-func globalAuthorizationHandler(repo memberships.OfflineAuthorizationRepository, identities nodes.HandshakeRepository) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Cache-Control", "no-store")
-		body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, offlineAuthorizationBodyLimit))
-		if err != nil {
-			adminError(w, http.StatusBadRequest, "global authorization request too large")
-			return
-		}
-		if !authorizeOfflineNode(w, r, body, identities) {
-			return
-		}
-		fields, ok := exactObject(body, "member_id", "password")
-		var memberID, password string
-		if !ok || json.Unmarshal(fields["member_id"], &memberID) != nil || json.Unmarshal(fields["password"], &password) != nil ||
-			!memberships.ValidMemberID(memberID) || users.ValidatePassword(password) != nil {
-			ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
-			defer cancel()
-			if users.VerifyDummy(ctx, password) != nil {
-				adminError(w, http.StatusServiceUnavailable, "global authorization unavailable")
-				return
-			}
-			denyGlobalAuthorization(w)
-			return
-		}
-		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
-		defer cancel()
-		credentials, err := repo.OfflineCredentials(ctx, r.PathValue("node_id"), memberID)
-		if errors.Is(err, memberships.ErrAuthorizationDenied) {
-			if users.VerifyDummy(ctx, password) != nil {
-				adminError(w, http.StatusServiceUnavailable, "global authorization unavailable")
-				return
-			}
-			denyGlobalAuthorization(w)
-			return
-		}
-		if err != nil {
-			adminError(w, http.StatusServiceUnavailable, "global authorization unavailable")
-			return
-		}
-		matched, err := users.VerifyPassword(ctx, credentials.PasswordHash, password)
-		if err != nil {
-			adminError(w, http.StatusServiceUnavailable, "global authorization unavailable")
-			return
-		}
-		if !matched {
-			denyGlobalAuthorization(w)
-			return
-		}
-		now := time.Now().UTC().Truncate(time.Second)
-		writeAdminJSON(w, http.StatusOK, offlineAuthorizationView{
-			MemberID: credentials.MemberID, NodeID: r.PathValue("node_id"), Role: credentials.Role,
-			Permissions: []string{offlinePermissionMediaAccess}, ValidatedAt: now.Format(time.RFC3339), ExpiresAt: now.Add(offlineAuthorizationTTL).Format(time.RFC3339),
-		})
-	}
+// retiredGlobalAuthorizationHandler answers the former Node-relayed password
+// check with 410 Gone and never reads a password (ARKSEC-001, Prompt 46B).
+// Nodes now verify Core-signed login assertions instead, so a malicious Node
+// can no longer use Core as an oracle for a member's global password.
+func retiredGlobalAuthorizationHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	adminError(w, http.StatusGone, "password relay retired; members sign in at Core")
 }
 
 type refreshedAuthorizationView struct {
@@ -130,8 +64,10 @@ type refreshedAuthorizationView struct {
 }
 
 // globalAuthorizationRefreshHandler lets a reconnected Node refresh only IDs
-// it already cached. It carries no username, password, global ID, or verifier.
-func globalAuthorizationRefreshHandler(repo memberships.OfflineAuthorizationRepository, identities nodes.HandshakeRepository) http.HandlerFunc {
+// it already holds grants for. It carries no username, password, global ID, or
+// verifier. expires_at is now plus Core's offline window; the Node applies it
+// as shorten-only, so it can revoke or shorten a grant but never extend it.
+func globalAuthorizationRefreshHandler(repo memberships.OfflineAuthorizationRepository, identities nodes.HandshakeRepository, window time.Duration) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
 		body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, offlineAuthorizationBodyLimit))
@@ -171,7 +107,7 @@ func globalAuthorizationRefreshHandler(repo memberships.OfflineAuthorizationRepo
 				view.Role = state.Role
 				view.Permissions = []string{offlinePermissionMediaAccess}
 				view.ValidatedAt = now.Format(time.RFC3339)
-				view.ExpiresAt = now.Add(offlineAuthorizationTTL).Format(time.RFC3339)
+				view.ExpiresAt = now.Add(window).Format(time.RFC3339)
 			}
 			views = append(views, view)
 		}

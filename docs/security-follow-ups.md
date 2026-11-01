@@ -5,7 +5,7 @@ item remains open until its acceptance criteria are covered by automated tests.
 
 | ID | Priority | Status | Follow-up | Acceptance criteria |
 | --- | --- | --- | --- | --- |
-| <a id="arksec-001"></a>ARKSEC-001 | Critical | Open — Core assertion issuance built (Prompt 46A, 2026-10-30); Node side and password-path removal pending (46B) | Remove reusable global passwords from the community-Node trust boundary. Replace Node-mediated password submission and Node-held password-derived verifiers with a Core-authenticated, one-time, Node-bound assertion or a reviewed PAKE/passkey design. | A malicious Node cannot capture a credential usable at Core or another Node; assertions bind Node, member, purpose, nonce, and expiry; replay and cross-Node tests pass. |
+| <a id="arksec-001"></a>ARKSEC-001 | Critical | **Closed** 2026-10-31 (Prompts 46A/46B; MVP E2E run `arknet-p43-test-0737adcda8fa`, item 13 and its malicious-Node harness; see [validation](development/prompt46b-validation.md)) | Remove reusable global passwords from the community-Node trust boundary. Replace Node-mediated password submission and Node-held password-derived verifiers with a Core-authenticated, one-time, Node-bound assertion or a reviewed PAKE/passkey design. | A malicious Node cannot capture a credential usable at Core or another Node; assertions bind Node, member, purpose, nonce, and expiry; replay and cross-Node tests pass. |
 | <a id="arksec-002"></a>ARKSEC-002 | High | Closed (2026-10-28 AKDT, Prompt 45B) | Node-local operator sessions now guard every management route before handler side effects. Generated route/matrix and repository-spy tests pass. The operator-authenticated MVP E2E (including Node B denial), upgrade/bootstrap/fingerprint check and real Chromium LAN HTTPS login/logout check passed; see [Prompt 45B validation](development/prompt45b-validation.md). | Anonymous and non-admin callers are denied before side effects; an endpoint/permission matrix is tested; invitation secrets are returned only to an authorized operator. |
 | <a id="arksec-003"></a>ARKSEC-003 | High | Fixed (live proof 2026-10-27) | Enforce Peer Serving OFF in the transfer runtime, including while a torrent is incomplete. The tracker never advertises incomplete peers; the Agent seed reconciler serves only with Peer Serving ON and a fresh Core seed grant, and unseeds within one interval when it turns OFF or authorization ends (`docs/peer-serving.md`). Proven by `scripts/check-multi-node-swarm-stack.py` (`EXIT 0`) on a multi-piece object: Node A sent 2,900 bytes in total while OFF (less than one 16 KiB block), 3,725,555 bytes while ON, and 0 bytes after OFF; see [MVP validation report](mvp-validation-report.md). | A real multi-piece libtorrent test records zero payload upload while disabled; enabling permits upload only with fresh seed authorization; disabling an active session stops upload. |
 | <a id="arksec-004"></a>ARKSEC-004 | High | Open | Make private relay the default peer transport and direct peer addressing an explicit opt-in fallback. | With default configuration, peers neither receive each other's origin address nor exchange payload directly; relay failure does not silently enable direct mode. |
@@ -41,5 +41,21 @@ bootstrap code. Chromium verifies LAN HTTPS sign-in/logout and loopback-only
 plain HTTP. Existing deployments must install the new release; the separate
 live-test VMs were not redeployed by this prompt. ARKSEC-001 and ARKSEC-004
 remain release blockers.
+
+## Phase 20C global-credential closure (2026-10-31 AKDT)
+
+Prompts 46A and 46B close **ARKSEC-001**. Global members sign in only on Core's
+own page; Core issues a one-time Ed25519 assertion bound to the Node, the
+pairwise member ID, the purpose, a Node nonce and a browser-held challenge. The
+Agent verifies it with Core's published key set. Nodes no longer receive or
+store global passwords or password-derived verifiers: migration 0012 deleted
+existing verifiers, and both password routes (Node login and Core's
+Node-relayed check) answer `410`. Offline login uses the Core-signed grant plus
+a per-Node device credential, bounded by D3 (30 days). MVP E2E run
+`arknet-p43-test-0737adcda8fa` recorded every byte Node A's Agent received
+during a login. Nothing it captured logged in at Core or at Node B. Replay,
+cross-Node, offline-window and after-window checks passed. See the
+[validation note](development/prompt46b-validation.md). The live-test VMs were
+not redeployed. ARKSEC-004 remains a release blocker.
 
 The MVP security review is in [MVP security review](mvp-security-review.md).

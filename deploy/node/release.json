@@ -40,7 +40,7 @@
     "files": [
       {
         "path": "compose.yaml",
-        "sha256": "53321fc401dd387acfc67afa24a251f146a3abace73c8c3415f8fbef0140a7a8"
+        "sha256": "d84363e729e1777ca165b3a052168f378f0b8091ecb3b4f72d4e1fd86dd13eca"
       },
       {
         "path": "compose.transfer.yaml",

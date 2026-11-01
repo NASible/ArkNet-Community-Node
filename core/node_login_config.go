@@ -42,8 +42,8 @@ func loadNodeLoginConfig(getenv func(string) string, tracker *trackerGrantIssuer
 	offline := assertions.MaxOfflineWindow
 	if window != "" {
 		offline, err = time.ParseDuration(window)
-		if err != nil || offline < time.Hour || offline > assertions.MaxOfflineWindow {
-			return nil, fmt.Errorf("ARKNET_ASSERTION_OFFLINE_WINDOW must be a Go duration between 1h and 720h (30 days)")
+		if err != nil || offline < assertions.MinOfflineWindow || offline > assertions.MaxOfflineWindow {
+			return nil, fmt.Errorf("ARKNET_ASSERTION_OFFLINE_WINDOW must be a Go duration between 1m and 720h (30 days)")
 		}
 	}
 	signer, err := assertions.NewSigner(key, offline)

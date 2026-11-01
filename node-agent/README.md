@@ -260,16 +260,18 @@ Core, signed as this Node, for a user-less membership invitation. The returned
 secret is shown once and never stored by the Agent. See
 [node invitations](../docs/node-invitations.md).
 
-## Cached global authorization
+## Global member login
 
-Previously approved global members authenticate through
-`POST /api/v1/global-users/sessions` using their pairwise membership ID. The
-Agent always asks Core first and falls back only during a transport/Core outage
-to a bounded, Node-specific verifier that contains no username or Core user ID.
-Accepted heartbeat reconnection refreshes cached authority and revokes stale
-sessions. Offline permission is limited to `MEDIA_ACCESS`; global security
-changes remain Core-only. See
-[cached global authorization](../docs/cached-global-authorization.md).
+Global members sign in at ArkNet Core, never on the Node: the member listener's
+`POST /api/v1/global-users/login` sends the browser to Core's `/node-login`
+page, and `POST /api/v1/global-users/login/complete` verifies Core's one-time,
+Node-bound assertion with Core's published key set and creates a session. The
+Node never receives the global password and stores no password verifier. While
+Core is unreachable, a browser that signed in online before can sign in again
+until the Core-signed `offline_until` (at most 30 days). Enable it with
+`ARKNET_GLOBAL_LOGIN_CALLBACK_URLS` (the member UI's `/login/callback` URLs)
+and, if browsers reach Core at another address, `ARKNET_CORE_LOGIN_URL`. See
+[global member login on a Node](../docs/cached-global-authorization.md).
 
 ## Release manifest
 

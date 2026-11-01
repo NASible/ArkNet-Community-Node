@@ -59,6 +59,13 @@ from pathlib import Path
 os.umask(0o077)
 a=Path('/etc/arknet/secrets/tracker-signing-key'); b=Path('/etc/arknet/secrets/tracker-verify-key')
 if a.exists()!=b.exists(): raise RuntimeError('Partial tracker keypair; refusing overwrite')
+# Dedicated Core login-assertion key (Prompt 46B), never the tracker key.
+c=Path('/etc/arknet/secrets/assertion-signing-key')
+if not c.exists():
+ private=subprocess.check_output(['openssl','genpkey','-algorithm','ED25519','-outform','DER'])
+ public=subprocess.check_output(['openssl','pkey','-inform','DER','-pubout','-outform','DER'],input=private)
+ assert len(private)==48 and len(public)==44
+ c.write_bytes(base64.b64encode(private[-32:]+public[-32:])); c.chmod(0o400); os.chown(c,10001,10001)
 if not a.exists():
  private=subprocess.check_output(['openssl','genpkey','-algorithm','ED25519','-outform','DER'])
  public=subprocess.check_output(['openssl','pkey','-inform','DER','-pubout','-outform','DER'],input=private)
@@ -72,9 +79,11 @@ print('TRACKER_KEYS_READY')
         'environment': {**pgenv, 'ARKNET_CORE_ADDR': ':8080', 'ARKNET_CORE_DEV_ADMIN_ENABLED': 'true',
             'ARKNET_CORE_DEV_ADMIN_TOKEN': '${CORE_ADMIN_TOKEN}', 'ARKNET_TRACKER_ANNOUNCE_URL': 'https://tracker.nodenet.arknet.media',
             'ARKNET_TRACKER_SIGNING_KEY_FILE': '/run/secrets/tracker-signing-key',
+            'ARKNET_ASSERTION_SIGNING_KEY_FILE': '/run/secrets/assertion-signing-key',
             'ARKNET_CORE_WEB_SEED_ORIGIN': 'https://core.nodenet.arknet.media', 'ARKNET_CORE_WEB_SEED_ROOT': '/srv/arknet/web-seed'},
         'ports': ['127.0.0.1:8083:8080'], 'networks': ['database', 'egress'],
-        'volumes': ['/etc/arknet/secrets/tracker-signing-key:/run/secrets/tracker-signing-key:ro', '/srv/arknet/web-seed:/srv/arknet/web-seed:ro'],
+        'volumes': ['/etc/arknet/secrets/tracker-signing-key:/run/secrets/tracker-signing-key:ro',
+                    '/etc/arknet/secrets/assertion-signing-key:/run/secrets/assertion-signing-key:ro', '/srv/arknet/web-seed:/srv/arknet/web-seed:ro'],
         'depends_on': {'postgres': {'condition': 'service_healthy'}},
         'healthcheck': probe(['CMD', 'wget', '-q', '-O', '/dev/null', 'http://127.0.0.1:8080/health'])}
     services['arknet-tracker'] = {**hardening, 'image': images['tracker'], 'mem_limit': '128m',
@@ -106,6 +115,7 @@ else:
         'healthcheck': probe(['CMD', 'python3', '-c', "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8084/health',timeout=2).read()"]) }
     services['arknet-agent'] = {**hardening, 'image': images['agent'], 'mem_limit': '128m',
         'environment': {**pgenv, 'ARKNET_AGENT_ADDR': ':8081', 'ARKNET_MEMBER_ADDR': ':8082', 'ARKNET_CORE_URL': 'https://core.nodenet.arknet.media',
+            'ARKNET_GLOBAL_LOGIN_CALLBACK_URLS': 'https://member-' + args.host[-1] + '.nodenet.arknet.media/login/callback',
             'ARKNET_HEARTBEAT_INTERVAL': '30s', 'ARKNET_MEDIA_STORAGE_ALLOCATION_GIB': '20',
             'ARKNET_TRANSFER_URL': 'http://arknet-transfer:8084', 'ARKNET_TRANSFER_TOKEN': '${TRANSFER_TOKEN}',
             'ARKNET_TRANSFER_STAGING_DIR': '/srv/arknet/transfers', 'ARKNET_MEDIA_DIR': '/srv/arknet/media',

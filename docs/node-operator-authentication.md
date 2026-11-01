@@ -297,7 +297,9 @@ script in [Matrix check](#matrix-check) verifies this.
 | `POST /api/v1/local-users/sessions` | public | Member login with the local user's own credential (ARKSEC-008 covers abuse). |
 | `GET /api/v1/local-users/session` | member | The caller's own bearer session. |
 | `DELETE /api/v1/local-users/session` | member | |
-| `POST /api/v1/global-users/sessions` | public | Member login. The password still transits the Node ([ARKSEC-001](security-follow-ups.md#arksec-001), Phase 20C). |
+| `POST /api/v1/global-users/sessions` | public | Retired password login; always `410 Gone` ([ARKSEC-001](security-follow-ups.md#arksec-001), Prompt 46B). |
+| `POST /api/v1/global-users/login` | public | Starts a Core-bound member login, or an offline login while Core is unreachable ([global login assertions](global-login-assertions.md)). |
+| `POST /api/v1/global-users/login/complete` | public | Verifies Core's one-time assertion and creates a member session. |
 | `GET /api/v1/global-users/session` | member | |
 | `DELETE /api/v1/global-users/session` | member | |
 | `POST /api/v1/operator/setup` | public | Requires a valid setup or recovery code from the local shell. |

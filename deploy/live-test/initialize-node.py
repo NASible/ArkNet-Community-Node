@@ -6,7 +6,9 @@ import subprocess
 import sys
 import urllib.parse
 from ops import HERE, MACHINES, load_secrets, save_secrets
-from private_api import request, tunnel, wait
+from private_api import TLS, request, tunnel, wait
+sys.path.insert(0, str(HERE.parent.parent))
+from scripts import global_login  # noqa: E402
 
 parser = argparse.ArgumentParser()
 parser.add_argument('host', choices=[h for h,m in MACHINES.items() if m['role'] == 'node'])
@@ -95,11 +97,12 @@ with tunnel(machine, 8082) as agent:
         owner['node_id'] = node_id
         save_secrets(secrets)
     request(core + '/api/identity/v1/home-node', 'PUT', {'node_id': node_id}, session)
-    # Verify the actual pairwise login path on the separate member listener.
-    with tunnel(machine, 8086) as member:
-        _, global_login = request(member + '/api/v1/global-users/sessions', 'POST',
-                                  {'member_id': owner['member_id'], 'password': owner['password']})
-    assert global_login.get('token')
+    # Verify the Core-bound pairwise login on the public member host (Prompt 46B):
+    # the password goes only to Core's page; the Node verifies Core's assertion.
+    member = 'https://member-' + args.host[-1] + '.nodenet.arknet.media'
+    node_session, _ = global_login.login(global_login.Browser(TLS), member, member + '/login/callback',
+                                         owner['username'], owner['password'])
+    assert node_session.get('token') and node_session['member_id'] == owner['member_id']
     request(core + '/api/identity/v1/session', 'DELETE', headers=session, expected=(200, 204))
     print('NODE_CONNECTED_OWNER_MEMBERSHIP_LOGIN_VERIFIED', args.host, owner['username'], flush=True)
 

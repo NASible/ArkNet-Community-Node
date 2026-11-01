@@ -69,7 +69,7 @@ func run(ctx context.Context, cfg config, logger *slog.Logger) error {
 		transferService = transfer.New(cfg.transferURL, cfg.transferToken)
 	}
 	media := mediaOpt{repository: database, allocation: cfg.mediaStorageAllocation, coreURL: cfg.coreURL, mediaDir: cfg.mediaDir}
-	opts := []handlerOption{media, settingsOpt{database}, localUsersOpt{repository: database}, globalAuthOpt{repository: database, identity: media.identity}, mediaMissOpt{database}, operatorOpt{repository: database, logger: logger}, current,
+	opts := []handlerOption{media, settingsOpt{database}, localUsersOpt{repository: database}, globalAuthOpt{repository: database, identity: media.identity, login: cfg.globalLogin}, mediaMissOpt{database}, operatorOpt{repository: database, logger: logger}, current,
 		diagnosticsOpt{coreURL: strings.TrimSuffix(cfg.coreURL, "/"), trackerOrigin: cfg.trackerOrigin, mediaDir: cfg.mediaDir}}
 	var checker *updates.Checker
 	if cfg.releaseIndexURL != nil {
@@ -236,6 +236,10 @@ type federationStorage interface {
 
 func startFederationWorker(ctx context.Context, cfg config, store federationStorage, logger *slog.Logger, monitor *heartbeat.Monitor) <-chan struct{} {
 	done := make(chan struct{})
+	var loginSync *globalLoginSync
+	if authorizations, ok := store.(globalauth.Repository); ok {
+		loginSync = newGlobalLoginSync(cfg.globalLogin, authorizations)
+	}
 	go func() {
 		defer close(done)
 		enrollment.Run(ctx, cfg.coreURL, version, store, func(error) { logger.Warn("enrollment_request_failed") })
@@ -246,6 +250,10 @@ func startFederationWorker(ctx context.Context, cfg config, store federationStor
 					if err := globalauth.Reconcile(refreshCtx, authorizations, identity); err != nil {
 						refreshErrors = append(refreshErrors, err)
 					}
+				}
+				if err := loginSync.Run(refreshCtx, identity); err != nil {
+					logger.Warn("global_login_sync_failed")
+					refreshErrors = append(refreshErrors, err)
 				}
 				if mediaRepository, ok := store.(mediaStorage); ok {
 					objects, err := catalog.Fetch(refreshCtx, identity)
