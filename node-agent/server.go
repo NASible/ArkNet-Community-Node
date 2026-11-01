@@ -55,7 +55,13 @@ func run(ctx context.Context, cfg config, logger *slog.Logger) error {
 	if cfg.coreURL != "" {
 		monitor = heartbeat.NewMonitor()
 	}
-	workerDone := startFederationWorker(workerCtx, cfg, database, logger, monitor)
+	// Terminal REVOKED wakes the transfer and seed reconcilers at once.
+	revoked := newWakeup()
+	nodeState := func(callCtx context.Context) (localstate.State, error) {
+		snapshot, err := database.Snapshot(callCtx)
+		return snapshot.State, err
+	}
+	workerDone := startFederationWorker(workerCtx, cfg, database, logger, monitor, revocationObserver(revoked))
 	defer func() { stopWorker(); <-workerDone }()
 	if ctx.Err() != nil {
 		return nil
@@ -86,7 +92,7 @@ func run(ctx context.Context, cfg config, logger *slog.Logger) error {
 		opts = append(opts, applicationOpt{jellyfinAdapter})
 	}
 	if transferService != nil {
-		opts = append(opts, transferOpt{service: transferService})
+		opts = append(opts, transferOpt{service: transferService, nodeState: nodeState})
 	}
 	managementHandler, memberHandler := newListenerHandlers(database, opts...)
 	var reconcileDone <-chan struct{}
@@ -95,8 +101,9 @@ func run(ctx context.Context, cfg config, logger *slog.Logger) error {
 			service: transferService, media: media, stagingDir: cfg.transferStagingDir, mediaDir: cfg.mediaDir,
 			refreshJellyfin: func(callCtx context.Context) error { return jellyfinAdapter.Refresh(callCtx, cfg.jellyfinAPIKey) },
 			reportReplica:   catalog.ReportReplica,
+			nodeState:       nodeState,
 		}
-		reconcileDone = runTransferReconciler(workerCtx, cfg.transferReconcileInterval, reconciler, func(error) { logger.Warn("transfer_reconciliation_failed") })
+		reconcileDone = runTransferReconciler(workerCtx, cfg.transferReconcileInterval, reconciler, func(error) { logger.Warn("transfer_reconciliation_failed") }, revoked.channel())
 	}
 	if reconcileDone != nil {
 		defer func() { stopWorker(); <-reconcileDone }()
@@ -105,17 +112,13 @@ func run(ctx context.Context, cfg config, logger *slog.Logger) error {
 	// in, the Node is CONNECTED, and Core keeps issuing seed grants.
 	if seeder, ok := transferService.(transfer.Seeder); ok && cfg.coreURL != "" {
 		seeding := &seedReconciler{
-			seeds: seeder, media: media, peerServing: database.PeerServing, seedGrant: catalog.SeedGrant,
-			nodeState: func(callCtx context.Context) (localstate.State, error) {
-				snapshot, err := database.Snapshot(callCtx)
-				return snapshot.State, err
-			},
+			seeds: seeder, media: media, peerServing: database.PeerServing, seedGrant: catalog.SeedGrant, nodeState: nodeState,
 		}
-		seedDone := runReconciler(workerCtx, cfg.transferReconcileInterval, "seed reconciliation", seeding, func(error) { logger.Warn("seed_reconciliation_failed") })
+		seedDone := runReconciler(workerCtx, cfg.transferReconcileInterval, "seed reconciliation", seeding, func(error) { logger.Warn("seed_reconciliation_failed") }, revoked.channel())
 		defer func() { stopWorker(); <-seedDone }()
 	}
 	if cfg.coreURL != "" {
-		syncer := mediaMissSyncer{media: media, repository: database, transfers: transferOpt{service: transferService, media: media}}
+		syncer := mediaMissSyncer{media: media, repository: database, transfers: transferOpt{service: transferService, media: media, nodeState: nodeState}}
 		missDone := runMediaMissSync(workerCtx, cfg.heartbeatInterval, syncer, func(error) { logger.Warn("media_miss_sync_failed") })
 		defer func() { stopWorker(); <-missDone }()
 	}
@@ -171,7 +174,11 @@ func newConfiguredHandler(repository localstate.Repository, cfg config, monitor 
 		opts = append(opts, localUsersOpt{repository: local})
 	}
 	if cfg.transferURL != "" && cfg.transferToken != "" {
-		opts = append(opts, transferOpt{service: transfer.New(cfg.transferURL, cfg.transferToken)})
+		opts = append(opts, transferOpt{service: transfer.New(cfg.transferURL, cfg.transferToken),
+			nodeState: func(ctx context.Context) (localstate.State, error) {
+				snapshot, err := repository.Snapshot(ctx)
+				return snapshot.State, err
+			}})
 	}
 	return newRoutes(repository, opts...)
 }
@@ -234,7 +241,7 @@ type federationStorage interface {
 	heartbeat.Storage
 }
 
-func startFederationWorker(ctx context.Context, cfg config, store federationStorage, logger *slog.Logger, monitor *heartbeat.Monitor) <-chan struct{} {
+func startFederationWorker(ctx context.Context, cfg config, store federationStorage, logger *slog.Logger, monitor *heartbeat.Monitor, observers ...heartbeat.TransitionObserver) <-chan struct{} {
 	done := make(chan struct{})
 	var loginSync *globalLoginSync
 	if authorizations, ok := store.(globalauth.Repository); ok {
@@ -265,7 +272,7 @@ func startFederationWorker(ctx context.Context, cfg config, store federationStor
 					}
 				}
 				return errors.Join(refreshErrors...)
-			}, stateTransitionLogger(logger))
+			}, observeAll(append([]heartbeat.TransitionObserver{stateTransitionLogger(logger)}, observers...)...))
 	}()
 	return done
 }

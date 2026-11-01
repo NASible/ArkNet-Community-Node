@@ -209,7 +209,10 @@ primarily initiate connections outbound.
 The Agent validates and transactionally persists explicit lifecycle transitions.
 See the [transition graph and persistence semantics](../docs/node-state-machine.md).
 `REVOKED` is terminal; invalid and stale transitions return typed errors without
-changing current state, timestamp, or history. No automatic network detection
+changing current state, timestamp, or history. On `REVOKED` the Agent cancels
+every active transfer and seed at once, keeps verified local media, and answers
+transfer `start`/`resume` with `409 node_revoked`; see
+[Node revocation](../docs/node-revocation.md). No automatic network detection
 or HTTP mutation route is added.
 
 ## Outbound enrollment

@@ -114,6 +114,36 @@ func TestFederationWorkerWiresStateTransitionLogger(t *testing.T) {
 	}
 }
 
+func TestFederationWorkerForwardsTransitionsToExtraObservers(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer srv.Close()
+	seen := make(chan localstate.State, 1)
+	ctx, cancel := context.WithCancel(context.Background())
+	s := &approvedStore{coreURL: srv.URL, state: localstate.Connected}
+	done := startFederationWorker(ctx, config{coreURL: srv.URL, heartbeatInterval: 5 * time.Second}, s,
+		slog.New(slog.NewTextHandler(io.Discard, nil)), heartbeat.NewMonitor(),
+		func(_, to localstate.State) {
+			select {
+			case seen <- to:
+			default:
+			}
+		})
+	defer func() {
+		cancel()
+		<-done
+	}()
+	select {
+	case to := <-seen:
+		if to != localstate.Degraded {
+			t.Fatalf("to=%s", to)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("extra observer was not called")
+	}
+}
+
 func TestFederationWorkerApprovedRebootImmediateAndJoined(t *testing.T) {
 	for _, state := range []localstate.State{localstate.Connected, localstate.Degraded, localstate.Offline, localstate.Reconnecting} {
 		t.Run(string(state), func(t *testing.T) {

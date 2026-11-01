@@ -28,7 +28,9 @@ self transitions, unknown values, and different casing—is rejected.
 This conservative initial graph requires the normal enrollment and synchronization
 sequence before `MESH`. Degraded/offline recovery goes through reconnecting.
 Quarantine has no direct path to an operational state; revocation cannot be
-cleared by a lifecycle transition. This is transition validation, not authorization:
+cleared by a lifecycle transition. Entering `REVOKED` cancels active transfers
+and seeds and refuses new transfers; see [Node revocation](node-revocation.md).
+This is transition validation, not authorization:
 future trusted event producers must separately validate their authority/evidence.
 
 ## Internal interface

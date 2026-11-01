@@ -11,6 +11,7 @@ import (
 
 	"arknet/node-agent/internal/catalog"
 	"arknet/node-agent/internal/enrollment"
+	"arknet/node-agent/internal/localstate"
 	"arknet/node-agent/internal/mediaselection"
 	"arknet/node-agent/internal/transfer"
 )
@@ -125,11 +126,23 @@ type transferReconciler struct {
 	mediaDir        string
 	refreshJellyfin func(context.Context) error
 	reportReplica   replicaReporter
+	// nodeState reads the persisted Node state. On terminal REVOKED every
+	// active transfer is cancelled and nothing is asked of Core.
+	nodeState func(context.Context) (localstate.State, error)
 }
 
 func (r transferReconciler) once(ctx context.Context) error {
 	if r.service == nil || r.media.repository == nil {
 		return nil
+	}
+	if r.nodeState != nil {
+		state, err := r.nodeState(ctx)
+		if err != nil {
+			return err
+		}
+		if state == localstate.Revoked {
+			return r.cancelForRevocation(ctx)
+		}
 	}
 	selections, err := r.media.repository.ListMediaSelections(ctx)
 	if err != nil {
@@ -213,6 +226,36 @@ func (r transferReconciler) once(ctx context.Context) error {
 	return nil
 }
 
+// cancelForRevocation stops every active or paused transfer, including ones
+// without a matching selection. Verified local media (AVAILABLE files) is
+// never touched; interrupted selections become ERROR. Finished transfers are
+// left alone: they move no bytes.
+func (r transferReconciler) cancelForRevocation(ctx context.Context) error {
+	statuses, err := r.service.List(ctx)
+	if err != nil {
+		return err
+	}
+	selections, selectionErr := r.media.repository.ListMediaSelections(ctx)
+	errs := []error{selectionErr}
+	byID := make(map[string]mediaselection.Object, len(selections))
+	for _, selection := range selections {
+		byID[selection.ID] = selection
+	}
+	for _, status := range statuses {
+		if status.State != transfer.Downloading && status.State != transfer.Paused {
+			continue
+		}
+		if _, err := r.service.Cancel(ctx, status.ObjectID); err != nil && !errors.Is(err, transfer.ErrNotFound) && !errors.Is(err, transfer.ErrInvalidTransition) {
+			errs = append(errs, err)
+			continue
+		}
+		if selection, ok := byID[status.ObjectID]; ok && selection.LocalState == mediaselection.Downloading {
+			errs = append(errs, r.media.repository.TransitionMediaSelection(ctx, selection.ID, mediaselection.Downloading, mediaselection.Error))
+		}
+	}
+	return errors.Join(errs...)
+}
+
 func (r transferReconciler) authorizedObject(ctx context.Context, selection mediaselection.Object) (transfer.Request, enrollment.Identity, error) {
 	identity, err := r.media.identity(ctx)
 	if err != nil {
@@ -251,12 +294,13 @@ type intervalReconciler interface {
 	once(context.Context) error
 }
 
-func runTransferReconciler(ctx context.Context, interval time.Duration, reconciler transferReconciler, onError func(error)) <-chan struct{} {
-	return runReconciler(ctx, interval, "transfer reconciliation", reconciler, onError)
+func runTransferReconciler(ctx context.Context, interval time.Duration, reconciler transferReconciler, onError func(error), wake <-chan struct{}) <-chan struct{} {
+	return runReconciler(ctx, interval, "transfer reconciliation", reconciler, onError, wake)
 }
 
-// runReconciler runs one reconcile pass immediately and then once per interval.
-func runReconciler(ctx context.Context, interval time.Duration, name string, reconciler intervalReconciler, onError func(error)) <-chan struct{} {
+// runReconciler runs one reconcile pass immediately, then once per interval
+// and whenever wake fires (a nil wake never fires).
+func runReconciler(ctx context.Context, interval time.Duration, name string, reconciler intervalReconciler, onError func(error), wake <-chan struct{}) <-chan struct{} {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -276,6 +320,7 @@ func runReconciler(ctx context.Context, interval time.Duration, name string, rec
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
+			case <-wake:
 			}
 		}
 	}()

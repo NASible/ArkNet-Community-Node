@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"arknet/node-agent/internal/catalog"
+	"arknet/node-agent/internal/localstate"
 	"arknet/node-agent/internal/mediaselection"
 	"arknet/node-agent/internal/transfer"
 )
@@ -19,6 +20,8 @@ import (
 type transferOpt struct {
 	service transfer.Service
 	media   mediaOpt
+	// nodeState reads the persisted Node state; a REVOKED Node starts nothing.
+	nodeState func(context.Context) (localstate.State, error)
 }
 
 func (transferOpt) isOption() {}
@@ -169,6 +172,15 @@ type transferFailure struct {
 // catalog (object ACTIVE, size unchanged) and a fresh Core transfer grant.
 // Pause/cancel deliberately remain available offline and do not use it.
 func (t transferOpt) authorizeStart(ctx context.Context, selection mediaselection.Object, action string) (transfer.Request, *transferFailure) {
+	if t.nodeState != nil {
+		state, err := t.nodeState(ctx)
+		if err != nil {
+			return transfer.Request{}, &transferFailure{503, "local_state_unavailable"}
+		}
+		if state == localstate.Revoked {
+			return transfer.Request{}, &transferFailure{409, "node_revoked"}
+		}
+	}
 	if selection.State != catalog.Active || selection.LocalState == mediaselection.RemovedRetained {
 		return transfer.Request{}, &transferFailure{409, "media_removed"}
 	}

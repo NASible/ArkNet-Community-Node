@@ -40,6 +40,16 @@ if str(ROOT) not in sys.path:
 from scripts import e2e_diagnostics  # noqa: E402
 from scripts import operator_login  # noqa: E402
 from scripts import global_login  # noqa: E402
+from scripts import revocation_meter  # noqa: E402
+
+# Node heartbeat interval for this run. A revoked Node learns of Core's decision
+# at its next heartbeat; its transfers must stop within this plus the slack.
+HEARTBEAT_SECONDS = 5
+REVOCATION_STOP_SLACK_SECONDS = 10
+# How long a revoked Node must stay silent. Core's HTTP server ends every
+# web-seed response after 30 s and libtorrent waits about 30 s before asking
+# again, so a Node that kept its transfer would resume within this window.
+REVOCATION_QUIET_SECONDS = 45
 
 # Core's offline window for this run. Short, so item 13 can prove rejection
 # after the window in real time (production default and maximum: 720h).
@@ -156,7 +166,7 @@ def main(argv=None):
                           ARKNET_MEMBER_PORT=str(cfg["member_port"]),
                           ARKNET_UI_HTTPS_BIND="127.0.0.1:", ARKNET_TLS_DIR=str(temporary / f"tls-{label}"),
                           JELLYFIN_BIND=f"127.0.0.1:{cfg['jellyfin_port']}", ARKNET_CORE_URL="http://arknet-core:8080",
-                          ARKNET_CORE_ALLOW_HTTP="true", ARKNET_HEARTBEAT_INTERVAL="5s",
+                          ARKNET_CORE_ALLOW_HTTP="true", ARKNET_HEARTBEAT_INTERVAL=f"{HEARTBEAT_SECONDS}s",
                           ARKNET_MEDIA_STORAGE_ALLOCATION_GIB="1", ARKNET_MEDIA_STORAGE_ALLOCATION_BYTES="",
                           ARKNET_TRANSFER_TOKEN=token, ARKNET_TRANSFER_TRACKER_ORIGIN="http://arknet-tracker:6969",
                           ARKNET_TRANSFER_TRACKER_ALLOW_HTTP="true", ARKNET_TRANSFER_WEB_SEED_ORIGIN="http://arknet-core:8080",
@@ -459,6 +469,9 @@ def main(argv=None):
         # ------------------------------------------- 3 restart + 8 selection etc.
         video = make_video("media_" + secrets.token_hex(32), 35, 880)
         later = make_video("media_" + secrets.token_hex(32), 12, 440)
+        # Long enough that Node B is still downloading well after revocation
+        # (about 37 MB at the 512 KiB/s download limit, so over a minute).
+        active = make_video("media_" + secrets.token_hex(32), 60, 550)
 
         def selection():
             listed = media_object("a", video["id"])
@@ -775,7 +788,34 @@ def main(argv=None):
         item(20, isolation)
 
         # --------------------------------------------------- 16 revocation
+        def tracker_counts(info_hash_v2):
+            """(complete, incomplete) peers in a swarm, seen by a probe announce."""
+            grant = run(["go", "run", str(key_helper), "issue", str(private_key), info_hash_v2], capture=True, timeout=120)
+            known_secrets.append(grant)
+            probe = ("import sys,urllib.parse,urllib.request,secrets\n"
+                     "grant,h=sys.argv[1],bytes.fromhex(sys.argv[2])[:20]\npid=b'-AP0001-'+secrets.token_bytes(12)\n"
+                     "def go(event):\n q=urllib.parse.urlencode({'info_hash':h,'peer_id':pid,'port':1,'uploaded':0,"
+                     "'downloaded':0,'left':0,'compact':1,'event':event})\n"
+                     " return urllib.request.urlopen('http://arknet-tracker:6969/announce/'+grant+'?'+q,timeout=5).read()\n"
+                     "body=go('started');go('stopped');sys.stdout.write(body.hex())\n")
+            body = run(["docker", "run", "--rm", "--network", wan, images["helper"], "-c", probe, grant, info_hash_v2], capture=True)
+            return revocation_meter.announce_counts(bytes.fromhex(body))
+
         def revocation():
+            # Node B is receiving from Core's web seed. That source checks the grant only
+            # when a request starts, and libtorrent asks for the rest of the file in one
+            # range, so only Node B's own cancellation stops these bytes.
+            agent("b", f"/api/v1/media/{active['id']}/selection", "POST", {})
+            assert agent("b", f"/api/v1/media/{active['id']}/transfer/start", "POST", {})["mock"] is False
+            wait_until("B receiving", lambda: (transfer_status("b", active["id"]) or {}).get("completed_bytes", 0) >= 1 << 20, 120, .25)
+            wait_until("B in the tracker swarm", lambda: tracker_counts(active["hash"])[1] >= 1, 90, 2)
+            b_transfer = container(lambda *i, **k: node_compose("b", *i, **k), "arknet-transfer")
+            sampler = revocation_meter.RxSampler(b_transfer, 300)
+            # Revoke while bytes are flowing, not in a pause between web-seed responses.
+            wait_until("B receiving bytes now", lambda: revocation_meter.recent_rate(sampler.samples) >= 128 * 1024, 120, .25)
+            progress = transfer_status("b", active["id"])["completed_bytes"]
+            assert active["size"] - progress >= 10 << 20, "too little left to observe a stop"
+            revoked_at = time.time()
             decision = request_json(core_base + f"/api/admin/v1/nodes/{nodes['b']['node_id']}/revoke", "POST", headers=admin)[2]
             assert decision["enrollment_status"] == "REVOKED" and decision["trust_status"] == "BLOCKED"
             request(nodes["b"]["base"] + f"/api/v1/media/{later['id']}/selection", "POST", {}, op("b"))
@@ -784,8 +824,37 @@ def main(argv=None):
             assert started[0] not in (200, 401, 403), f"revoked Node B transfer start: HTTP {started[0]}"
             assert transfer_status("b", later["id"]) is None
             results.evidence(16, "after revocation Node B could not obtain a new swarm authorization (transfer start refused)")
-            wait_until("B REVOKED", lambda: in_state("b", "REVOKED"), 120)
-            results.evidence(16, "Node B learned the authoritative revocation and entered terminal REVOKED")
+            wait_until("B REVOKED", lambda: in_state("b", "REVOKED"), 120, .25)
+            learned = time.time() - revoked_at
+            results.evidence(16, f"Node B learned the authoritative revocation and entered terminal REVOKED ({learned:.1f}s)")
+            cancelled = wait_until("B transfer CANCELLED", lambda: (lambda t: t if t and t["state"] == "CANCELLED" else None)(
+                transfer_status("b", active["id"])), 60, .25)
+            time.sleep(REVOCATION_QUIET_SECONDS + 3)
+            samples = sampler.stop()
+            bound = HEARTBEAT_SECONDS + REVOCATION_STOP_SLACK_SECONDS
+            print("revocation samples (s after revocation, rx bytes):",
+                  [(round(t - revoked_at, 2), rx) for t, rx in samples], flush=True)
+            verdict = revocation_meter.analyze(samples, revoked_at, bound, REVOCATION_QUIET_SECONDS)
+            final = transfer_status("b", active["id"])
+            assert final["completed_bytes"] == cancelled["completed_bytes"] < active["size"]
+            assert (media_object("b", active["id"]) or {}).get("local_state") == "ERROR"
+            results.evidence(16, f"active transfer cancelled by Node B's Agent: receiving {verdict['rate_before'] / 1024:.0f} KiB/s"
+                                 f" at revocation, last block {verdict['stopped_after']:.1f}s after it (bound {bound}s ="
+                                 f" heartbeat {HEARTBEAT_SECONDS}s + {REVOCATION_STOP_SLACK_SECONDS}s),"
+                                 f" {verdict['residual_bytes']} bytes in the next {verdict['quiet_seconds']:.0f}s;"
+                                 f" stopped at {final['completed_bytes']} of {active['size']} bytes")
+            dropped_at = time.time()
+            wait_until("B dropped from the tracker", lambda: tracker_counts(active["hash"])[1] == 0, 60, 2)
+            results.evidence(16, "the tracker no longer lists Node B in the swarm (checked"
+                                 f" {time.time() - dropped_at:.0f}s after the cancellation; B announced 'stopped')")
+            refused = request(nodes["b"]["base"] + f"/api/v1/media/{active['id']}/transfer/start", "POST", {}, op("b"))
+            assert refused[0] == 409 and b"node_revoked" in refused[2], refused[0]
+            b_hash = run(["docker", "run", "--rm", "-v", nodes["b"]["project"] + "_media:/m:ro", images["helper"], "-c",
+                          f"import hashlib,pathlib;print(hashlib.sha256(pathlib.Path('/m/{video['id']}.mp4').read_bytes()).hexdigest())"],
+                         capture=True)
+            assert b_hash == video["sha256"]
+            results.evidence(16, "the revoked Agent refuses new transfers itself (409 node_revoked) and kept its verified local"
+                                 " media byte-identical")
             assert in_state("a", "CONNECTED")
             results.evidence(16, "Node A unaffected (CONNECTED)")
         item(16, revocation)
