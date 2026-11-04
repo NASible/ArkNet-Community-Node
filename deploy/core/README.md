@@ -186,8 +186,8 @@ The relay (Prompt 48A, [relay README](../../relay/README.md)) splices
 Node-to-Node streams so Nodes never learn each other's addresses. It verifies
 Core's tracker grants with the **tracker verification key** and accepts
 session revocations signed with a separate **relay-revocation key** (Core
-signs these from Prompt 48B; until then, revocations can only be sent by
-whoever holds that private key). Set:
+signs them with that relay's own key, configured in `ARKNET_RELAYS_FILE`; see
+[Operator relays](../../core/README.md#operator-relays)). Set:
 
 ```dotenv
 ARKNET_RELAY_ID=relay-dc-1
@@ -198,7 +198,13 @@ ARKNET_RELAY_TLS_KEY_FILE=/host/secret/path/relay-key.pem
 ```
 
 The key files use the tracker-key format; the relay refuses to start if both
-are the same key. UID 65534 must be able to read all four files. Then:
+are the same key. The overlay also gives Core its side of the configuration:
+set `ARKNET_CORE_RELAY_CONFIG_DIR` to a host directory (readable by UID 10001)
+containing `relays.json`, `relay-list.key` and each relay's revocation
+**private** key; Core mounts it read-only at `/run/config/arknet-relays`, so
+`revocation_key_file` entries name paths there. Each relay's
+`ARKNET_RELAY_REVOCATION_VERIFY_KEY_FILE` is the public half of its own key.
+See [Operator relays](../../core/README.md#operator-relays). UID 65534 must be able to read all four files. Then:
 
 ```sh
 docker compose -f compose.yaml -f compose.relay.yaml up --build -d --wait

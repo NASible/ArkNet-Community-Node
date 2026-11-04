@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/ed25519"
 	"fmt"
 	"log/slog"
 	"net"
@@ -19,6 +20,7 @@ type config struct {
 	tracker         *trackerGrantIssuer
 	webSeed         *webSeedConfig
 	nodeLogin       *nodeLoginConfig
+	relays          *relaysConfig
 }
 
 func loadConfig(getenv func(string) string) (config, error) {
@@ -97,5 +99,14 @@ func loadConfig(getenv func(string) string) (config, error) {
 		return config{}, err
 	}
 	cfg.nodeLogin = nodeLogin
+	var assertionKeys []ed25519.PrivateKey
+	if nodeLogin != nil {
+		assertionKeys = append(assertionKeys, nodeLogin.signer.PrivateKey())
+	}
+	relays, err := loadRelaysConfig(getenv, tracker, assertionKeys...)
+	if err != nil {
+		return config{}, err
+	}
+	cfg.relays = relays
 	return cfg, nil
 }

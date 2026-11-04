@@ -36,6 +36,9 @@ services:
       # Core URL browsers use when it differs from ARKNET_CORE_URL.
       ARKNET_GLOBAL_LOGIN_CALLBACK_URLS: ${ARKNET_GLOBAL_LOGIN_CALLBACK_URLS:-}
       ARKNET_CORE_LOGIN_URL: ${ARKNET_CORE_LOGIN_URL:-}
+      # Core's relay-list public key (canonical base64). Empty: the relay list
+      # is not fetched. Peer transfers through relays follow in Prompt 48D.
+      ARKNET_RELAY_LIST_VERIFY_KEY: ${ARKNET_RELAY_LIST_VERIFY_KEY:-}
       ARKNET_HEARTBEAT_INTERVAL: ${ARKNET_HEARTBEAT_INTERVAL:-30s}
       # Whole GiB allocation: 0 (unset default) disables new selections; -1 is unlimited.
       ARKNET_MEDIA_STORAGE_ALLOCATION_GIB: ${ARKNET_MEDIA_STORAGE_ALLOCATION_GIB:-}

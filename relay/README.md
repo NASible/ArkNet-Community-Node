@@ -6,9 +6,9 @@ v2 payload without learning each other's addresses (ARKSEC-004; design:
 no database, no persistence, and no Node or user identity: it authorizes with
 the same Core-signed, swarm-scoped grants as the private tracker.
 
-Not yet used by Nodes or the tracker: Core's relay list and revocation push
-are Prompt 48B, tracker endpoint advertisement is 48C, and the Node connector
-is 48D.
+Core lists relays to Nodes and pushes revocations to them (Prompt 48B,
+[core/README.md](../core/README.md#operator-relays)). Tracker endpoint
+advertisement is 48C and the Node connector is 48D.
 
 ## How it works
 
@@ -61,7 +61,8 @@ key** (which must differ from the grant key), the audience is this relay's
 ID, `issued_at` is within 60 s of the relay's clock, and the ID has not been
 used (`204`). Otherwise `401` (invalid, other relay, stale), `409` (replay),
 `413` (too large). `relay/internal/revocation` is the reference
-implementation; Core signs these in Prompt 48B.
+implementation; Core signs the same format (`core/relay_revocation_token.go`, kept
+byte-compatible by a golden test in both modules).
 
 ## Configuration
 

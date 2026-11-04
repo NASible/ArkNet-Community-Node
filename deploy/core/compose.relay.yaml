@@ -2,6 +2,20 @@
 # tracker grants with the public key only, accepts revocations signed with a
 # separate Core revocation key, and has no database network or Core secret.
 services:
+  # Core lists the relays to Nodes and pushes revocations to them (Prompt 48B).
+  # The directory holds relays.json, the relay-list signing key and one
+  # revocation signing key per relay; key paths in relays.json are container
+  # paths under /run/config/arknet-relays.
+  arknet-core:
+    environment:
+      ARKNET_RELAYS_FILE: /run/config/arknet-relays/relays.json
+      ARKNET_RELAY_LIST_SIGNING_KEY_FILE: /run/config/arknet-relays/relay-list.key
+    volumes:
+      - type: bind
+        source: ${ARKNET_CORE_RELAY_CONFIG_DIR:?Set the host directory with relays.json and Core's relay keys}
+        target: /run/config/arknet-relays
+        read_only: true
+
   arknet-relay:
     image: arknet-relay:0.0.1-dev
     build:

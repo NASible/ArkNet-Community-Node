@@ -35,9 +35,19 @@ func (s *Store) transition(ctx context.Context, publicID string, fromEnrollment 
 	if s == nil || s.db == nil {
 		return nodes.Node{}, errors.New("administration database unavailable")
 	}
-	node, err := scanNode(s.db.QueryRowContext(ctx,
-		"UPDATE nodes SET enrollment_status=$2, trust_status=$3 WHERE public_id=$1 AND enrollment_status=$4 AND trust_status=$5 RETURNING "+columns,
-		publicID, enrollment, trust, fromEnrollment, fromTrust))
+	query := "UPDATE nodes SET enrollment_status=$2, trust_status=$3 WHERE public_id=$1 AND enrollment_status=$4 AND trust_status=$5 RETURNING " + columns
+	if trust == nodes.TrustBlocked {
+		// A decision that blocks the Node queues its relay revocation in the
+		// same statement, so the push survives a crash right after the decision.
+		query = `WITH decided AS (
+			UPDATE nodes SET enrollment_status=$2, trust_status=$3
+			WHERE public_id=$1 AND enrollment_status=$4 AND trust_status=$5 RETURNING *
+		), queued AS (
+			INSERT INTO relay_revocation_events (node_id) SELECT id FROM decided
+			ON CONFLICT (node_id) DO NOTHING
+		) SELECT ` + columns + ` FROM decided`
+	}
+	node, err := scanNode(s.db.QueryRowContext(ctx, query, publicID, enrollment, trust, fromEnrollment, fromTrust))
 	if errors.Is(err, sql.ErrNoRows) {
 		// A separate read sees a concurrent winner after the conditional update;
 		// it distinguishes missing records without mutating any existing state.

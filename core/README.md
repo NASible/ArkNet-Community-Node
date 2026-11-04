@@ -53,6 +53,8 @@ the normal local workflow rather than exposing that database just to run Core.
 | `ARKNET_ASSERTION_SIGNING_KEY_FILE` | Unset | Enables Core-bound Node login. Same format as the tracker key (a single trailing newline is allowed). It must be a dedicated key, not the tracker key. |
 | `ARKNET_ASSERTION_PUBLISHED_KEYS_FILE` | Unset | Optional extra Ed25519 public keys to publish without signing: the next key before a rotation, retired keys afterwards. Canonical base64, one per line, `#` comments allowed, at most 8. |
 | `ARKNET_ASSERTION_OFFLINE_WINDOW` | `720h` | Offline login window written into assertions; a Go duration from `1m` to `720h` (30 days, decision D3). Short windows are for tests. |
+| `ARKNET_RELAYS_FILE` | unset | Operator relays (Prompt 48B): a JSON array of `{"id","address","spki_sha256","control_url","revocation_key_file"}`, 1–16 entries. Set together with `ARKNET_RELAY_LIST_SIGNING_KEY_FILE`; requires the tracker key. See [Operator relays](#operator-relays). |
+| `ARKNET_RELAY_LIST_SIGNING_KEY_FILE` | unset | Ed25519 private key (tracker-key format) that signs the relay list Nodes fetch. Must differ from every other key. |
 | `DATABASE_URL` | Unset | Full PostgreSQL connection URL; overrides the `PG*` variables below. |
 | `PGHOST` | `127.0.0.1` | Database host. |
 | `PGPORT` | `5432` | Database TCP port. |
@@ -303,6 +305,35 @@ redirects to the callback with a one-time, Node-bound assertion in the URL
 fragment. Nodes verify it with the key set at
 `GET /api/federation/v1/assertion-keys`. The Node never sees the password. See
 [global login assertions](../docs/global-login-assertions.md#core-implementation-46a).
+
+## Operator relays
+
+With `ARKNET_RELAYS_FILE` set (Prompt 48B, [private relay design](../docs/private-relay-design.md)):
+
+- **Relay list.** `GET /api/federation/v1/nodes/{node_id}/relays` (a signed
+  request from an APPROVED/TRUSTED Node) returns `{"relay_list": TOKEN}`,
+  `TOKEN = base64url(payload) "." base64url(Ed25519(list key, "ARKNET-RELAY-LIST-V1\x00" || payload))`.
+  The payload is `{"version":1,"issued_at":N,"expires_at":N+24h,"relays":[{"id","address","spki_sha256"}]}`.
+  It never contains control URLs or keys. Nodes pin the list's public key
+  (`ARKNET_RELAY_LIST_VERIFY_KEY` on the Agent).
+- **Revocation push.** Revoking or rejecting a Node (any decision that makes
+  it BLOCKED) records a revocation in the same database statement. A worker
+  sends every relay the Node's pairwise grant subjects for every catalog object
+  (removed ones included), at most 4096 per message, signed with **that
+  relay's own revocation key** in the relay's format
+  ([relay README](../relay/README.md#revocations)). It retries each relay
+  independently (backoff 1 s doubling to 60 s) until the relay answers `204`
+  (or `409`, already applied), across Core restarts.
+- **Visibility.** `GET /api/admin/v1/relays` lists the configured relays and
+  every undelivered revocation (Node ID, relay ID, attempts, last error code).
+  Logs carry `relay_revocation_delivered`/`relay_revocation_failed` with the
+  relay ID, reason and attempt count only: never subjects, Node IDs or control URLs.
+
+Keys: the list key, each relay's revocation key, the tracker key and the
+assertion key must all be different; Core refuses to start otherwise. Core
+reaches each relay's `control_url` directly; use a private network or HTTPS
+for it, since a forged acknowledgement on an untrusted path would hide an
+undelivered revocation.
 
 ## Primary home node
 

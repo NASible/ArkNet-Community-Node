@@ -41,8 +41,18 @@ func run(ctx context.Context, cfg config, logger *slog.Logger) error {
 		cfg.nodeLogin.logger = logger
 		logger.Info("node_login_enabled", "key_id", cfg.nodeLogin.signer.KeyID().String(), "published_keys", len(cfg.nodeLogin.published))
 	}
+	handler := withAdministration(newCoreHandler(database, cfg.tracker, cfg.webSeed, cfg.nodeLogin, database), database, authorizer)
+	if cfg.relays != nil {
+		handler = withRelays(handler, cfg.relays, database, database, authorizer, time.Now)
+		pusher := newRelayRevocationPusher(cfg.relays, database, cfg.tracker, time.Now, logger)
+		pushCtx, stopPush := context.WithCancel(ctx)
+		pushDone := make(chan struct{})
+		go func() { defer close(pushDone); pusher.run(pushCtx) }()
+		defer func() { stopPush(); <-pushDone }()
+		logger.Info("relays_enabled", "relays", len(cfg.relays.entries))
+	}
 	server := &http.Server{
-		Handler:           withAdministration(newCoreHandler(database, cfg.tracker, cfg.webSeed, cfg.nodeLogin, database), database, authorizer),
+		Handler:           handler,
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
 		WriteTimeout:      30 * time.Second,

@@ -273,7 +273,11 @@ Node never receives the global password and stores no password verifier. While
 Core is unreachable, a browser that signed in online before can sign in again
 until the Core-signed `offline_until` (at most 30 days). Enable it with
 `ARKNET_GLOBAL_LOGIN_CALLBACK_URLS` (the member UI's `/login/callback` URLs)
-and, if browsers reach Core at another address, `ARKNET_CORE_LOGIN_URL`. See
+and, if browsers reach Core at another address, `ARKNET_CORE_LOGIN_URL`. Setting
+`ARKNET_RELAY_LIST_VERIFY_KEY` (Core's relay-list public key, canonical base64)
+makes the Agent fetch and verify Core's signed relay list after each accepted
+heartbeat and keep the newest unexpired one (Prompt 48B; used by the relay
+connector in 48D). See
 [global member login on a Node](../docs/cached-global-authorization.md).
 
 ## Release manifest

@@ -258,6 +258,9 @@ func startFederationWorker(ctx context.Context, cfg config, store federationStor
 						refreshErrors = append(refreshErrors, err)
 					}
 				}
+				if err := cfg.relayList.refresh(refreshCtx, identity, logger); err != nil {
+					refreshErrors = append(refreshErrors, err)
+				}
 				if err := loginSync.Run(refreshCtx, identity); err != nil {
 					logger.Warn("global_login_sync_failed")
 					refreshErrors = append(refreshErrors, err)

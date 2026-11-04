@@ -90,9 +90,8 @@ func (i *trackerGrantIssuer) issueGrant(nodeID, infoHashV2 string, actionMask by
 	payload := make([]byte, 1+8+16+len(hash)+1)
 	payload[0] = 2
 	binary.BigEndian.PutUint64(payload[1:9], uint64(expiresAt.Unix()))
-	subjectMessage := append([]byte("arknet-tracker-subject-v1\x00"+nodeID+"\x00"), hash...)
-	subject := sha256.Sum256(ed25519.Sign(i.privateKey, subjectMessage))
-	copy(payload[9:25], subject[:16])
+	subject := i.subject(nodeID, hash)
+	copy(payload[9:25], subject[:])
 	copy(payload[25:57], hash)
 	payload[57] = actionMask
 	signature := ed25519.Sign(i.privateKey, payload)
@@ -219,4 +218,14 @@ func validateTrackerAuthority(base *url.URL) error {
 		}
 	}
 	return nil
+}
+
+// subject is the opaque pairwise subject in this Node's grants for one swarm.
+// Relays revoke by subject, so revocation pushes derive it the same way.
+func (i *trackerGrantIssuer) subject(nodeID string, hash []byte) [16]byte {
+	message := append([]byte("arknet-tracker-subject-v1\x00"+nodeID+"\x00"), hash...)
+	sum := sha256.Sum256(ed25519.Sign(i.privateKey, message))
+	var out [16]byte
+	copy(out[:], sum[:16])
+	return out
 }

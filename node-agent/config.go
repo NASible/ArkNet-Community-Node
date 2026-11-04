@@ -35,6 +35,7 @@ type config struct {
 	releaseIndexAllowHTTP     bool
 	trackerOrigin             string
 	globalLogin               *globalLoginConfig
+	relayList                 *relayListConfig
 }
 
 func loadConfig(getenv func(string) string) (config, error) {
@@ -131,6 +132,9 @@ func loadConfig(getenv func(string) string) (config, error) {
 		return config{}, err
 	}
 	cfg.globalLogin = globalLogin
+	if cfg.relayList, err = loadRelayListConfig(getenv, cfg.coreURL); err != nil {
+		return config{}, err
+	}
 	if value := getenv("JELLYFIN_API_URL"); value != "" {
 		if _, err := url.ParseRequestURI(value); err != nil {
 			return config{}, fmt.Errorf("JELLYFIN_API_URL must be a valid URL")

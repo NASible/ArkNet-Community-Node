@@ -155,6 +155,9 @@ func (s *Signer) KeyID() KeyID                 { return s.id }
 func (s *Signer) OfflineWindow() time.Duration { return s.offline }
 func (s *Signer) PublicKey() ed25519.PublicKey { return s.key.Public().(ed25519.PublicKey) }
 
+// PrivateKey is exposed only so Core can refuse to reuse it for another purpose.
+func (s *Signer) PrivateKey() ed25519.PrivateKey { return s.key }
+
 // Issue signs one assertion. The caller must already have authenticated the
 // user, checked the membership and claimed the nonce.
 func (s *Signer) Issue(nodeID, memberID string, role memberships.Role, nonce, challenge [32]byte) (string, Claims, error) {
