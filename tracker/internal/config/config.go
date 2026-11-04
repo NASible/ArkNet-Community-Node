@@ -24,6 +24,7 @@ type Config struct {
 	PeerTTL          time.Duration
 	ShutdownTimeout  time.Duration
 	VerifyKey        ed25519.PublicKey
+	RelayVerifyKeys  []ed25519.PublicKey
 }
 
 func Load() (Config, error) {
@@ -42,6 +43,9 @@ func Load() (Config, error) {
 		return result, fmt.Errorf("verification key must be canonical padded base64 for exactly 32 bytes")
 	}
 	result.VerifyKey = append(ed25519.PublicKey(nil), decoded...)
+	if result.RelayVerifyKeys, err = loadRelayKeys(strings.TrimSpace(os.Getenv("ARKNET_TRACKER_RELAY_VERIFY_KEYS_FILE")), result.VerifyKey); err != nil {
+		return Config{}, err
+	}
 
 	result.BindAddr = envOrDefault("ARKNET_TRACKER_BIND_ADDR", defaultBindAddr)
 	if err := validateAddress(result.BindAddr); err != nil {

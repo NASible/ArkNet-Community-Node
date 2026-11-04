@@ -84,11 +84,15 @@ any peer-state mutation, including for `stopped` announces.
 The service accepts the standard optional fields emitted by libtorrent 2.x,
 validates duplicates and numeric values strictly, caps `numwant`, bounds each
 swarm's peer records, expires stale peers, and returns compact IPv4 `peers` and
-IPv6 `peers6` values. It uses the socket source address and does not trust
-client-supplied or forwarded IP fields.
+an empty `peers6` value. It never reads or stores socket source addresses,
+forwarded addresses or the announced port. Complete peers must include a
+relay-signed `endpoint_token`, bound to their grant subject and full v2 hash.
+The tracker verifies it with configured relay public keys. Forged, expired,
+other-subject and other-hash tokens are rejected before state mutation. An
+announce without a token is accepted only for downloaders, never advertised.
 
 Only complete peers are advertised. These are peers announcing `left == 0` with
-a signed `seed` action. A Node that is still downloading is counted in
+a signed `seed` action and a valid relay endpoint token. A Node that is still downloading is counted in
 `incomplete`, but its address is never returned to anyone. So receiving never
 lets another peer request a Node's partial pieces. Downloaders connect to
 seeds, seeds never need downloader addresses, and Peer Serving stays opt-in.
@@ -98,10 +102,16 @@ DHT, PEX, local peer discovery, user directory, or arbitrary tracker proxy.
 Tracker state is deliberately in memory; restarting it discards peer presence
 and clients repopulate swarms on their next authorized announce. For each live
 record it keeps only the full v2 hash, 16-byte opaque pairwise subject, peer ID,
-observed IP address, announced port, complete/incomplete bit, and last-seen time.
+verified virtual IPv4 endpoint (complete peers only), complete/incomplete bit,
+last-seen time and the earlier grant/endpoint-token expiry. No origin address
+is retained, including for downloaders.
 Those fields are needed to isolate the swarm, enforce record ownership, return
 peers, count completion, and expire stale records; none are written to logs or
 durable storage.
+
+See [relay endpoint tokens](relay-endpoint-tokens.md) for the relay-signed
+registration token format and deployment boundary. Node announce injection
+follows in Prompt 48D; legacy tokenless seeds now fail closed.
 
 ## Configuration
 
@@ -123,6 +133,7 @@ Tracker configuration:
 ```dotenv
 ARKNET_TRACKER_BIND_ADDR=0.0.0.0:6969
 ARKNET_TRACKER_VERIFY_KEY_FILE=/run/secrets/arknet-tracker-verify-key
+ARKNET_TRACKER_RELAY_VERIFY_KEYS_FILE=/run/config/relay-endpoint-public-keys
 ARKNET_TRACKER_ANNOUNCE_INTERVAL=30m
 ARKNET_TRACKER_PEER_TTL=45m
 ARKNET_TRACKER_SHUTDOWN_TIMEOUT=10s
@@ -134,10 +145,8 @@ contains canonical padded-base64 for its 32-byte public key. Mount the private
 file only into Core and the public file only into the tracker.
 
 The tracker serves plain HTTP itself. Production deployments must terminate TLS
-without writing request paths or query strings to access logs. Because source
-addresses determine advertised peers, do not put it behind a proxy that hides
-client addresses unless a separately reviewed, trusted source-address design is
-implemented.
+without writing request paths or query strings to access logs. Origin addresses are irrelevant to
+peer selection; a proxy does not need to preserve or forward them.
 
 ## Minimal metadata and logs
 
@@ -145,7 +154,7 @@ Runtime peer state contains only:
 
 - full v2 swarm hash (in memory)
 - 20-byte peer ID
-- source IP and announced port
+- relay-verified virtual IPv4 endpoint (complete peers only; no origin IP or port)
 - completion flag
 - last-seen time
 

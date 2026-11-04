@@ -4,10 +4,10 @@
 // Wire protocol, after TLS: the client sends one JSON line (at most
 // HeaderLimit bytes) and the relay answers with JSON lines.
 //
-//	{"op":"listen","grant":SEED}            -> {"endpoint":"100.x.y.z:p","expires_at":N}
+//	{"op":"listen","grant":SEED}            -> {"endpoint":"100.x.y.z:p","endpoint_token":T,"expires_at":N}
 //	    then the connection is the seeder's control channel:
 //	    relay -> {"op":"incoming","session":ID}
-//	    seeder -> {"op":"renew","grant":SEED}  -> {"op":"renewed","expires_at":N}
+//	    seeder -> {"op":"renew","grant":SEED}  -> {"op":"renewed","endpoint_token":T,"expires_at":N}
 //	{"op":"connect","endpoint":E,"grant":DOWNLOAD} -> {"ok":true} then raw bytes
 //	{"op":"accept","session":ID,"grant":SEED}      -> {"ok":true} then raw bytes
 //	{"op":"renew","grant":G}                       -> {"op":"renewed","expires_at":N}
@@ -40,6 +40,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"arknet.local/relay/internal/endpointtoken"
 	"arknet.local/relay/internal/grant"
 )
 
@@ -53,6 +54,7 @@ const (
 
 type Config struct {
 	GrantKey                  ed25519.PublicKey
+	EndpointSigningKey        ed25519.PrivateKey
 	MaxGrantLifetime          time.Duration // Core's grant lifetime (5m)
 	MaxConnections            int
 	MaxPendingPerRegistration int
@@ -431,6 +433,12 @@ func (r *Relay) serveListen(conn *trackedConn, br *bufio.Reader, req request) {
 			break
 		}
 	}
+	token, err := endpointtoken.Sign(r.cfg.EndpointSigningKey, reg.endpoint, g.Subject, g.Hash, g.Expires)
+	if err != nil {
+		r.mu.Unlock()
+		r.refuse(conn, "unavailable")
+		return
+	}
 	// One registration per subject and swarm: a new one replaces the old.
 	var replaced *trackedConn
 	if old := r.byKey[key]; old != nil {
@@ -443,7 +451,7 @@ func (r *Relay) serveListen(conn *trackedConn, br *bufio.Reader, req request) {
 	if replaced != nil {
 		replaced.Close()
 	}
-	if reg.send(map[string]any{"endpoint": reg.endpoint, "expires_at": g.Expires.Unix()}) != nil {
+	if reg.send(map[string]any{"endpoint": reg.endpoint, "endpoint_token": token, "expires_at": g.Expires.Unix()}) != nil {
 		r.dropRegistration(reg)
 		return
 	}
@@ -457,7 +465,14 @@ func (r *Relay) serveListen(conn *trackedConn, br *bufio.Reader, req request) {
 			_ = reg.send(map[string]string{"error": "unauthorized"})
 			continue
 		}
-		_ = reg.send(map[string]any{"op": "renewed", "expires_at": renewed.Expires.Unix()})
+		token, err := endpointtoken.Sign(r.cfg.EndpointSigningKey, reg.endpoint, renewed.Subject, renewed.Hash, renewed.Expires)
+		if err != nil {
+			_ = reg.send(map[string]string{"error": "unavailable"})
+			break
+		}
+		if reg.send(map[string]any{"op": "renewed", "endpoint_token": token, "expires_at": renewed.Expires.Unix()}) != nil {
+			break
+		}
 	}
 	r.dropRegistration(reg)
 }

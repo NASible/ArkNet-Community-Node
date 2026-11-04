@@ -60,7 +60,11 @@ func newHarness(t *testing.T, tune func(*Config)) *harness {
 		t.Fatal(err)
 	}
 	h := &harness{t: t, private: private, clock: &clock{now: start}, logs: &syncBuffer{}}
-	cfg := Config{GrantKey: public, MaxGrantLifetime: 5 * time.Minute, MaxConnections: 64,
+	_, endpointKey, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := Config{EndpointSigningKey: endpointKey, GrantKey: public, MaxGrantLifetime: 5 * time.Minute, MaxConnections: 64,
 		HeaderTimeout: 2 * time.Second, AcceptTimeout: 2 * time.Second, SweepInterval: time.Hour,
 		Now: h.clock.Now, Logger: slog.New(slog.NewJSONHandler(h.logs, nil))}
 	if tune != nil {

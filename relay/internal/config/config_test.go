@@ -49,10 +49,16 @@ func writeCert(t *testing.T, dir string) (string, string) {
 func baseEnv(t *testing.T) map[string]string {
 	dir := t.TempDir()
 	cert, key := writeCert(t, dir)
+	_, endpoint, _ := ed25519.GenerateKey(nil)
+	endpointPath := filepath.Join(dir, "endpoint.key")
+	if err := os.WriteFile(endpointPath, []byte(base64.StdEncoding.EncodeToString(endpoint)), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	return map[string]string{
 		"ARKNET_RELAY_GRANT_VERIFY_KEY_FILE":      writeKey(t, dir, "grant.key"),
 		"ARKNET_RELAY_REVOCATION_VERIFY_KEY_FILE": writeKey(t, dir, "revocation.key"),
 		"ARKNET_RELAY_ID":                         "relay-dc-1",
+		"ARKNET_RELAY_ENDPOINT_SIGNING_KEY_FILE":  endpointPath,
 		"ARKNET_RELAY_TLS_CERT_FILE":              cert,
 		"ARKNET_RELAY_TLS_KEY_FILE":               key,
 	}
@@ -77,6 +83,7 @@ func TestDefaults(t *testing.T) {
 
 func TestRejectsUnsafeConfiguration(t *testing.T) {
 	for name, change := range map[string]func(map[string]string){
+		"no endpoint key":   func(e map[string]string) { delete(e, "ARKNET_RELAY_ENDPOINT_SIGNING_KEY_FILE") },
 		"no grant key":      func(e map[string]string) { delete(e, "ARKNET_RELAY_GRANT_VERIFY_KEY_FILE") },
 		"no revocation key": func(e map[string]string) { delete(e, "ARKNET_RELAY_REVOCATION_VERIFY_KEY_FILE") },
 		"same key for both": func(e map[string]string) {

@@ -3,13 +3,13 @@ package tracker
 import (
 	"crypto/ed25519"
 	"fmt"
-	"net"
 	"net/http"
 	"net/url"
 	"strconv"
 	"sync"
 	"time"
 
+	"arknet.local/tracker/internal/endpointtoken"
 	"arknet.local/tracker/internal/grant"
 )
 
@@ -22,8 +22,7 @@ type clockFunc func() time.Time
 
 type peer struct {
 	id               [20]byte
-	ip               net.IP
-	port             uint16
+	endpoint         [6]byte
 	complete         bool
 	seen             time.Time
 	grantExpiresUnix int64
@@ -31,6 +30,7 @@ type peer struct {
 
 type handler struct {
 	publicKey ed25519.PublicKey
+	relayKeys []ed25519.PublicKey
 	interval  time.Duration
 	peerTTL   time.Duration
 	now       clockFunc
@@ -38,13 +38,16 @@ type handler struct {
 	swarms    map[[32]byte]map[[16]byte]peer
 }
 
-func NewHandler(publicKey ed25519.PublicKey, interval, peerTTL time.Duration, now clockFunc) http.Handler {
+func NewHandler(publicKey ed25519.PublicKey, interval, peerTTL time.Duration, now clockFunc, relayKeys ...ed25519.PublicKey) http.Handler {
 	h := &handler{
 		publicKey: append(ed25519.PublicKey(nil), publicKey...),
 		interval:  interval,
 		peerTTL:   peerTTL,
 		now:       now,
 		swarms:    make(map[[32]byte]map[[16]byte]peer),
+	}
+	for _, key := range relayKeys {
+		h.relayKeys = append(h.relayKeys, append(ed25519.PublicKey(nil), key...))
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, _ *http.Request) {
@@ -83,6 +86,23 @@ func (h *handler) announce(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Validate endpoint authority before touching swarm state, including stops.
+	var endpoint [6]byte
+	expires := verified.ExpiresUnix
+	if request.endpointToken != "" {
+		claims, err := endpointtoken.Verify(request.endpointToken, h.relayKeys, verified.Subject, verified.Hash, now)
+		if err != nil {
+			writeFailure(w, http.StatusForbidden, "invalid relay endpoint")
+			return
+		}
+		if request.left == 0 {
+			endpoint = claims.Endpoint
+			expires = min(expires, claims.ExpiresUnix)
+		}
+	} else if request.left == 0 || request.hasEndpointToken {
+		writeFailure(w, http.StatusForbidden, "relay endpoint required")
+		return
+	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	swarm := h.swarms[verified.Hash]
@@ -114,8 +134,8 @@ func (h *handler) announce(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		swarm[verified.Subject] = peer{
-			id: request.peerID, ip: request.ip, port: request.port,
-			complete: request.left == 0, seen: now, grantExpiresUnix: verified.ExpiresUnix,
+			id: request.peerID, endpoint: endpoint,
+			complete: request.left == 0, seen: now, grantExpiresUnix: expires,
 		}
 	}
 
@@ -135,15 +155,7 @@ func (h *handler) announce(w http.ResponseWriter, r *http.Request) {
 		if subject == verified.Subject || remaining == 0 || !candidate.complete {
 			continue
 		}
-		if ip4 := candidate.ip.To4(); ip4 != nil {
-			peers4 = append(peers4, ip4...)
-			peers4 = append(peers4, byte(candidate.port>>8), byte(candidate.port))
-		} else if ip6 := candidate.ip.To16(); ip6 != nil {
-			peers6 = append(peers6, ip6...)
-			peers6 = append(peers6, byte(candidate.port>>8), byte(candidate.port))
-		} else {
-			continue
-		}
+		peers4 = append(peers4, candidate.endpoint[:]...)
 		remaining--
 	}
 	w.Header().Set("Content-Type", "text/plain")
@@ -156,13 +168,13 @@ func (h *handler) announce(w http.ResponseWriter, r *http.Request) {
 }
 
 type announceRequest struct {
-	infoHash [20]byte
-	peerID   [20]byte
-	ip       net.IP
-	port     uint16
-	left     uint64
-	event    string
-	numWant  int
+	infoHash         [20]byte
+	peerID           [20]byte
+	endpointToken    string
+	hasEndpointToken bool
+	left             uint64
+	event            string
+	numWant          int
 }
 
 func parseAnnounce(r *http.Request) (announceRequest, error) {
@@ -172,7 +184,7 @@ func parseAnnounce(r *http.Request) (announceRequest, error) {
 		return result, err
 	}
 	allowed := map[string]bool{
-		"info_hash": true, "peer_id": true, "port": true, "uploaded": true,
+		"endpoint_token": true, "info_hash": true, "peer_id": true, "port": true, "uploaded": true,
 		"downloaded": true, "left": true, "compact": true, "event": true, "numwant": true,
 		"corrupt": true, "key": true, "no_peer_id": true, "supportcrypto": true, "redundant": true,
 	}
@@ -202,7 +214,13 @@ func parseAnnounce(r *http.Request) (announceRequest, error) {
 	if err != nil || port == 0 {
 		return result, fmt.Errorf("invalid port")
 	}
-	result.port = uint16(port)
+	if tokens, ok := values["endpoint_token"]; ok {
+		if len(tokens) != 1 || len(tokens[0]) > endpointtoken.MaxTokenBytes {
+			return result, fmt.Errorf("invalid endpoint_token")
+		}
+		result.hasEndpointToken = true
+		result.endpointToken = tokens[0]
+	}
 	for _, field := range []string{"uploaded", "downloaded"} {
 		if _, err := parseUnsigned(values, field, 64); err != nil {
 			return result, fmt.Errorf("invalid %s", field)
@@ -258,14 +276,6 @@ func parseAnnounce(r *http.Request) (announceRequest, error) {
 				return result, fmt.Errorf("invalid %s", name)
 			}
 		}
-	}
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		return result, fmt.Errorf("invalid remote address")
-	}
-	result.ip = net.ParseIP(host)
-	if result.ip == nil {
-		return result, fmt.Errorf("invalid remote address")
 	}
 	return result, nil
 }

@@ -42,7 +42,7 @@ func run() int {
 		logger.Error("listen_error", "listener", "control")
 		return 1
 	}
-	r := relay.New(relay.Config{GrantKey: cfg.GrantKey, MaxGrantLifetime: cfg.MaxGrantLifetime,
+	r := relay.New(relay.Config{EndpointSigningKey: cfg.EndpointSigningKey, GrantKey: cfg.GrantKey, MaxGrantLifetime: cfg.MaxGrantLifetime,
 		MaxConnections: cfg.MaxConnections, HeaderTimeout: 10 * time.Second, AcceptTimeout: 10 * time.Second,
 		SweepInterval: time.Second, Now: time.Now, Logger: logger})
 	controlServer := &http.Server{

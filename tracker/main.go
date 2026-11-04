@@ -30,7 +30,7 @@ func run() int {
 		logger.Error("listen_error", "error", err)
 		return 1
 	}
-	handler := trackerhttp.NewHandler(cfg.VerifyKey, cfg.AnnounceInterval, cfg.PeerTTL, time.Now)
+	handler := trackerhttp.NewHandler(cfg.VerifyKey, cfg.AnnounceInterval, cfg.PeerTTL, time.Now, cfg.RelayVerifyKeys...)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	logger.Info("tracker_started", "addr", listener.Addr().String(), "announce_interval", cfg.AnnounceInterval.String(), "peer_ttl", cfg.PeerTTL.String())

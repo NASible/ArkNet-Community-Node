@@ -35,7 +35,7 @@ func TestAnnounceRejectsInvalidGrantAndMismatchedTrackerKey(t *testing.T) {
 	now := time.Unix(2_000_000_000, 0)
 	var hash, otherHash [32]byte
 	hash[0], otherHash[0] = 1, 2
-	handler := NewHandler(publicKey, time.Minute, time.Minute, func() time.Time { return now })
+	handler := NewHandler(publicKey, time.Minute, time.Minute, func() time.Time { return now }, testRelayPublicKey())
 	tests := map[string]struct {
 		token  string
 		query  string
@@ -79,7 +79,7 @@ func TestAnnounceRejectsMalformedRequiredFields(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			values, _ := url.ParseQuery(base.Encode())
 			mutate(values)
-			response := announce(t, NewHandler(publicKey, time.Minute, time.Minute, func() time.Time { return now }), token, values.Encode(), "192.0.2.1:50000")
+			response := announce(t, NewHandler(publicKey, time.Minute, time.Minute, func() time.Time { return now }, testRelayPublicKey()), token, values.Encode(), "192.0.2.1:50000")
 			if response.Code != http.StatusBadRequest {
 				t.Fatalf("status = %d", response.Code)
 			}
@@ -102,7 +102,7 @@ func TestOnlyHealthAndAnnounceRoutesAreExposed(t *testing.T) {
 	}
 }
 
-func TestAnnounceReturnsOtherIPv4PeerFromRemoteAddressOnly(t *testing.T) {
+func TestAnnounceReturnsVerifiedRelayInsteadOfIPv4Origin(t *testing.T) {
 	publicKey, privateKey, err := ed25519.GenerateKey(nil)
 	if err != nil {
 		t.Fatal(err)
@@ -112,8 +112,8 @@ func TestAnnounceReturnsOtherIPv4PeerFromRemoteAddressOnly(t *testing.T) {
 	hash[0] = 7
 	firstToken := makeGrantForSubject(t, privateKey, hash, now.Add(time.Hour), subjectFor(1))
 	secondToken := makeGrantForSubject(t, privateKey, hash, now.Add(time.Hour), subjectFor(2))
-	handler := NewHandler(publicKey, time.Minute, 2*time.Minute, func() time.Time { return now })
-	firstQuery := seedQuery(hash, "-ARKNET-PEER-0000001", "6881")
+	handler := NewHandler(publicKey, time.Minute, 2*time.Minute, func() time.Time { return now }, testRelayPublicKey())
+	firstQuery := signedSeedQuery(hash, subjectFor(1), now.Add(time.Hour), "-ARKNET-PEER-0000001", "6881")
 	request := httptest.NewRequest(http.MethodGet, "/announce/"+firstToken+"?"+firstQuery, nil)
 	request.RemoteAddr = "192.0.2.10:50000"
 	request.Header.Set("X-Forwarded-For", "203.0.113.99")
@@ -124,14 +124,14 @@ func TestAnnounceReturnsOtherIPv4PeerFromRemoteAddressOnly(t *testing.T) {
 	}
 
 	second := announce(t, handler, secondToken, announceQuery(hash, "-ARKNET-PEER-0000002", "6882"), "192.0.2.11:50001")
-	want := append([]byte("d8:completei1e10:incompletei1e8:intervali60e5:peers6:"), []byte{192, 0, 2, 10, 0x1a, 0xe1}...)
+	want := append([]byte("d8:completei1e10:incompletei1e8:intervali60e5:peers6:"), []byte{100, 64, 1, 2, 0x1a, 0xe1}...)
 	want = append(want, []byte("6:peers60:e")...)
 	if !bytes.Equal(second.Body.Bytes(), want) {
 		t.Fatalf("body = %q, want %q", second.Body.Bytes(), want)
 	}
 }
 
-func TestAnnounceReturnsIPv6PeersSeparately(t *testing.T) {
+func TestAnnounceFromIPv6ReturnsOnlyVirtualIPv4Endpoint(t *testing.T) {
 	publicKey, privateKey, err := ed25519.GenerateKey(nil)
 	if err != nil {
 		t.Fatal(err)
@@ -141,12 +141,12 @@ func TestAnnounceReturnsIPv6PeersSeparately(t *testing.T) {
 	hash[0] = 8
 	firstToken := makeGrantForSubject(t, privateKey, hash, now.Add(time.Hour), subjectFor(1))
 	secondToken := makeGrantForSubject(t, privateKey, hash, now.Add(time.Hour), subjectFor(2))
-	handler := NewHandler(publicKey, time.Minute, 2*time.Minute, func() time.Time { return now })
-	announce(t, handler, firstToken, seedQuery(hash, "-ARKNET-PEER-0000001", "6881"), "[2001:db8::1]:50000")
+	handler := NewHandler(publicKey, time.Minute, 2*time.Minute, func() time.Time { return now }, testRelayPublicKey())
+	announce(t, handler, firstToken, signedSeedQuery(hash, subjectFor(1), now.Add(time.Hour), "-ARKNET-PEER-0000001", "6881"), "[2001:db8::1]:50000")
 	second := announce(t, handler, secondToken, announceQuery(hash, "-ARKNET-PEER-0000002", "6882"), "[2001:db8::2]:50001")
-	ipv6 := []byte{0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0x1a, 0xe1}
-	want := append([]byte("d8:completei1e10:incompletei1e8:intervali60e5:peers0:6:peers618:"), ipv6...)
-	want = append(want, 'e')
+	endpoint := []byte{100, 64, 1, 2, 0x1a, 0xe1}
+	want := append([]byte("d8:completei1e10:incompletei1e8:intervali60e5:peers6:"), endpoint...)
+	want = append(want, []byte("6:peers60:e")...)
 	if !bytes.Equal(second.Body.Bytes(), want) {
 		t.Fatalf("body = %q, want %q", second.Body.Bytes(), want)
 	}
@@ -213,7 +213,7 @@ func TestFullV2HashesWithSameTrackerKeyUseSeparateSwarms(t *testing.T) {
 		firstHash[index], secondHash[index] = byte(index), byte(index)
 	}
 	firstHash[31], secondHash[31] = 1, 2
-	handler := NewHandler(publicKey, time.Minute, time.Minute, func() time.Time { return now })
+	handler := NewHandler(publicKey, time.Minute, time.Minute, func() time.Time { return now }, testRelayPublicKey())
 	announce(t, handler, makeGrant(t, privateKey, firstHash, now.Add(time.Hour)), announceQuery(firstHash, "-ARKNET-PEER-0000001", "6881"), "192.0.2.10:50000")
 	second := announce(t, handler, makeGrant(t, privateKey, secondHash, now.Add(time.Hour)), announceQuery(secondHash, "-ARKNET-PEER-0000002", "6882"), "192.0.2.11:50001")
 	if !bytes.Contains(second.Body.Bytes(), []byte("10:incompletei1e")) || !bytes.Contains(second.Body.Bytes(), []byte("5:peers0:")) {
@@ -232,7 +232,7 @@ func TestGrantSubjectOwnsOnlyOnePeerRecord(t *testing.T) {
 	var subject [16]byte
 	subject[0] = 1
 	token := makeGrantForSubject(t, privateKey, hash, now.Add(time.Hour), subject)
-	handler := NewHandler(publicKey, time.Minute, time.Minute, func() time.Time { return now })
+	handler := NewHandler(publicKey, time.Minute, time.Minute, func() time.Time { return now }, testRelayPublicKey())
 	first := announce(t, handler, token, announceQuery(hash, "-ARKNET-PEER-0000001", "6881"), "192.0.2.10:50000")
 	if first.Code != http.StatusOK {
 		t.Fatalf("first status = %d", first.Code)
@@ -255,7 +255,7 @@ func TestDifferentGrantSubjectCannotOverwritePeerID(t *testing.T) {
 	firstSubject[0], secondSubject[0] = 1, 2
 	firstToken := makeGrantForSubject(t, privateKey, hash, now.Add(time.Hour), firstSubject)
 	secondToken := makeGrantForSubject(t, privateKey, hash, now.Add(time.Hour), secondSubject)
-	handler := NewHandler(publicKey, time.Minute, time.Minute, func() time.Time { return now })
+	handler := NewHandler(publicKey, time.Minute, time.Minute, func() time.Time { return now }, testRelayPublicKey())
 	peerID := "-ARKNET-PEER-0000001"
 	announce(t, handler, firstToken, announceQuery(hash, peerID, "6881"), "192.0.2.10:50000")
 	response := announce(t, handler, secondToken, announceQuery(hash, peerID, "6999"), "192.0.2.11:50001")
@@ -277,9 +277,9 @@ func TestDifferentGrantSubjectCannotStopPeerID(t *testing.T) {
 	firstToken := makeGrantForSubject(t, privateKey, hash, now.Add(time.Hour), firstSubject)
 	secondToken := makeGrantForSubject(t, privateKey, hash, now.Add(time.Hour), secondSubject)
 	observerToken := makeGrantForSubject(t, privateKey, hash, now.Add(time.Hour), observerSubject)
-	handler := NewHandler(publicKey, time.Minute, time.Minute, func() time.Time { return now })
+	handler := NewHandler(publicKey, time.Minute, time.Minute, func() time.Time { return now }, testRelayPublicKey())
 	peerID := "-ARKNET-PEER-0000001"
-	announce(t, handler, firstToken, seedQuery(hash, peerID, "6881"), "192.0.2.10:50000") // a seed, so observable
+	announce(t, handler, firstToken, signedSeedQuery(hash, firstSubject, now.Add(time.Hour), peerID, "6881"), "192.0.2.10:50000") // a verified seed, so observable
 	stopped, _ := url.ParseQuery(announceQuery(hash, peerID, "6999"))
 	stopped.Set("event", "stopped")
 	response := announce(t, handler, secondToken, stopped.Encode(), "192.0.2.11:50001")
@@ -287,7 +287,7 @@ func TestDifferentGrantSubjectCannotStopPeerID(t *testing.T) {
 		t.Fatalf("stop status = %d, want %d", response.Code, http.StatusConflict)
 	}
 	observer := announce(t, handler, observerToken, announceQuery(hash, "-ARKNET-PEER-0000003", "6883"), "192.0.2.12:50002")
-	if !bytes.Contains(observer.Body.Bytes(), []byte{192, 0, 2, 10, 0x1a, 0xe1}) {
+	if !bytes.Contains(observer.Body.Bytes(), []byte{100, 64, 1, 2, 0x1a, 0xe1}) {
 		t.Fatalf("original peer was removed: %q", observer.Body.Bytes())
 	}
 }
@@ -341,12 +341,12 @@ func TestAnnounceCapsNumwantAtFifty(t *testing.T) {
 	now := time.Unix(2_000_000_000, 0)
 	var hash [32]byte
 	hash[0] = 10
-	handler := NewHandler(publicKey, time.Minute, time.Minute, func() time.Time { return now })
+	handler := NewHandler(publicKey, time.Minute, time.Minute, func() time.Time { return now }, testRelayPublicKey())
 	for index := 0; index < 55; index++ {
 		peerID := fmt.Sprintf("-ARKNET-PEER-%07d", index)
 		remote := fmt.Sprintf("192.0.2.%d:50000", index+1)
 		token := makeGrantForSubject(t, privateKey, hash, now.Add(time.Hour), subjectFor(uint64(index+1)))
-		response := announce(t, handler, token, seedQuery(hash, peerID, strconv.Itoa(6000+index)), remote)
+		response := announce(t, handler, token, signedSeedQuery(hash, subjectFor(uint64(index+1)), now.Add(time.Hour), peerID, strconv.Itoa(6000+index)), remote)
 		if response.Code != http.StatusOK {
 			t.Fatalf("peer %d status = %d", index, response.Code)
 		}
@@ -386,7 +386,10 @@ func TestAnnounceEnforcesGrantActionsFromRequestLeft(t *testing.T) {
 			token := makeGrantForSubjectAndActions(t, privateKey, hash, now.Add(time.Hour), subjectFor(1), testCase.actions)
 			values, _ := url.ParseQuery(announceQuery(hash, "-ARKNET-PEER-0000001", "6881"))
 			values.Set("left", testCase.left)
-			response := announce(t, NewHandler(publicKey, time.Minute, time.Minute, func() time.Time { return now }), token, values.Encode(), "192.0.2.10:50000")
+			if testCase.left == "0" {
+				values.Set("endpoint_token", endpointToken(testRelayPrivateKey(), hash, subjectFor(1), now.Add(time.Hour), [6]byte{100, 64, 1, 2, 0x1a, 0xe1}))
+			}
+			response := announce(t, NewHandler(publicKey, time.Minute, time.Minute, func() time.Time { return now }, testRelayPublicKey()), token, values.Encode(), "192.0.2.10:50000")
 			if response.Code != testCase.status {
 				t.Fatalf("status = %d, want %d; body = %q", response.Code, testCase.status, response.Body.Bytes())
 			}
@@ -403,7 +406,7 @@ func TestStoppedActionDenialOccursBeforeSwarmMutation(t *testing.T) {
 	var hash [32]byte
 	hash[0] = 16
 	owner := subjectFor(1)
-	handler := NewHandler(publicKey, time.Minute, time.Minute, func() time.Time { return now })
+	handler := NewHandler(publicKey, time.Minute, time.Minute, func() time.Time { return now }, testRelayPublicKey())
 	bothToken := makeGrantForSubjectAndActions(t, privateKey, hash, now.Add(time.Hour), owner, grant.ActionDownload|grant.ActionSeed)
 	peerID := "-ARKNET-PEER-0000001"
 	if response := announce(t, handler, bothToken, announceQuery(hash, peerID, "6881"), "192.0.2.10:50000"); response.Code != http.StatusOK {
@@ -452,7 +455,7 @@ func TestAnnounceRejectsInvalidStandardOptionalFields(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			values, _ := url.ParseQuery(announceQuery(hash, "-ARKNET-PEER-0000001", "6881"))
 			values.Set(field[0], field[1])
-			response := announce(t, NewHandler(publicKey, time.Minute, time.Minute, func() time.Time { return now }), token, values.Encode(), "192.0.2.1:50000")
+			response := announce(t, NewHandler(publicKey, time.Minute, time.Minute, func() time.Time { return now }, testRelayPublicKey()), token, values.Encode(), "192.0.2.1:50000")
 			if response.Code != http.StatusBadRequest {
 				t.Fatalf("status = %d", response.Code)
 			}
@@ -469,7 +472,7 @@ func TestAnnounceRejectsDuplicateOptionalField(t *testing.T) {
 	var hash [32]byte
 	token := makeGrant(t, privateKey, hash, now.Add(time.Hour))
 	query := announceQuery(hash, "-ARKNET-PEER-0000001", "6881") + "&key=deadbeef&key=cafebabe"
-	response := announce(t, NewHandler(publicKey, time.Minute, time.Minute, func() time.Time { return now }), token, query, "192.0.2.1:50000")
+	response := announce(t, NewHandler(publicKey, time.Minute, time.Minute, func() time.Time { return now }, testRelayPublicKey()), token, query, "192.0.2.1:50000")
 	if response.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d", response.Code)
 	}
@@ -487,7 +490,7 @@ func TestIncompletePeersAreNeverAdvertised(t *testing.T) {
 	now := time.Unix(2_000_000_000, 0)
 	var hash [32]byte
 	hash[0] = 21
-	handler := NewHandler(publicKey, time.Minute, time.Minute, func() time.Time { return now })
+	handler := NewHandler(publicKey, time.Minute, time.Minute, func() time.Time { return now }, testRelayPublicKey())
 	downloadOnly := func(index uint64) string {
 		return makeGrantForSubjectAndActions(t, privateKey, hash, now.Add(time.Hour), subjectFor(index), grant.ActionDownload)
 	}
@@ -497,12 +500,12 @@ func TestIncompletePeersAreNeverAdvertised(t *testing.T) {
 		t.Fatalf("downloader advertised to another downloader: %q", second.Body.Bytes())
 	}
 	seedToken := makeGrantForSubjectAndActions(t, privateKey, hash, now.Add(time.Hour), subjectFor(3), grant.ActionSeed)
-	seed := announce(t, handler, seedToken, seedQuery(hash, "-ARKNET-PEER-0000003", "6883"), "192.0.2.12:50002")
+	seed := announce(t, handler, seedToken, signedSeedQuery(hash, subjectFor(3), now.Add(time.Hour), "-ARKNET-PEER-0000003", "6883"), "192.0.2.12:50002")
 	if want := "d8:completei1e10:incompletei2e8:intervali60e5:peers0:6:peers60:e"; seed.Body.String() != want {
 		t.Fatalf("downloaders advertised to a seed: %q", seed.Body.Bytes())
 	}
 	third := announce(t, handler, downloadOnly(1), announceQuery(hash, "-ARKNET-PEER-0000001", "6881"), "192.0.2.10:50000")
-	want := append([]byte("d8:completei1e10:incompletei2e8:intervali60e5:peers6:"), []byte{192, 0, 2, 12, 0x1a, 0xe3}...)
+	want := append([]byte("d8:completei1e10:incompletei2e8:intervali60e5:peers6:"), []byte{100, 64, 1, 2, 0x1a, 0xe3}...)
 	want = append(want, []byte("6:peers60:e")...)
 	if !bytes.Equal(third.Body.Bytes(), want) {
 		t.Fatalf("downloader must learn only the seed: %q", third.Body.Bytes())

@@ -26,6 +26,7 @@ services:
       ARKNET_RELAY_ID: ${ARKNET_RELAY_ID:?Set this relay's ID (a-z, 0-9, '.', '-')}
       ARKNET_RELAY_GRANT_VERIFY_KEY_FILE: /run/secrets/arknet-relay-grant-verify-key
       ARKNET_RELAY_REVOCATION_VERIFY_KEY_FILE: /run/secrets/arknet-relay-revocation-verify-key
+      ARKNET_RELAY_ENDPOINT_SIGNING_KEY_FILE: /run/secrets/arknet-relay-endpoint-signing-key
       ARKNET_RELAY_TLS_CERT_FILE: /run/secrets/arknet-relay-tls-cert
       ARKNET_RELAY_TLS_KEY_FILE: /run/secrets/arknet-relay-tls-key
       ARKNET_RELAY_MAX_CONNECTIONS: ${ARKNET_RELAY_MAX_CONNECTIONS:-4096}
@@ -39,6 +40,10 @@ services:
       - type: bind
         source: ${ARKNET_RELAY_REVOCATION_VERIFY_KEY_FILE:?Set the host path to Core's relay-revocation verification key}
         target: /run/secrets/arknet-relay-revocation-verify-key
+        read_only: true
+      - type: bind
+        source: ${ARKNET_RELAY_ENDPOINT_SIGNING_KEY_FILE:?Set the host path to this relay's dedicated endpoint signing private key}
+        target: /run/secrets/arknet-relay-endpoint-signing-key
         read_only: true
       - type: bind
         source: ${ARKNET_RELAY_TLS_CERT_FILE:?Set the host path to the relay TLS certificate chain}

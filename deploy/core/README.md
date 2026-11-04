@@ -176,7 +176,10 @@ curl --fail http://127.0.0.1:${ARKNET_TRACKER_PORT:-6969}/health
 
 The host publication is loopback-only for development. Production must put the
 tracker behind an HTTPS endpoint that does not log credential-bearing announce
-paths and preserves peer source addresses. The tracker is attached only to its
+paths or query strings. It no longer uses or stores peer source addresses
+(Prompt 48C): `ARKNET_TRACKER_RELAY_VERIFY_KEYS_FILE` must name a host file
+containing the operator relays’ endpoint-signing public keys, one padded-base64
+key per line. Only signed virtual relay endpoints are advertised. The tracker is attached only to its
 own `tracker-edge` network; it receives no database password or Core credential.
 See [private tracker design and grant format](../../docs/private-tracker.md).
 

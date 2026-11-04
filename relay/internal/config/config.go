@@ -15,21 +15,22 @@ import (
 )
 
 type Config struct {
-	BindAddr         string
-	ControlBindAddr  string
-	RelayID          string
-	GrantKey         ed25519.PublicKey
-	RevocationKey    ed25519.PublicKey
-	Certificate      tls.Certificate
-	MaxConnections   int
-	MaxGrantLifetime time.Duration
-	ShutdownTimeout  time.Duration
+	BindAddr           string
+	ControlBindAddr    string
+	RelayID            string
+	GrantKey           ed25519.PublicKey
+	EndpointSigningKey ed25519.PrivateKey
+	RevocationKey      ed25519.PublicKey
+	Certificate        tls.Certificate
+	MaxConnections     int
+	MaxGrantLifetime   time.Duration
+	ShutdownTimeout    time.Duration
 }
 
 var relayIDPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9.-]{0,63}$`)
 
-// Load reads the relay configuration. Every key file uses the tracker's
-// format: canonical padded base64 of a 32-byte Ed25519 public key.
+// Load reads canonical padded base64 Ed25519 keys: 32-byte public verify
+// keys and a dedicated, internally consistent 64-byte endpoint private key.
 func Load(getenv func(string) string) (Config, error) {
 	get := func(name string) string { return strings.TrimSpace(getenv(name)) }
 	var cfg Config
@@ -42,6 +43,13 @@ func Load(getenv func(string) string) (Config, error) {
 	}
 	if bytes.Equal(cfg.GrantKey, cfg.RevocationKey) {
 		return Config{}, fmt.Errorf("the revocation key must not be the grant key")
+	}
+	if cfg.EndpointSigningKey, err = endpointSigningKey(get("ARKNET_RELAY_ENDPOINT_SIGNING_KEY_FILE")); err != nil {
+		return Config{}, err
+	}
+	endpointPublic := cfg.EndpointSigningKey.Public().(ed25519.PublicKey)
+	if bytes.Equal(endpointPublic, cfg.GrantKey) || bytes.Equal(endpointPublic, cfg.RevocationKey) {
+		return Config{}, fmt.Errorf("endpoint signing key must be distinct from grant and revocation keys")
 	}
 	cfg.RelayID = get("ARKNET_RELAY_ID")
 	if !relayIDPattern.MatchString(cfg.RelayID) {
@@ -77,6 +85,26 @@ func Load(getenv func(string) string) (Config, error) {
 		return Config{}, err
 	}
 	return cfg, nil
+}
+
+func endpointSigningKey(path string) (ed25519.PrivateKey, error) {
+	const name = "ARKNET_RELAY_ENDPOINT_SIGNING_KEY_FILE"
+	if path == "" {
+		return nil, fmt.Errorf("%s is required", name)
+	}
+	encoded, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", name, err)
+	}
+	text := strings.Trim(string(encoded), " \t\r\n")
+	decoded, err := base64.StdEncoding.DecodeString(text)
+	if err != nil || len(decoded) != ed25519.PrivateKeySize || base64.StdEncoding.EncodeToString(decoded) != text {
+		return nil, fmt.Errorf("%s must hold canonical padded base64 for exactly 64 bytes", name)
+	}
+	if !bytes.Equal(decoded, ed25519.NewKeyFromSeed(decoded[:ed25519.SeedSize])) {
+		return nil, fmt.Errorf("%s contains an inconsistent private key", name)
+	}
+	return ed25519.PrivateKey(decoded), nil
 }
 
 func publicKey(path, name string) (ed25519.PublicKey, error) {

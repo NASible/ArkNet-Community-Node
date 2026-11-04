@@ -36,7 +36,7 @@ and the relay answers with JSON lines:
 
 | Request | Grant | Success |
 | --- | --- | --- |
-| `{"op":"listen","grant":G}` | seed | `{"endpoint":"100.x.y.z:p","expires_at":N}`, then the control channel: relay sends `{"op":"incoming","session":ID}`; the seeder may send `{"op":"renew","grant":G}` → `{"op":"renewed","expires_at":N}` |
+| `{"op":"listen","grant":G}` | seed | `{"endpoint":"100.x.y.z:p","endpoint_token":T,"expires_at":N}`, then the control channel: relay sends `{"op":"incoming","session":ID}`; the seeder may send `{"op":"renew","grant":G}` → `{"op":"renewed","endpoint_token":T,"expires_at":N}` |
 | `{"op":"connect","endpoint":E,"grant":G}` | download, same info hash | `{"ok":true}`, then raw bytes |
 | `{"op":"accept","session":ID,"grant":G}` | the registered seeder's seed grant | `{"ok":true}`, then raw bytes |
 | `{"op":"renew","grant":G}` | either | `{"op":"renewed","expires_at":N}` |
@@ -46,6 +46,25 @@ action, too long, or revoked), `{"error":"no_route"}` (no such endpoint, or
 another info hash), or `{"error":"unavailable"}` (seeder did not accept within
 10 s, or too many pending sessions), then close. Unknown operations, oversized
 or late headers close without an answer. A session ID is single use.
+
+## Endpoint attestations (48C)
+
+Listen registration and seeder control-channel renewal return `endpoint_token`.
+The tracker can verify this bearer attestation using the relay's endpoint public
+key; it is not a grant and cannot authorize relay connections. Its expiry is
+exactly the seed grant expiry presented on that request, not the maximum grant
+expiry remembered for live sessions. One-line renewal does not issue an endpoint
+token because it is not bound to a registration.
+
+```text
+token   = rawURLbase64(payload) "." rawURLbase64(Ed25519(key, "ARKNET-RELAY-ENDPOINT-V1\x00" || payload))
+payload = version(1)=1 | expires_at(u64 BE, Unix s) | subject[16] | full_infohash[32] | IPv4[4] | port(u16 BE)
+```
+
+The payload is exactly 63 bytes; endpoint addresses must be canonical IPv4 in
+`100.64.0.0/10`, port 1024–65535. No IPv6 or mapped IPv6 is accepted. The private
+key is relay-only: configure only its public half on the tracker. A shared golden
+vector is pinned in `internal/endpointtoken/endpointtoken_test.go`.
 
 ## Revocations
 
@@ -70,6 +89,7 @@ byte-compatible by a golden test in both modules).
 | --- | --- | --- |
 | `ARKNET_RELAY_GRANT_VERIFY_KEY_FILE` | required | Core's tracker-grant public key (the tracker's verification key file). Canonical padded base64 of 32 bytes |
 | `ARKNET_RELAY_REVOCATION_VERIFY_KEY_FILE` | required | Core's relay-revocation public key, same format; must differ from the grant key |
+| `ARKNET_RELAY_ENDPOINT_SIGNING_KEY_FILE` | required | Dedicated Ed25519 private key: canonical padded base64 of 64 bytes, with a consistent seed/public half; public half must differ from both verification keys |
 | `ARKNET_RELAY_ID` | required | 1–64 of `a-z 0-9 . -`; the revocation audience |
 | `ARKNET_RELAY_TLS_CERT_FILE`, `ARKNET_RELAY_TLS_KEY_FILE` | required | PEM certificate chain and key; TLS 1.3 only |
 | `ARKNET_RELAY_BIND_ADDR` | `127.0.0.1:7443` | Relay (TLS) listener |
@@ -82,7 +102,7 @@ At most 64 sessions may wait for one seeder to accept.
 
 ## Logging
 
-JSON logs carry event names, reasons and counts only: never addresses, grants,
+JSON logs carry event names, reasons and counts only: never addresses, grants, endpoint tokens,
 info hashes, subjects, endpoints or session IDs (tested in
 `internal/relay` and by the process test). The startup line reports the
 relay's own listen addresses.

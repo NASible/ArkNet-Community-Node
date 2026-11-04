@@ -102,12 +102,17 @@ func TestProcessServesTLS13RevokesOnSignedRequestAndStopsOnSIGTERM(t *testing.T)
 	}
 	grantKey := writeKeyPair(t, dir, "grant.pub")
 	revocationKey := writeKeyPair(t, dir, "revocation.pub")
+	_, endpointKey, _ := ed25519.GenerateKey(nil)
+	if err := os.WriteFile(filepath.Join(dir, "endpoint.key"), []byte(base64.StdEncoding.EncodeToString(endpointKey)), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	pool := writeCertificate(t, dir)
 	command := exec.Command(binary)
 	command.Env = append(os.Environ(),
 		"ARKNET_RELAY_GRANT_VERIFY_KEY_FILE="+filepath.Join(dir, "grant.pub"),
 		"ARKNET_RELAY_REVOCATION_VERIFY_KEY_FILE="+filepath.Join(dir, "revocation.pub"),
 		"ARKNET_RELAY_ID=relay-test",
+		"ARKNET_RELAY_ENDPOINT_SIGNING_KEY_FILE="+filepath.Join(dir, "endpoint.key"),
 		"ARKNET_RELAY_TLS_CERT_FILE="+filepath.Join(dir, "cert.pem"),
 		"ARKNET_RELAY_TLS_KEY_FILE="+filepath.Join(dir, "key.pem"),
 		"ARKNET_RELAY_BIND_ADDR=127.0.0.1:0",
@@ -164,6 +169,22 @@ func TestProcessServesTLS13RevokesOnSignedRequestAndStopsOnSIGTERM(t *testing.T)
 		t.Fatalf("registration: %q %v", reply, err)
 	}
 
+	endpointToken, _ := registered["endpoint_token"].(string)
+	parts := strings.Split(endpointToken, ".")
+	if len(parts) != 2 {
+		t.Fatal("missing endpoint token")
+	}
+	payload, _ := base64.RawURLEncoding.DecodeString(parts[0])
+	signature, _ := base64.RawURLEncoding.DecodeString(parts[1])
+	if len(payload) != 63 || !ed25519.Verify(endpointKey.Public().(ed25519.PublicKey), append([]byte("ARKNET-RELAY-ENDPOINT-V1\x00"), payload...), signature) {
+		t.Fatal("invalid process endpoint signature")
+	}
+	grantParts := strings.Split(token, ".")
+	grantPayload, _ := base64.RawURLEncoding.DecodeString(grantParts[0])
+	if string(payload[1:9]) != string(grantPayload[1:9]) {
+		t.Fatal("endpoint expiry differs from grant")
+	}
+
 	// A revocation signed with the grant key is refused; Core's revocation key works.
 	wrongKey, _ := revocation.Sign(grantKey, "relay-test", [16]byte{1}, time.Now(), [][16]byte{subject})
 	if resp, _ := http.Post(controlBase+"/api/relay/v1/revocations", "text/plain", strings.NewReader(wrongKey)); resp == nil || resp.StatusCode != 401 {
@@ -197,7 +218,7 @@ func TestProcessServesTLS13RevokesOnSignedRequestAndStopsOnSIGTERM(t *testing.T)
 		t.Fatalf("missing events: %s", text)
 	}
 	for _, value := range []string{token[:30], hex.EncodeToString(subject[:]), registered["endpoint"].(string),
-		conn.LocalAddr().String(), signed[:30]} {
+		conn.LocalAddr().String(), signed[:30], endpointToken} {
 		if strings.Contains(text, value) {
 			t.Errorf("log contains %q", value)
 		}
