@@ -22,6 +22,7 @@ Architecture, development, and operations documentation belongs here.
 - [Node operator authentication](node-operator-authentication.md): design for operator accounts, bootstrap, sessions, the route permission matrix and shell recovery (ARKSEC-002; not yet implemented).
 - [Global member login on a Node](cached-global-authorization.md): Core-bound login, offline login during Core outages, and reconnect refresh.
 - [Node revocation](node-revocation.md): what a revoked Node stops, how fast, and the residual window for a Node that ignores revocation.
+- [Private relay design](private-relay-design.md): Prompt 48 spike comparing relay options, with measurements and open questions (ARKSEC-004, D5).
 - [Global login assertions](global-login-assertions.md): design for Core-bound login without password transit, and the offline model (ARKSEC-001; implemented in 46A and 46B).
 - [Primary home node](home-node.md): Core-only home-node relationship, explicit change, and routing access.
 - [Media routing](media-routing.md): home-node-or-Core decision from Core-observed health and verified replicas.

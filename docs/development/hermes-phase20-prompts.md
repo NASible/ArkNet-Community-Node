@@ -39,7 +39,7 @@ prompt that depends on an undecided item must stop and ask, not assume.
 | D2 | How Node operators authenticate | **Confirmed 2026-10-27:** Node-local operator accounts that work offline, password plus TOTP first (passkeys later), one operator role. Optional OIDC (for example Authentik) only as an add-on for operators who run an IdP. Community Nodes must not depend on one person's IdP. Details and the other Prompt 45 answers: [operator authentication decisions](../node-operator-authentication.md#decisions). | 45 |
 | D3 | How long global users can log in offline | **Confirmed 2026-10-29:** at most 30 days on a Node since the last online verification. Core may set a shorter limit per Node or per user. See [global login decisions](../global-login-assertions.md#decisions). | 46 |
 | D4 | First login for a global user on a Node | Redirect to Core, which requires Core to be reachable once per Node per offline window. Adopted with the Prompt 46 decisions (Core login page, Node-registered callback). | 46 |
-| D5 | Who operates the private relay | Decided by the 48 design spike, not up front. | 48 |
+| D5 | Who operates the private relay | **Confirmed 2026-11-03:** the ArkNet operator runs most relays; community-run relays only as one hop of a two-hop path through an operator relay, end-to-end encrypted to it, admitted by Core (48E). No direct mode in the first release. See [relay decisions](../private-relay-design.md#decisions-confirmed-2026-11-03). | 48 |
 
 ---
 
@@ -315,6 +315,126 @@ Acceptance criteria:
   open questions for the user.
 - No product code changes. Implementation prompts are written after the user
   accepts the design.
+
+Outcome: accepted 2026-11-03 (D5). Implementation prompts follow.
+
+## Prompt 48A — Relay Service
+
+Context: [private relay design](../private-relay-design.md), option A. The
+spike in `scripts/spikes/private-relay/` is a reference only; do not copy it
+without tests.
+
+Task:
+
+1. Add a `relay/` Go module (standard library only, like `tracker/`):
+   - TLS 1.3 listener; a seeder registers with a Core-signed **seed** grant
+     (existing tracker grant format, verified with Core's public key) and
+     gets a random virtual endpoint in `100.64.0.0/10`;
+   - a downloader connects to an endpoint with a **download** grant for the
+     same info hash; the relay splices the two streams;
+   - sessions and registrations end at grant expiry unless renewed on the
+     control channel with a fresh grant;
+   - bounded header sizes, connection counts and accept timeouts;
+   - no persistence; logs carry no addresses, grants, hashes, subjects or
+     endpoints (same rule as the tracker).
+2. A Core-authenticated revocation endpoint: Core sends a signed list of
+   pairwise subjects; the relay closes their registrations and sessions at
+   once and refuses them until their grants could have expired.
+3. Container image, Compose overlay under `deploy/core/`, README.
+
+Acceptance criteria:
+
+- Unit tests: grant verification (action, hash binding, expiry, signature),
+  endpoint routing, wrong-hash and wrong-action refusal, expiry closes live
+  sessions, renewal extends them, signed revocation closes them and refuses
+  reconnects, unsigned or replayed revocations are rejected, limits enforced.
+- A log check proves no address, grant or subject is logged.
+- Mutation-check the authorization and revocation guards.
+
+## Prompt 48B — Core: Relay List and Revocation Push
+
+Task:
+
+1. Core configuration lists the operator relays (URL plus pinned
+   certificate or key). Core serves a **signed relay list** on the
+   federation API; Nodes fetch it with their heartbeat refresh.
+2. On revocation (and on BLOCKED), Core computes the revoked Node's pairwise
+   subjects for every catalog object and pushes a signed revocation to every
+   relay, retrying until each acknowledges. Failures are visible to the
+   admin and in logs (without subjects).
+3. A per-relay signing key for revocations, distinct from the tracker and
+   assertion keys.
+
+Acceptance criteria:
+
+- Tests: relay list signature and content; revocation reaches every relay;
+  retry after a relay outage; unrelated Nodes unaffected; keys distinct.
+
+## Prompt 48C — Tracker Advertises Relay Endpoints Only
+
+Context: decision 4 keeps the tracker separate. Proposed mechanism, to be
+confirmed by tests: the relay returns a **relay-signed endpoint token**
+(endpoint, subject, info hash, expiry) at registration; the seeder includes
+it in its announce; the tracker verifies it with the relay key and
+advertises that endpoint.
+
+Task:
+
+1. Complete peers are advertised only as verified relay endpoints, never as
+   the announce `RemoteAddr`. Announces without a valid endpoint token are
+   accepted for downloaders only and never advertised.
+2. The tracker stores no origin addresses.
+
+Acceptance criteria:
+
+- Tests: origins never appear in responses (IPv4 and IPv6); forged, expired
+  or other-hash endpoint tokens rejected; existing tracker tests updated.
+
+## Prompt 48D — Node Connector, Fail-Closed Transfers, and E2E
+
+Task:
+
+1. A connector in the transfer container's network namespace (or inside the
+   transfer service): SOCKS5 side for libtorrent's outbound peers, listen
+   side dialing libtorrent on `127.0.0.1`. Grants come from the Agent.
+2. libtorrent: `proxy_type` SOCKS5 with `proxy_peer_connections`, uTP off,
+   `allow_multiple_connections_per_ip`, DHT/LSD/PEX off (already).
+3. The transfer container can reach only the connector, tracker and web seed
+   (Compose network design plus a check). No direct peer path exists.
+4. Fail closed: no relay reachable stops peer transfers; web seed continues.
+
+Acceptance criteria (ARKSEC-004 closure):
+
+- MVP E2E item 11 (A→B contribution) passes through the relay, and a capture
+  proves neither Node's Agent or transfer container received the other's
+  address (text and binary form), including BEP 10 `yourip`.
+- With every relay stopped, peer transfer stops and no direct connection is
+  attempted (packet or connection-level check).
+- Item 16 extended: revoking Node B closes its relayed peer session within a
+  stated bound (Core push), not only its web-seed transfer.
+- Close ARKSEC-004, citing the run. Update `docs/node-revocation.md`: the
+  open-peer-connection row of the malicious-Node window becomes bounded.
+
+## Prompt 48E — Design Spike: Community-Run Relays
+
+Context: decision 1 allows community relays only under the
+[conditions](../private-relay-design.md#conditions-for-community-run-relays)
+in the design. Depends on 48A–48D.
+
+Task:
+
+1. Design the two-hop path (community hop + operator hop), end-to-end
+   encryption to the operator relay, Core admission and revocation of
+   community relays.
+2. Throwaway spike in `scripts/spikes/`: prove at each hop which addresses
+   are visible, measure throughput, and measure the operator hop's egress
+   saving.
+
+Acceptance criteria:
+
+- The document shows no community relay sees both Nodes' addresses, grants
+  or info hashes, gives measured numbers, and lists open questions.
+- No product code changes.
 
 ---
 
