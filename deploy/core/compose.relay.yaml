@@ -1,0 +1,59 @@
+# Explicit private-relay overlay (Prompt 48A). The relay verifies Core's
+# tracker grants with the public key only, accepts revocations signed with a
+# separate Core revocation key, and has no database network or Core secret.
+services:
+  arknet-relay:
+    image: arknet-relay:0.0.1-dev
+    build:
+      context: ../../relay
+    environment:
+      ARKNET_RELAY_BIND_ADDR: 0.0.0.0:7443
+      ARKNET_RELAY_CONTROL_BIND_ADDR: 0.0.0.0:7080
+      ARKNET_RELAY_ID: ${ARKNET_RELAY_ID:?Set this relay's ID (a-z, 0-9, '.', '-')}
+      ARKNET_RELAY_GRANT_VERIFY_KEY_FILE: /run/secrets/arknet-relay-grant-verify-key
+      ARKNET_RELAY_REVOCATION_VERIFY_KEY_FILE: /run/secrets/arknet-relay-revocation-verify-key
+      ARKNET_RELAY_TLS_CERT_FILE: /run/secrets/arknet-relay-tls-cert
+      ARKNET_RELAY_TLS_KEY_FILE: /run/secrets/arknet-relay-tls-key
+      ARKNET_RELAY_MAX_CONNECTIONS: ${ARKNET_RELAY_MAX_CONNECTIONS:-4096}
+      ARKNET_RELAY_MAX_GRANT_LIFETIME: 5m
+      ARKNET_RELAY_SHUTDOWN_TIMEOUT: 10s
+    volumes:
+      - type: bind
+        source: ${ARKNET_RELAY_GRANT_VERIFY_KEY_FILE:?Set the host path to Core's tracker verification key}
+        target: /run/secrets/arknet-relay-grant-verify-key
+        read_only: true
+      - type: bind
+        source: ${ARKNET_RELAY_REVOCATION_VERIFY_KEY_FILE:?Set the host path to Core's relay-revocation verification key}
+        target: /run/secrets/arknet-relay-revocation-verify-key
+        read_only: true
+      - type: bind
+        source: ${ARKNET_RELAY_TLS_CERT_FILE:?Set the host path to the relay TLS certificate chain}
+        target: /run/secrets/arknet-relay-tls-cert
+        read_only: true
+      - type: bind
+        source: ${ARKNET_RELAY_TLS_KEY_FILE:?Set the host path to the relay TLS private key}
+        target: /run/secrets/arknet-relay-tls-key
+        read_only: true
+    ports:
+      # Nodes connect here. Publish on a public address deliberately.
+      - "${ARKNET_RELAY_PUBLISH_ADDR:-127.0.0.1}:${ARKNET_RELAY_PORT:-7443}:7443"
+      # Revocation endpoint for Core; keep it off public interfaces.
+      - "127.0.0.1:${ARKNET_RELAY_CONTROL_PORT:-7080}:7080"
+    networks:
+      - relay-edge
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:7080/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
+    stop_grace_period: 15s
+
+networks:
+  relay-edge:
+    driver: bridge

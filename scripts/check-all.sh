@@ -32,7 +32,7 @@ if [ -z "$LOGS" ]; then
     LOGS=$(mktemp -d "${TMPDIR:-/tmp}/arknet-check-all.XXXXXX")
 fi
 mkdir -p "$LOGS"
-GO_MODULES="core node-agent tracker transfer"
+GO_MODULES="core node-agent tracker transfer relay"
 WORKER_IMAGE="arknet-check-all-transfer:local"
 FAILED=""
 PASSED=0

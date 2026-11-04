@@ -180,6 +180,35 @@ paths and preserves peer source addresses. The tracker is attached only to its
 own `tracker-edge` network; it receives no database password or Core credential.
 See [private tracker design and grant format](../../docs/private-tracker.md).
 
+## Optional private relay overlay
+
+The relay (Prompt 48A, [relay README](../../relay/README.md)) splices
+Node-to-Node streams so Nodes never learn each other's addresses. It verifies
+Core's tracker grants with the **tracker verification key** and accepts
+session revocations signed with a separate **relay-revocation key** (Core
+signs these from Prompt 48B; until then, revocations can only be sent by
+whoever holds that private key). Set:
+
+```dotenv
+ARKNET_RELAY_ID=relay-dc-1
+ARKNET_RELAY_GRANT_VERIFY_KEY_FILE=/host/config/path/tracker-public.key
+ARKNET_RELAY_REVOCATION_VERIFY_KEY_FILE=/host/config/path/relay-revocation-public.key
+ARKNET_RELAY_TLS_CERT_FILE=/host/secret/path/relay-cert.pem
+ARKNET_RELAY_TLS_KEY_FILE=/host/secret/path/relay-key.pem
+```
+
+The key files use the tracker-key format; the relay refuses to start if both
+are the same key. UID 65534 must be able to read all four files. Then:
+
+```sh
+docker compose -f compose.yaml -f compose.relay.yaml up --build -d --wait
+```
+
+The relay port (7443, TLS 1.3) is published on loopback unless
+`ARKNET_RELAY_PUBLISH_ADDR` names a public address. The control port (7080:
+health and revocations) is always loopback-only. The relay is attached only to
+its own `relay-edge` network and receives no database password or Core secret.
+
 ## Optional Core-bound Node login
 
 Global members sign in to Nodes through Core's `/node-login` page. Core signs a
