@@ -23,13 +23,21 @@ const (
 	VerificationFailed State = "VERIFICATION_FAILED"
 )
 
+type Relay struct {
+	ID         string `json:"id"`
+	Address    string `json:"address"`
+	SPKISHA256 string `json:"spki_sha256"`
+}
+
 type Request struct {
-	ObjectID   string `json:"object_id"`
-	Size       int64  `json:"size"`
-	InfoHashV2 string `json:"info_hash_v2"`
-	TrackerURL string `json:"tracker_url"`
-	WebSeedURL string `json:"web_seed_url,omitempty"`
-	TorrentURL string `json:"torrent_url,omitempty"`
+	Relays             []Relay `json:"relays,omitempty"`
+	RelayListExpiresAt int64   `json:"relay_list_expires_at,omitempty"`
+	ObjectID           string  `json:"object_id"`
+	Size               int64   `json:"size"`
+	InfoHashV2         string  `json:"info_hash_v2"`
+	TrackerURL         string  `json:"tracker_url"`
+	WebSeedURL         string  `json:"web_seed_url,omitempty"`
+	TorrentURL         string  `json:"torrent_url,omitempty"`
 }
 type Status struct {
 	ObjectID       string `json:"object_id"`
@@ -204,11 +212,13 @@ func (c *Client) Cancel(ctx context.Context, id string) (Status, error) {
 // Agent-finalized object with a fresh Core seed grant. No file name or path is
 // sent: the service derives <object_id>.mp4 itself.
 type SeedRequest struct {
-	ObjectID   string `json:"object_id"`
-	Size       int64  `json:"size"`
-	InfoHashV2 string `json:"info_hash_v2"`
-	TrackerURL string `json:"tracker_url"`
-	TorrentURL string `json:"torrent_url"`
+	Relays             []Relay `json:"relays,omitempty"`
+	RelayListExpiresAt int64   `json:"relay_list_expires_at,omitempty"`
+	ObjectID           string  `json:"object_id"`
+	Size               int64   `json:"size"`
+	InfoHashV2         string  `json:"info_hash_v2"`
+	TrackerURL         string  `json:"tracker_url"`
+	TorrentURL         string  `json:"torrent_url"`
 }
 
 type SeedState string

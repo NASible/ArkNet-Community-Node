@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"arknet/transfer/engine"
 )
@@ -217,13 +218,22 @@ func (c *Client) Add(id string, size int64, hash string) (engine.Status, error) 
 }
 
 func (c *Client) AddWithAuthorization(id string, size int64, hash, trackerURL, webSeedURL, torrentURL string) (engine.Status, error) {
-	if !engine.ValidObjectID(id) || size < 0 || !engine.LowerHex(hash) {
+	return c.AddWithAuthorizationAndRelays(id, size, hash, trackerURL, webSeedURL, torrentURL, nil, 0)
+}
+
+// AddWithAuthorizationAndRelays replaces runtime relay authorization on add or
+// refresh. The legacy method remains available for web-seed-only callers.
+func (c *Client) AddWithAuthorizationAndRelays(id string, size int64, hash, trackerURL, webSeedURL, torrentURL string, relays []engine.Relay, expiresAt int64) (engine.Status, error) {
+	if !engine.ValidObjectID(id) || size < 0 || !engine.LowerHex(hash) || !engine.ValidRelays(relays, expiresAt, time.Now()) {
 		return engine.Status{}, engine.ErrInvalid
 	}
 	if !validTrackerURL(trackerURL, c.trackerOrigin) || !validWebSeedURL(webSeedURL, c.webSeedOrigin, id) || !validTorrentURL(torrentURL, c.webSeedOrigin, id) {
 		return engine.Status{}, engine.ErrInvalid
 	}
-	r, err := c.call("add", id, size, hash, trackerURL, webSeedURL, torrentURL)
+	request := map[string]any{"op": "add", "object_id": id, "size": size, "info_hash_v2": hash,
+		"tracker_url": trackerURL, "web_seed_url": webSeedURL, "torrent_url": torrentURL}
+	addRelayFields(request, relays, expiresAt)
+	r, err := c.roundTrip(request)
 	if err != nil {
 		return engine.Status{}, err
 	}
@@ -354,12 +364,19 @@ func validWorkerSeed(s workerSeed) bool {
 // <object_id>.mp4 in upload-only mode. The file name is derived here, never
 // accepted from a caller.
 func (c *Client) Seed(id string, size int64, hash, trackerURL, torrentURL string) (engine.SeedStatus, error) {
+	return c.SeedWithRelays(id, size, hash, trackerURL, torrentURL, nil, 0)
+}
+
+// SeedWithRelays supplies a replacement pinned relay list for a runtime seed.
+func (c *Client) SeedWithRelays(id string, size int64, hash, trackerURL, torrentURL string, relays []engine.Relay, expiresAt int64) (engine.SeedStatus, error) {
 	if !engine.ValidObjectID(id) || size < 0 || !engine.LowerHex(hash) ||
-		!validTrackerURL(trackerURL, c.trackerOrigin) || !validTorrentURL(torrentURL, c.webSeedOrigin, id) {
+		!validTrackerURL(trackerURL, c.trackerOrigin) || !validTorrentURL(torrentURL, c.webSeedOrigin, id) || !engine.ValidRelays(relays, expiresAt, time.Now()) {
 		return engine.SeedStatus{}, engine.ErrInvalid
 	}
-	r, err := c.roundTrip(map[string]any{"op": "seed", "object_id": id, "size": size, "info_hash_v2": hash,
-		"tracker_url": trackerURL, "torrent_url": torrentURL, "file_name": id + ".mp4"})
+	request := map[string]any{"op": "seed", "object_id": id, "size": size, "info_hash_v2": hash,
+		"tracker_url": trackerURL, "torrent_url": torrentURL, "file_name": id + ".mp4"}
+	addRelayFields(request, relays, expiresAt)
+	r, err := c.roundTrip(request)
 	if err != nil {
 		return engine.SeedStatus{}, err
 	}
@@ -367,6 +384,13 @@ func (c *Client) Seed(id string, size int64, hash, trackerURL, torrentURL string
 		return engine.SeedStatus{}, errors.New("invalid worker response")
 	}
 	return engine.SeedStatus{ObjectID: id, State: r.Seed.State}, nil
+}
+
+func addRelayFields(request map[string]any, relays []engine.Relay, expiresAt int64) {
+	if len(relays) > 0 {
+		request["relays"] = relays
+		request["relay_list_expires_at"] = expiresAt
+	}
 }
 
 // Unseed stops serving an object. It never deletes the media file.

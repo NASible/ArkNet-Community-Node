@@ -36,7 +36,11 @@ services:
       # Worker seed mode serves Agent-finalized files from here (upload-only).
       ARKNET_TRANSFER_MEDIA_DIR: /srv/arknet/media
       ARKNET_TRANSFER_WORKER: /usr/local/lib/arknet/worker.py
-      ARKNET_TRANSFER_LISTEN_INTERFACES: 0.0.0.0:${ARKNET_TRANSFER_PEER_PORT:-6881}
+      # The connector accepts relayed streams and dials libtorrent on loopback.
+      ARKNET_TRANSFER_LISTEN_INTERFACES: 127.0.0.1:${ARKNET_TRANSFER_PEER_PORT:-6881}
+      # Boot-time egress allowlist. Must match the approved signed relay list;
+      # absent/mismatched relays fail closed without disabling the web seed.
+      ARKNET_TRANSFER_RELAY_EGRESS: ${ARKNET_TRANSFER_RELAY_EGRESS:-}
       ARKNET_TRANSFER_DOWNLOAD_RATE_LIMIT: ${ARKNET_TRANSFER_DOWNLOAD_RATE_LIMIT:-0}
     volumes:
       - transfers:/srv/arknet/transfers
@@ -51,6 +55,13 @@ services:
       - /tmp:size=16m,mode=1777
     cap_drop:
       - ALL
+    # Required only by the root-owned startup initializer. It installs default-
+    # deny IPv4/IPv6 rules, then drops all caps and switches to UID/GID 10001.
+    cap_add:
+      - NET_ADMIN
+      - SETUID
+      - SETGID
+      - SETPCAP
     security_opt:
       - no-new-privileges:true
     healthcheck:

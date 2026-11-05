@@ -8,6 +8,10 @@ import (
 	"unicode/utf8"
 )
 
+// Sixteen bounded relay entries plus three bounded grant URLs fit in 16 KiB.
+// Requests without relay entries retain the existing 4 KiB limit.
+const maxRelayRequestBody = 16 * 1024
+
 // exactObject rejects unknown, duplicate (including escaped aliases), missing,
 // null, case-aliased fields, trailing values, and oversized bodies before use.
 func exactObject(r *http.Request, fields ...string) (map[string]json.RawMessage, error) {
@@ -19,8 +23,14 @@ func exactObjectWithOptional(r *http.Request, optional string, fields ...string)
 }
 
 func exactObjectWithOptionalFields(r *http.Request, optional []string, fields ...string) (map[string]json.RawMessage, error) {
-	data, err := io.ReadAll(io.LimitReader(r.Body, 4097))
-	if err != nil || len(data) > 4096 || !utf8.Valid(data) {
+	limit := 4096
+	for _, field := range optional {
+		if field == "relays" {
+			limit = maxRelayRequestBody
+		}
+	}
+	data, err := io.ReadAll(io.LimitReader(r.Body, int64(limit+1)))
+	if err != nil || len(data) > limit || !utf8.Valid(data) {
 		return nil, errBody
 	}
 	d := json.NewDecoder(bytes.NewReader(data))
@@ -70,6 +80,9 @@ func exactObjectWithOptionalFields(r *http.Request, optional []string, fields ..
 		if _, ok := out[field]; !ok {
 			return nil, errBody
 		}
+	}
+	if _, hasRelays := out["relays"]; !hasRelays && len(data) > 4096 {
+		return nil, errBody
 	}
 	return out, nil
 }

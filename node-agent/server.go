@@ -74,7 +74,7 @@ func run(ctx context.Context, cfg config, logger *slog.Logger) error {
 	if cfg.transferURL != "" && cfg.transferToken != "" {
 		transferService = transfer.New(cfg.transferURL, cfg.transferToken)
 	}
-	media := mediaOpt{repository: database, allocation: cfg.mediaStorageAllocation, coreURL: cfg.coreURL, mediaDir: cfg.mediaDir}
+	media := cfg.mediaOptions(database)
 	opts := []handlerOption{media, settingsOpt{database}, localUsersOpt{repository: database}, globalAuthOpt{repository: database, identity: media.identity, login: cfg.globalLogin}, mediaMissOpt{database}, operatorOpt{repository: database, logger: logger}, current,
 		diagnosticsOpt{coreURL: strings.TrimSuffix(cfg.coreURL, "/"), trackerOrigin: cfg.trackerOrigin, mediaDir: cfg.mediaDir}}
 	var checker *updates.Checker
@@ -158,7 +158,7 @@ func newConfiguredHandler(repository localstate.Repository, cfg config, monitor 
 		opts = append(opts, applicationOpt{jellyfin.New(cfg.jellyfinURL, nil)})
 	}
 	if mediaRepository, ok := repository.(mediaStorage); ok {
-		media := mediaOpt{repository: mediaRepository, allocation: cfg.mediaStorageAllocation, coreURL: cfg.coreURL, mediaDir: cfg.mediaDir}
+		media := cfg.mediaOptions(mediaRepository)
 		opts = append(opts, media)
 		if global, ok := repository.(globalauth.Repository); ok {
 			opts = append(opts, globalAuthOpt{repository: global, identity: media.identity})

@@ -3,8 +3,8 @@
 
 Topology (every resource uses one random prefix and is removed afterwards):
 
-* ``wan``     - simulated Internet: Core (``arknet-core``), private tracker and
-                both Nodes' transfer services (the only peer-to-peer path).
+* ``gateway-a`` / ``gateway-b`` - separate internal transfer networks. Only
+  Core, tracker and the TLS relay attach to both; no direct Node-to-Node path.
 * ``uplink-a`` / ``uplink-b`` - each Node Agent's private outbound path to Core.
 * each Node keeps its own Compose-private PostgreSQL, Jellyfin and control
   networks; nothing else is shared between Node A and Node B.
@@ -41,6 +41,7 @@ from scripts import e2e_diagnostics  # noqa: E402
 from scripts import operator_login  # noqa: E402
 from scripts import global_login  # noqa: E402
 from scripts import revocation_meter  # noqa: E402
+from scripts import relay_acceptance  # noqa: E402
 
 # Node heartbeat interval for this run. A revoked Node learns of Core's decision
 # at its next heartbeat; its transfers must stop within this plus the slack.
@@ -126,13 +127,17 @@ def main(argv=None):
     results = Results()
     prefix = "arknet-p43-test-" + uuid.uuid4().hex[:12]
     wan, uplink_a, uplink_b = prefix + "-wan", prefix + "-uplink-a", prefix + "-uplink-b"
-    networks = (wan, uplink_a, uplink_b)
+    gateways = {label: prefix + "-gateway-" + label for label in ("a", "b")}
+    networks = (wan, uplink_a, uplink_b, *gateways.values())
     core_project = prefix + "-core"
     images = {"core": prefix + "-core-image", "tracker": prefix + "-tracker-image",
               "agent": prefix + "-agent-image", "transfer": prefix + "-transfer-image",
-              "helper": prefix + "-libtorrent", "agent-build": prefix + "-agent-build"}
+              "helper": prefix + "-libtorrent", "agent-build": prefix + "-agent-build",
+              "relay": prefix + "-relay-image", "capture": prefix + "-capture-image"}
     temporary = Path(tempfile.mkdtemp(prefix="." + prefix + "-", dir=ROOT)); os.chmod(temporary, 0o755)
     made_networks, known_secrets = set(), []
+    captures = []
+    gateway_ips = {}
     failure = None
 
     admin_token, core_password = secrets.token_hex(32), secrets.token_hex(32)
@@ -145,7 +150,7 @@ def main(argv=None):
                     ARKNET_CORE_DEV_ADMIN_TOKEN=admin_token, ARKNET_TRACKER_PORT=str(free_port()),
                     ARKNET_TRACKER_ANNOUNCE_URL="http://arknet-tracker:6969", ARKNET_TRACKER_ANNOUNCE_INTERVAL="5s",
                     ARKNET_TRACKER_PEER_TTL="30s", ARKNET_CORE_WEB_SEED_ORIGIN="http://arknet-core:8080")
-    core_override = temporary / "core-override.json"
+    core_override = temporary / "core-override.yaml"
     source = temporary / "source"; source.mkdir(mode=0o755)
 
     nodes = {}
@@ -154,7 +159,7 @@ def main(argv=None):
         known_secrets.extend((password, token, jelly_password))
         cfg = {"project": prefix + "-node-" + label, "uplink": uplink, "agent_port": free_port(),
                "member_port": free_port(), "jellyfin_port": free_port(), "password": password, "jelly_password": jelly_password,
-               "override": temporary / f"node-{label}-override.json",
+               "override": temporary / f"node-{label}-override.yaml",
                "jelly_config": temporary / f"jellyfin-{label}-config", "jelly_cache": temporary / f"jellyfin-{label}-cache"}
         cfg["jelly_config"].mkdir(mode=0o755); cfg["jelly_cache"].mkdir(mode=0o755)
         cfg["env"] = dict(os.environ, POSTGRES_USER="arknet", POSTGRES_DB="arknet_node", POSTGRES_PASSWORD=password,
@@ -245,6 +250,58 @@ def main(argv=None):
         cid = container(lambda *i, **k: node_compose(label, *i, **k), "arknet-transfer")
         return json.loads(run(["docker", "exec", cid, "python3", "-c", script], capture=True))["seeds"]
 
+    def addresses(label, service=None):
+        services = (service,) if service else ("arknet-agent", "arknet-transfer", "postgres", "jellyfin", "arknet-ui")
+        found = set()
+        for name in services:
+            cid = container(lambda *i, **k: node_compose(label, *i, **k), name)
+            if cid:
+                info = json.loads(run(["docker", "inspect", cid], capture=True))[0]
+                found.update(v["IPAddress"] for v in info["NetworkSettings"]["Networks"].values() if v["IPAddress"])
+        return found
+
+    def start_captures(phase):
+        active_captures = []
+        for label in ("a", "b"):
+            for service in ("arknet-agent", "arknet-transfer"):
+                cid = container(lambda *i, **k: node_compose(label, *i, **k), service)
+                name = f"{prefix}-{phase}-{label}-{service}"
+                captures.append(name)  # registered even if tcpdump startup fails
+                capture = relay_acceptance.Capture(run, name, cid, images["capture"], temporary)
+                counters = capture.firewall_counters() if service == "arknet-transfer" else None
+                active_captures.append((label, service, capture, counters))
+        return active_captures
+
+    def finish_captures(active_captures, criterion):
+        decoded = {}
+        for label, service, capture, counters in active_captures:
+            blocked = relay_acceptance.assert_no_blocked_attempts(counters, capture.firewall_counters()) if counters is not None else None
+            packets = capture.stop()
+            own = addresses(label, service) | {"127.0.0.1", "127.0.0.11"}
+            verdict = relay_acceptance.inspect_capture(packets, own, addresses("b" if label == "a" else "a"))
+            if service == "arknet-transfer":
+                assert blocked is not None
+                allowed = {(gateway_ips[label][key], port) for key, port in (("relay", 7443), ("tracker", 6969), ("core", 8080))}
+                verdict["connections_classified"] = relay_acceptance.assert_no_direct_attempts(packets, own, allowed)
+                verdict["firewall_denied_attempts"] = blocked
+                if label == "a":
+                    verdict["plaintext_peer_bytes"] = relay_acceptance.assert_plaintext_peer(packets)
+            decoded[label, service] = packets
+            results.evidence(criterion, f"{label}/{service} full namespace pcap (loopback included): " + json.dumps(verdict))
+        return decoded
+
+    def disconnect_webseed(label):
+        run(["docker", "network", "disconnect", gateways[label], core_id])
+
+    def connect_webseed(label):
+        run(["docker", "network", "connect", "--alias", "arknet-core", "--ip", gateway_ips[label]["core"], gateways[label], core_id])
+
+    def seed_on_a(obj):
+        agent("a", f"/api/v1/media/{obj['id']}/selection", "POST", {})
+        assert agent("a", f"/api/v1/media/{obj['id']}/transfer/start", "POST", {})["mock"] is False
+        wait_until("A downloaded relay fixture", lambda: (media_object("a", obj["id"]) or {}).get("local_state") == "AVAILABLE", 600)
+        wait_until("A product seed ready", lambda: any(s["object_id"] == obj["id"] and s["state"] == "SEEDING" for s in transfer_seeds("a")), 120)
+
     def jellyfin_stream(label, digest, size):
         cfg = nodes[label]
         auth = {"X-Emby-Token": cfg["jelly_access"]}
@@ -269,12 +326,19 @@ def main(argv=None):
             traceback.print_exc()
             return False
 
-    def make_video(name, seconds, frequency):
+    def make_video(name, seconds, frequency, minimum_bytes=32 << 20):
         path = source / name
         run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "testsrc2=size=1280x720:rate=30",
              "-f", "lavfi", "-i", f"sine=frequency={frequency}:sample_rate=48000", "-t", str(seconds), "-c:v", "libx264",
              "-preset", "ultrafast", "-b:v", "5M", "-maxrate", "5M", "-bufsize", "10M", "-pix_fmt", "yuv420p",
              "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", "-f", "mp4", str(path)], timeout=300)
+        # Keep a real playable MP4, followed by a valid ISO-BMFF free box full
+        # of zeros, not random fixture bytes that can look like packed IPs.
+        padding = max(8, minimum_bytes - path.stat().st_size)
+        with path.open("ab") as output:
+            output.write(padding.to_bytes(4, "big") + b"free")
+            output.write(bytes(padding - 8))
+        run(["ffprobe", "-v", "error", "-show_entries", "stream=codec_type", "-of", "json", str(path)], capture=True)
         make_torrent = temporary / "make-torrent.py"
         torrent = json.loads(run(["docker", "run", "--rm", "-v", f"{temporary}:/work", "-v", f"{make_torrent}:/make-torrent.py:ro",
                                   images["helper"], "/make-torrent.py", "/work", name], capture=True, timeout=180))
@@ -348,19 +412,77 @@ def main(argv=None):
         print("PREFLIGHT: Docker sees the tracker key files and web-seed directory", flush=True)
         run(["docker", "build", "-t", images["helper"], "-"], input_text=p25["LIBTORRENT_DOCKERFILE"], timeout=900)
         run(["docker", "build", "--target", "build", "-t", images["agent-build"], str(ROOT / "node-agent")], timeout=900)
+        # Dedicated keys: list, per-relay revocation, endpoint attestation.
+        relay_dir = temporary / "relay"; relay_dir.mkdir(mode=0o755)
+        for purpose in ("list", "revocation", "endpoint"):
+            directory = relay_dir / purpose; directory.mkdir(mode=0o755)
+            run(["go", "run", str(key_helper), "keygen", str(directory)], timeout=120)
+            os.chmod(directory / "tracker-private.key", 0o644)
+            known_secrets.append((directory / "tracker-private.key").read_text().strip())
+        relay_cert, relay_tls_key = relay_dir / "cert.pem", relay_dir / "tls.key"
+        run(["openssl", "ecparam", "-name", "prime256v1", "-genkey", "-noout", "-out", str(relay_tls_key)])
+        run(["openssl", "req", "-new", "-x509", "-key", str(relay_tls_key), "-days", "2",
+             "-subj", "/CN=arknet-relay", "-out", str(relay_cert)])
+        os.chmod(relay_tls_key, 0o644)  # disposable fixture, readable by relay UID
+        known_secrets.append(relay_tls_key.read_text())
+        pub_pem = subprocess.run(["openssl", "x509", "-in", str(relay_cert), "-pubkey", "-noout"],
+                                 capture_output=True, check=True).stdout
+        pub_der = subprocess.run(["openssl", "pkey", "-pubin", "-outform", "DER"], input=pub_pem,
+                                 capture_output=True, check=True).stdout
+        pin = hashlib.sha256(pub_der).hexdigest()
+        (relay_dir / "relays.json").write_text(json.dumps([{
+            "id": "acceptance", "address": "arknet-relay:7443", "spki_sha256": pin,
+            "control_url": "http://arknet-relay:7080",
+            "revocation_key_file": "/run/relay/revocation/tracker-private.key"}]))
+        core_env["ARKNET_TRACKER_RELAY_VERIFY_KEYS_FILE"] = str(relay_dir / "endpoint/tracker-public.key")
+        for cfg in nodes.values():
+            cfg["env"]["ARKNET_RELAY_LIST_VERIFY_KEY"] = (relay_dir / "list/tracker-public.key").read_text().strip()
+        run(["docker", "build", "-t", images["relay"], str(ROOT / "relay")], timeout=900)
+        run(["docker", "build", "-t", images["capture"], "-"], input_text=relay_acceptance.CAPTURE_DOCKERFILE, timeout=900)
+        import ipaddress
         for network in networks:
-            run(["docker", "network", "create", network], capture=True); made_networks.add(network)
-        core_override.write_text(json.dumps({"services": {
-            "arknet-core": {"image": images["core"], "networks": ["core", "wan"]},
-            "arknet-tracker": {"image": images["tracker"], "networks": ["tracker-edge", "wan"]}},
-            "networks": {"wan": {"external": True, "name": wan}}}))
+            flags = ["--internal"] if network in gateways.values() else []
+            run(["docker", "network", "create", *flags, network], capture=True); made_networks.add(network)
+            if network in gateways.values():
+                subnet = json.loads(run(["docker", "network", "inspect", network], capture=True))[0]["IPAM"]["Config"][0]["Subnet"]
+                base = ipaddress.ip_network(subnet).network_address
+                label = next(k for k, v in gateways.items() if v == network)
+                gateway_ips[label] = {k: str(base + n) for k, n in (("relay", 10), ("core", 11), ("tracker", 12), ("transfer", 20))}
+        external = {"gateway-" + label: {"external": True, "name": network} for label, network in gateways.items()}
+        relay_environment = {
+            "ARKNET_RELAY_ID": "acceptance", "ARKNET_RELAY_BIND_ADDR": "0.0.0.0:7443",
+            "ARKNET_RELAY_CONTROL_BIND_ADDR": "0.0.0.0:7080",
+            "ARKNET_RELAY_GRANT_VERIFY_KEY_FILE": "/run/grant-public.key",
+            "ARKNET_RELAY_REVOCATION_VERIFY_KEY_FILE": "/run/relay/revocation/tracker-public.key",
+            "ARKNET_RELAY_ENDPOINT_SIGNING_KEY_FILE": "/run/relay/endpoint/tracker-private.key",
+            "ARKNET_RELAY_TLS_CERT_FILE": "/run/relay/cert.pem", "ARKNET_RELAY_TLS_KEY_FILE": "/run/relay/tls.key"}
+        core_override.write_text(relay_acceptance.compose_override({"services": {
+            "arknet-core": {"image": images["core"], "networks": {"core": {}, "wan": {},
+                **{"gateway-"+l: {"ipv4_address": gateway_ips[l]["core"]} for l in gateways}},
+                "environment": {"ARKNET_RELAYS_FILE": "/run/relay/relays.json",
+                                "ARKNET_RELAY_LIST_SIGNING_KEY_FILE": "/run/relay/list/tracker-private.key"},
+                "volumes": [f"{relay_dir}:/run/relay:ro"]},
+            "arknet-tracker": {"image": images["tracker"], "networks": {"tracker-edge": {}, "wan": {},
+                **{"gateway-"+l: {"ipv4_address": gateway_ips[l]["tracker"]} for l in gateways}}},
+            "arknet-relay": {"image": images["relay"], "environment": relay_environment,
+                "networks": {"wan": {}, **{"gateway-"+l: {"ipv4_address": gateway_ips[l]["relay"]} for l in gateways}},
+                "volumes": [f"{relay_dir}:/run/relay:ro", f"{public_key}:/run/grant-public.key:ro"],
+                "read_only": True, "cap_drop": ["ALL"], "security_opt": ["no-new-privileges:true"]}},
+            "networks": {"wan": {"external": True, "name": wan}, **external}}))
         for label, cfg in nodes.items():
-            cfg["override"].write_text(json.dumps({"services": {
+            cfg["override"].write_text(relay_acceptance.compose_override({"services": {
                 "arknet-agent": {"image": images["agent"], "networks": ["node", "media-services", "transfer-control", "uplink"]},
-                "arknet-transfer": {"image": images["transfer"], "networks": ["transfer-control", "wan"]},
+                "arknet-transfer": {"image": images["transfer"], "networks": {
+                    "transfer-control": {}, "gateway": {"ipv4_address": gateway_ips[label]["transfer"]}},
+                    "cap_add": ["NET_ADMIN", "SETUID", "SETGID", "SETPCAP"],
+                    "extra_hosts": relay_acceptance.gateway_hosts(gateway_ips[label]),
+                    "environment": {"ARKNET_TRANSFER_RELAY_EGRESS": "arknet-relay:7443",
+                                    "ARKNET_TRANSFER_LISTEN_INTERFACES": "127.0.0.1:6881"},
+                    "sysctls": {"net.ipv6.conf.all.disable_ipv6": "1"}},
                 "jellyfin": {"image": "jellyfin/jellyfin:10.10.7", "volumes": [
                     f"{cfg['jelly_config']}:/config", f"{cfg['jelly_cache']}:/cache", "media:/srv/arknet/media:ro"]}},
-                "networks": {"uplink": {"external": True, "name": cfg["uplink"]}, "wan": {"external": True, "name": wan}}}))
+                "networks": {"uplink": {"external": True, "name": cfg["uplink"]},
+                             "gateway": {"external": True, "name": gateways[label]}}}))
             os.chmod(cfg["override"], 0o600)
         os.chmod(core_override, 0o600)
 
@@ -467,11 +589,10 @@ def main(argv=None):
         item(7, jellyfin)
 
         # ------------------------------------------- 3 restart + 8 selection etc.
-        video = make_video("media_" + secrets.token_hex(32), 35, 880)
-        later = make_video("media_" + secrets.token_hex(32), 12, 440)
-        # Long enough that Node B is still downloading well after revocation
-        # (about 37 MB at the 512 KiB/s download limit, so over a minute).
-        active = make_video("media_" + secrets.token_hex(32), 60, 550)
+        video = make_video("media_" + secrets.token_hex(32), 2, 880)
+        later = make_video("media_" + secrets.token_hex(32), 2, 440, 64 << 20)
+        # Zero-filled free-box padding leaves a bounded interruption window.
+        active = make_video("media_" + secrets.token_hex(32), 2, 550, 96 << 20)
 
         def selection():
             listed = media_object("a", video["id"])
@@ -663,29 +784,70 @@ def main(argv=None):
             wait_until("A product seed SEEDING", lambda: any(
                 s["object_id"] == video["id"] and s["state"] == "SEEDING" for s in transfer_seeds("a")), 90)
             results.evidence(11, "node-agent seed reconciler -> transfer service -> libtorrent worker")
+            phase_captures = start_captures("swarm")
             agent("b", f"/api/v1/media/{video['id']}/selection", "POST", {})
             started = agent("b", f"/api/v1/media/{video['id']}/transfer/start", "POST", {})
             assert started["mock"] is False
-            # Torrent metadata now comes from Core. Then remove Core's web seed from the
-            # simulated Internet: the private tracker stays reachable, so the only
-            # remaining payload source for Node B is Node A's real transfer service.
             wait_until("B metadata", lambda: (transfer_status("b", video["id"]) or {}).get("state") == "DOWNLOADING", 60)
             before_disconnect = transfer_status("b", video["id"])["completed_bytes"]
             assert 0 <= before_disconnect < video["size"]
-            run(["docker", "network", "disconnect", wan, core_id])
+            disconnect_webseed("b")
             try:
-                done = wait_until("B AVAILABLE from Node A", lambda: (lambda s: s if s and s["completed_bytes"] == video["size"] else None)(
-                    transfer_status("b", video["id"])), 300)
+                done = wait_until("B AVAILABLE from Node A through relay", lambda: (lambda s: s if s and s["completed_bytes"] == video["size"] else None)(
+                    transfer_status("b", video["id"])), 600)
             finally:
-                run(["docker", "network", "connect", "--alias", "arknet-core", wan, core_id])
+                connect_webseed("b")
+            decoded = finish_captures(phase_captures, 11)
+            a_peer_bytes = sum(len(p['payload']) for p in decoded['a', 'arknet-transfer']
+                               if p['src'] == '127.0.0.1' and p['sport'] == 6881)
+            assert a_peer_bytes >= 1 << 20, "no real libtorrent peer contribution captured on A loopback"
             assert done["state"] == "COMPLETED"
             wait_until("B AVAILABLE", lambda: (media_object("b", video["id"]) or {}).get("local_state") == "AVAILABLE", 180)
             b_hash = run(["docker", "run", "--rm", "-v", nodes["b"]["project"] + "_media:/m:ro", images["helper"], "-c",
                           f"import hashlib,pathlib;print(hashlib.sha256(pathlib.Path('/m/{video['id']}.mp4').read_bytes()).hexdigest())"],
                          capture=True)
             assert b_hash == video["sha256"]
-            results.evidence(11, "with Core's web seed unreachable, Node B completed the exact object from Node A's product"
-                                 " transfer service (private v2 swarm, tracker-gated)")
+            results.evidence(11, f"relay-only private v2 peer contribution: {a_peer_bytes} loopback bytes from A's libtorrent;"
+                                 " B completed exact SHA-256 with its Core web seed disconnected")
+
+            # all relays down: first prove active peer flow without an origin,
+            # then a long quiet interval, then origin-only completion with the
+            # relay still stopped. Capture every attempted connection throughout.
+            seed_on_a(later)
+            outage_captures = start_captures("outage")
+            agent("b", f"/api/v1/media/{later['id']}/selection", "POST", {})
+            assert agent("b", f"/api/v1/media/{later['id']}/transfer/start", "POST", {})["mock"] is False
+            wait_until("B outage metadata", lambda: transfer_status("b", later["id"]), 60)
+            disconnect_webseed("b")
+            b_transfer = container(lambda *i, **k: node_compose("b", *i, **k), "arknet-transfer")
+            sampler = revocation_meter.RxSampler(b_transfer, 300)
+            try:
+                wait_until("positive relay-only flow before outage", lambda: revocation_meter.recent_rate(sampler.samples) >= 128 * 1024, 120, .25)
+                assert transfer_status("b", later["id"])["completed_bytes"] < later["size"] - (10 << 20)
+                stopped_at = time.time()
+                core_compose("stop", "arknet-relay")
+                time.sleep(REVOCATION_QUIET_SECONDS + 8)
+                outage_verdict = revocation_meter.analyze(sampler.stop(), stopped_at, 5, REVOCATION_QUIET_SECONDS)
+            except Exception:
+                core_compose("start", "arknet-relay")
+                raise
+            finally:
+                sampler.stop()
+                connect_webseed("b")
+            try:
+                wait_until("webseed continues with all relays down", lambda: (media_object("b", later["id"]) or {}).get("local_state") == "AVAILABLE", 600)
+                outage = finish_captures(outage_captures, 11)
+                packets = outage['b', 'arknet-transfer']
+                origin_bytes = sum(len(p['payload']) for p in packets if p['src'] == gateway_ips['b']['core']
+                                   and p['sport'] == 8080 and p['time'] > stopped_at + 8)
+                assert origin_bytes >= 1 << 20, "webseed did not carry payload while relays were down"
+                late_peer_bytes = sum(len(p['payload']) for p in outage['a', 'arknet-transfer']
+                                      if p['src'] == '127.0.0.1' and p['sport'] == 6881 and p['time'] > stopped_at + 8)
+                assert late_peer_bytes == 0, "peer bytes continued with every relay stopped"
+                results.evidence(11, "all relays down: " + json.dumps(outage_verdict) +
+                                 f"; {origin_bytes} origin bytes, {late_peer_bytes} late peer bytes; all outgoing attempts gateway-classified")
+            finally:
+                core_compose("start", "arknet-relay")
         item(11, swarm)
 
         # ----------------------------------------------- 15 removed media
@@ -745,17 +907,9 @@ def main(argv=None):
                                      f"nc -z -w 3 {ip} {ports[service]} >/dev/null 2>&1 && echo open || echo closed"], capture=True)
                 if "open" in (verdict, agent_verdict):
                     reachable.append(f"{service}@{network}")
-            # B's transfer service shares the simulated Internet for the peer protocol.
-            # Its control API must still refuse Node A without B's local token.
-            allowed = {"arknet-transfer@" + wan}
-            assert set(reachable) <= allowed, reachable
-            if reachable:
-                code = run(["docker", "exec", a_transfer, "python3", "-c",
-                            "import urllib.request,urllib.error,sys\ntry:\n urllib.request.urlopen('http://%s:8084/api/transfer/v1/transfers'%sys.argv[1],timeout=3);print(200)\n"
-                            "except urllib.error.HTTPError as e:\n print(e.code)\n", b_ips[("arknet-transfer", wan)]], capture=True)
-                assert code == "401", code
-            results.evidence(20, "from Node A's Agent and transfer containers, Node B's Agent, UI, PostgreSQL and Jellyfin are"
-                                 " unreachable; only B's peer endpoint is on the shared network and its control API returns 401")
+            assert not reachable, reachable
+            results.evidence(20, "from Node A's Agent and transfer containers, every Node B address is unreachable,"
+                                 " including its transfer-control API; separate internal gateway networks expose no direct peer path")
             env = dict(nodes["a"]["env"])
             env["ARKNET_TEST_DATABASE_URL"] = f"postgresql://arknet:{nodes['a']['password']}@postgres:5432/arknet_node?sslmode=disable"
             env.update(ARKNET_TEST_CORE_URL=f"http://host.docker.internal:{core_port}", ARKNET_TEST_TARGET_NODE_ID=nodes["b"]["node_id"])
@@ -788,73 +942,89 @@ def main(argv=None):
         item(20, isolation)
 
         # --------------------------------------------------- 16 revocation
-        def tracker_counts(info_hash_v2):
-            """(complete, incomplete) peers in a swarm, seen by a probe announce."""
-            grant = run(["go", "run", str(key_helper), "issue", str(private_key), info_hash_v2], capture=True, timeout=120)
-            known_secrets.append(grant)
-            probe = ("import sys,urllib.parse,urllib.request,secrets\n"
-                     "grant,h=sys.argv[1],bytes.fromhex(sys.argv[2])[:20]\npid=b'-AP0001-'+secrets.token_bytes(12)\n"
-                     "def go(event):\n q=urllib.parse.urlencode({'info_hash':h,'peer_id':pid,'port':1,'uploaded':0,"
-                     "'downloaded':0,'left':0,'compact':1,'event':event})\n"
-                     " return urllib.request.urlopen('http://arknet-tracker:6969/announce/'+grant+'?'+q,timeout=5).read()\n"
-                     "body=go('started');go('stopped');sys.stdout.write(body.hex())\n")
-            body = run(["docker", "run", "--rm", "--network", wan, images["helper"], "-c", probe, grant, info_hash_v2], capture=True)
-            return revocation_meter.announce_counts(bytes.fromhex(body))
-
         def revocation():
-            # Node B is receiving from Core's web seed. That source checks the grant only
-            # when a request starts, and libtorrent asks for the rest of the file in one
-            # range, so only Node B's own cancellation stops these bytes.
+            seed_on_a(active)
+            phase_captures = start_captures("revocation")
             agent("b", f"/api/v1/media/{active['id']}/selection", "POST", {})
             assert agent("b", f"/api/v1/media/{active['id']}/transfer/start", "POST", {})["mock"] is False
             wait_until("B receiving", lambda: (transfer_status("b", active["id"]) or {}).get("completed_bytes", 0) >= 1 << 20, 120, .25)
-            wait_until("B in the tracker swarm", lambda: tracker_counts(active["hash"])[1] >= 1, 90, 2)
+            disconnect_webseed("b")
             b_transfer = container(lambda *i, **k: node_compose("b", *i, **k), "arknet-transfer")
+            b_agent = container(lambda *i, **k: node_compose("b", *i, **k), "arknet-agent")
             sampler = revocation_meter.RxSampler(b_transfer, 300)
-            # Revoke while bytes are flowing, not in a pause between web-seed responses.
-            wait_until("B receiving bytes now", lambda: revocation_meter.recent_rate(sampler.samples) >= 128 * 1024, 120, .25)
-            progress = transfer_status("b", active["id"])["completed_bytes"]
-            assert active["size"] - progress >= 10 << 20, "too little left to observe a stop"
-            revoked_at = time.time()
-            decision = request_json(core_base + f"/api/admin/v1/nodes/{nodes['b']['node_id']}/revoke", "POST", headers=admin)[2]
-            assert decision["enrollment_status"] == "REVOKED" and decision["trust_status"] == "BLOCKED"
-            request(nodes["b"]["base"] + f"/api/v1/media/{later['id']}/selection", "POST", {}, op("b"))
-            started = request(nodes["b"]["base"] + f"/api/v1/media/{later['id']}/transfer/start", "POST", {}, op("b"))
-            # The operator is signed in, so a refusal here is Core's, not the management plane's.
-            assert started[0] not in (200, 401, 403), f"revoked Node B transfer start: HTTP {started[0]}"
-            assert transfer_status("b", later["id"]) is None
-            results.evidence(16, "after revocation Node B could not obtain a new swarm authorization (transfer start refused)")
+            frozen = False
+            try:
+                wait_until("positive relay-only bytes", lambda: revocation_meter.recent_rate(sampler.samples) >= 128 * 1024, 120, .25)
+                progress = transfer_status("b", active["id"])["completed_bytes"]
+                assert active["size"] - progress >= 10 << 20, "too little left to observe a stop"
+                # Non-cooperative negative control: the Agent cannot cancel or
+                # renew anything while frozen. Only authoritative relay push
+                # can terminate the live flow before its five-minute expiry.
+                run(["docker", "pause", b_agent], capture=True)
+                frozen = True
+                time.sleep(3)
+                # Relayed flow is bursty: wait, with the Agent still frozen, until
+                # it is clearly positive immediately before the revocation.
+                wait_until("relay-only flow with B's Agent frozen",
+                           lambda: revocation_meter.recent_rate(sampler.samples) >= 128 * 1024, 30, .25)
+                revoked_at = time.time()
+                revoked_monotonic = time.monotonic()
+                decision = request_json(core_base + f"/api/admin/v1/nodes/{nodes['b']['node_id']}/revoke", "POST", headers=admin)[2]
+                assert decision["enrollment_status"] == "REVOKED" and decision["trust_status"] == "BLOCKED"
+
+                def events(service):
+                    text = core_compose("logs", "--no-color", "--no-log-prefix", "--since", str(revoked_at), service, capture=True)
+                    entries = []
+                    for line in text.splitlines():
+                        try:
+                            entries.append(json.loads(line))
+                        except ValueError:
+                            continue
+                    return entries
+
+                observed, delivered, elapsed = [], [], float('inf')
+                closed = 0
+                while time.monotonic() - revoked_monotonic <= 5:
+                    applied = [e for e in events("arknet-relay") if e.get("msg") == "relay_revocation_received"]
+                    delivered = [e for e in events("arknet-core") if e.get("msg") == "relay_revocation_delivered" and e.get("relay_id") == "acceptance"]
+                    closed = sum(e.get("connections_closed", 0) for e in applied)
+                    elapsed = time.monotonic() - revoked_monotonic
+                    observed.append({"after_seconds": round(elapsed, 3), "core_deliveries": len(delivered),
+                                     "relay_pushes": len(applied), "connections_closed": closed})
+                    if delivered and applied and closed >= 2:
+                        break
+                    time.sleep(.2)
+                assert closed >= 2 and delivered and elapsed <= 5, "Core push did not close a live relay session within 5s"
+                # Still frozen throughout the quiet window: cooperative Agent
+                # cancellation cannot manufacture a relay enforcement PASS.
+                time.sleep(REVOCATION_QUIET_SECONDS + 6)
+                verdict = revocation_meter.analyze(sampler.stop(), revoked_at, 5, REVOCATION_QUIET_SECONDS)
+                results.evidence(16, "Core push / relay live-session closure while B Agent frozen: " + json.dumps(observed))
+                results.evidence(16, "relay-only revocation byte stop: " + json.dumps(verdict))
+            finally:
+                sampler.stop()
+                if frozen:
+                    run(["docker", "unpause", b_agent], capture=True, check=False)
+                connect_webseed("b")
+            decoded = finish_captures(phase_captures, 16)
+            packets = decoded['b', 'arknet-transfer']
+            socket_verdict = relay_acceptance.assert_relay_revoked(observed, packets, gateway_ips['b']['relay'], revoked_at)
+            a_peer_before = sum(len(p['payload']) for p in decoded['a', 'arknet-transfer']
+                                if p['src'] == '127.0.0.1' and p['sport'] == 6881 and revoked_at - 3 <= p['time'] <= revoked_at)
+            assert a_peer_before >= 128 * 1024, "no positive real A peer stream at revoke"
+            results.evidence(16, f"pcap: {a_peer_before} real A peer bytes in last 3s; " + json.dumps(socket_verdict))
             wait_until("B REVOKED", lambda: in_state("b", "REVOKED"), 120, .25)
-            learned = time.time() - revoked_at
-            results.evidence(16, f"Node B learned the authoritative revocation and entered terminal REVOKED ({learned:.1f}s)")
             cancelled = wait_until("B transfer CANCELLED", lambda: (lambda t: t if t and t["state"] == "CANCELLED" else None)(
                 transfer_status("b", active["id"])), 60, .25)
-            time.sleep(REVOCATION_QUIET_SECONDS + 3)
-            samples = sampler.stop()
-            bound = HEARTBEAT_SECONDS + REVOCATION_STOP_SLACK_SECONDS
-            print("revocation samples (s after revocation, rx bytes):",
-                  [(round(t - revoked_at, 2), rx) for t, rx in samples], flush=True)
-            verdict = revocation_meter.analyze(samples, revoked_at, bound, REVOCATION_QUIET_SECONDS)
-            final = transfer_status("b", active["id"])
-            assert final["completed_bytes"] == cancelled["completed_bytes"] < active["size"]
+            assert cancelled["completed_bytes"] < active["size"]
             assert (media_object("b", active["id"]) or {}).get("local_state") == "ERROR"
-            results.evidence(16, f"active transfer cancelled by Node B's Agent: receiving {verdict['rate_before'] / 1024:.0f} KiB/s"
-                                 f" at revocation, last block {verdict['stopped_after']:.1f}s after it (bound {bound}s ="
-                                 f" heartbeat {HEARTBEAT_SECONDS}s + {REVOCATION_STOP_SLACK_SECONDS}s),"
-                                 f" {verdict['residual_bytes']} bytes in the next {verdict['quiet_seconds']:.0f}s;"
-                                 f" stopped at {final['completed_bytes']} of {active['size']} bytes")
-            dropped_at = time.time()
-            wait_until("B dropped from the tracker", lambda: tracker_counts(active["hash"])[1] == 0, 60, 2)
-            results.evidence(16, "the tracker no longer lists Node B in the swarm (checked"
-                                 f" {time.time() - dropped_at:.0f}s after the cancellation; B announced 'stopped')")
             refused = request(nodes["b"]["base"] + f"/api/v1/media/{active['id']}/transfer/start", "POST", {}, op("b"))
             assert refused[0] == 409 and b"node_revoked" in refused[2], refused[0]
             b_hash = run(["docker", "run", "--rm", "-v", nodes["b"]["project"] + "_media:/m:ro", images["helper"], "-c",
                           f"import hashlib,pathlib;print(hashlib.sha256(pathlib.Path('/m/{video['id']}.mp4').read_bytes()).hexdigest())"],
                          capture=True)
             assert b_hash == video["sha256"]
-            results.evidence(16, "the revoked Agent refuses new transfers itself (409 node_revoked) and kept its verified local"
-                                 " media byte-identical")
+            results.evidence(16, "after unfreeze B converged to REVOKED/CANCELLED, refuses new transfers (409 node_revoked), retained media exact")
             assert in_state("a", "CONNECTED")
             results.evidence(16, "Node A unaffected (CONNECTED)")
         item(16, revocation)
@@ -878,6 +1048,8 @@ def main(argv=None):
         # Collect before cleanup: an item FAIL never raises, so check results too.
         if failure is not None or any(v["status"] == "FAIL" for v in results.items.values()):
             write_diagnostics(failure)
+        for capture_name in captures:
+            run(["docker", "rm", "-f", "-v", capture_name], capture=True, check=False, timeout=30)
         for label in ("b", "a"):
             node_compose(label, "down", "--volumes", "--remove-orphans", check=False, timeout=240)
         core_compose("down", "--volumes", "--remove-orphans", check=False, timeout=240)

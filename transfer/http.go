@@ -33,8 +33,8 @@ func newHandler(token string, e transferEngine) http.Handler {
 				return
 			}
 		}
-		data, err := io.ReadAll(io.LimitReader(r.Body, 4097))
-		if err != nil || len(data) > 4096 || (r.Method == http.MethodGet && len(data) != 0) {
+		data, err := io.ReadAll(io.LimitReader(r.Body, maxRelayRequestBody+1))
+		if err != nil || len(data) > maxRelayRequestBody || (r.Method == http.MethodGet && len(data) != 0) {
 			failure(w, 400, "invalid_request")
 			return
 		}

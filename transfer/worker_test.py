@@ -72,6 +72,24 @@ class RecordingManager:
         return {"object_id": object_id}
 
 
+class IdentityConnector:
+    """Source-filter unit tests don't make network calls; record original URL."""
+    def authorize(self, *args, **kwargs):
+        pass
+    def tracker_url(self, info_hash, original):
+        return original
+    def remove(self, info_hash):
+        pass
+    def close(self):
+        pass
+
+
+def fake_manager():
+    value = worker.Manager.__new__(worker.Manager)
+    value.connector = IdentityConnector()
+    return value
+
+
 class WorkerPolicyTests(unittest.TestCase):
     def test_configured_rate_limit_also_applies_to_private_network_peers(self):
         session = lt.session(worker.session_settings("127.0.0.1:0", 512 * 1024))
@@ -186,7 +204,7 @@ class WorkerPolicyTests(unittest.TestCase):
         self.assertEqual(manager.added, (OBJECT_ID, 4096, HASH, TRACKER, WEB_SEED, TORRENT_URL))
 
     def test_metadata_filter_keeps_only_authorized_url_and_removes_http_seeds(self):
-        manager = worker.Manager.__new__(worker.Manager)
+        manager = fake_manager()
         handle = FakeHandle([WEB_SEED, "https://evil.test/seed", WEB_SEED], ["https://evil.test/http"])
         entry = worker.Entry({"object_id": OBJECT_ID, "size": 4096, "info_hash_v2": HASH,
                               "state": "DOWNLOADING"}, handle, TRACKER, WEB_SEED)
@@ -202,7 +220,7 @@ class WorkerPolicyTests(unittest.TestCase):
             removed = added = 0
             def remove_url_seed(self, value): self.removed += 1; super().remove_url_seed(value)
             def add_url_seed(self, value): self.added += 1; super().add_url_seed(value)
-        manager = worker.Manager.__new__(worker.Manager)
+        manager = fake_manager()
         first = CountingHandle([WEB_SEED, "https://evil.test/seed"])
         entry = worker.Entry({"object_id": OBJECT_ID, "size": 4096, "info_hash_v2": HASH,
                               "state": "DOWNLOADING", "metadata_validated": True}, first, TRACKER, WEB_SEED)
@@ -225,7 +243,7 @@ class WorkerPolicyTests(unittest.TestCase):
             removed = []
             def remove_torrent(self, handle): self.removed.append(handle)
         with tempfile.TemporaryDirectory() as root:
-            manager = worker.Manager.__new__(worker.Manager)
+            manager = fake_manager()
             manager.session, manager.state_dir = Session(), Path(root)
             handle = SeedingHandle([WEB_SEED])
             entry = worker.Entry({"object_id": OBJECT_ID, "size": 4096, "info_hash_v2": HASH,
@@ -251,7 +269,7 @@ class WorkerPolicyTests(unittest.TestCase):
         self.assertEqual(restored.tracker_url, "")
 
     def test_existing_active_add_refreshes_runtime_web_seed(self):
-        manager = worker.Manager.__new__(worker.Manager)
+        manager = fake_manager()
         manager.lock = threading.RLock()
         handle = FakeHandle(["https://evil.test/old"], ["https://evil.test/http"])
         entry = worker.Entry({"object_id": OBJECT_ID, "size": 4096, "info_hash_v2": HASH,
@@ -274,7 +292,7 @@ class WorkerPolicyTests(unittest.TestCase):
                 "object_id": OBJECT_ID, "size": 4096, "info_hash_v2": HASH,
                 "state": "DOWNLOADING", "error_code": "", "completed_bytes": 128,
             }))
-            manager = worker.Manager.__new__(worker.Manager)
+            manager = fake_manager()
             manager.state_dir = state
             manager.entries = {}
             manager._restore()
@@ -286,7 +304,7 @@ class WorkerPolicyTests(unittest.TestCase):
 
     def test_resume_write_scrubs_all_url_seed_key_variants_before_bencoding(self):
         with tempfile.TemporaryDirectory() as root:
-            manager = worker.Manager.__new__(worker.Manager)
+            manager = fake_manager()
             manager.state_dir = Path(root)
             handle = FakeHandle()
             handle.resume = {
@@ -320,7 +338,7 @@ class WorkerPolicyTests(unittest.TestCase):
             removed = added = 0
             def remove_url_seed(self, value): self.removed += 1; super().remove_url_seed(value)
             def add_url_seed(self, value): self.added += 1; super().add_url_seed(value)
-        manager = worker.Manager.__new__(worker.Manager)
+        manager = fake_manager()
         handle = CountingHandle()
         entry = worker.Entry({"object_id": OBJECT_ID, "size": 4096, "info_hash_v2": HASH,
                               "state": "DOWNLOADING"}, handle, TRACKER, WEB_SEED)

@@ -95,8 +95,13 @@ func (r *seedReconciler) once(ctx context.Context) error {
 			continue
 		}
 		object := candidates[id]
+		relayNow := time.Now()
+		if r.now != nil {
+			relayNow = r.now()
+		}
+		entries, expires := r.media.currentRelays(relayNow)
 		if _, err := r.seeds.Seed(ctx, transfer.SeedRequest{ObjectID: id, Size: object.Size, InfoHashV2: object.InfoHashV2,
-			TrackerURL: grant.TrackerURL, TorrentURL: grant.TorrentURL}); err != nil {
+			TrackerURL: grant.TrackerURL, TorrentURL: grant.TorrentURL, Relays: entries, RelayListExpiresAt: expires}); err != nil {
 			errs = append(errs, err)
 			continue
 		}

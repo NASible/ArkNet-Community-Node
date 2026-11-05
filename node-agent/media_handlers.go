@@ -16,6 +16,7 @@ import (
 	"arknet/node-agent/internal/catalog"
 	"arknet/node-agent/internal/enrollment"
 	"arknet/node-agent/internal/mediaselection"
+	"arknet/node-agent/internal/relays"
 )
 
 type mediaStorage interface {
@@ -25,6 +26,7 @@ type mediaStorage interface {
 }
 
 type mediaOpt struct {
+	relayList     *relays.Holder
 	repository    mediaStorage
 	allocation    int64
 	coreURL       string

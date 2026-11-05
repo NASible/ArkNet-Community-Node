@@ -75,9 +75,11 @@ Core's decision:
 | Tracker | Announcing with its last grant; if that grant includes `seed` and the Node reports complete, being advertised to other peers | Until the grant expires: at most 5 min |
 | Core web seed | New range requests with its last grant | Until the grant expires: at most 5 min |
 | Core web seed | A range request that started before the grant expired | Until that response ends: Core's HTTP write timeout ends every response after 30 s, so at most 30 s past the grant's expiry |
-| Peer connections | Peer-wire connections already open to seeding Nodes, and new direct connections to seeder addresses it learned earlier | Unbounded while those Nodes keep seeding the object. Seeders cannot recognise a revoked peer: peers are pairwise and connect directly |
+| Peer connections (relayed) | Relayed sessions already open | Core pushes the revocation to every relay, which closes the Node's live sessions: measured 1.74 s from the decision, bytes stopped in 1.36 s (MVP E2E `arknet-p43-test-795aafddced2`, item 16) |
+| Peer connections (new) | Opening a relayed session with its last relay grant | Until that grant expires: at most 5 min, and refused once the relay has applied the push |
+| Peer connections (direct) | Nothing | Nodes never learn each other's addresses (trackers advertise only relay endpoints), so there is no address to dial |
 
-Enforcing these is **ARKSEC-004**: a Core-authorized private relay would let
-revocation close live peer sessions, and Core's web seed would need to check
-Node status per request and end open responses on revocation. Until then, the
-guarantee for revocation is the cooperative one above.
+ARKSEC-004 is closed by the relay (Prompt 48D). The remaining malicious-Node
+windows are the grant lifetimes above. Core's web seed still does not check
+Node status per request, so an open web-seed response can outlive revocation by
+up to its grant expiry plus 30 s.

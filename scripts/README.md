@@ -20,6 +20,40 @@ explanation.
   stay in `DIR`, and the last line is `EXIT <failed steps>`.
 - `python3 scripts/check-mvp-e2e.py [--setup-only] [--results FILE] [--diagnostics-dir DIR]`:
   Core, Node A and Node B acceptance for Prompt 43 items 2–16, 19 and 20.
+  Item 11 now exercises the **product Prompt 48D relay connector**, not the
+  throwaway spike: two different internal transfer gateway networks, fixed
+  transfer/Core/tracker/relay addresses, a real TLS relay with SPKI pin, distinct
+  list/revocation/endpoint keys, Core's signed relay list, and the tracker's
+  endpoint-public-key file. Compose 2.24.4+ is required for `!override`: the
+  inherited general-purpose transfer-egress network must not survive merging.
+  The transfer entrypoint is never overridden; startup gets NET_ADMIN, SETUID,
+  SETGID and SETPCAP and must exercise the product firewall/privilege drop.
+  `ARKNET_TRANSFER_RELAY_EGRESS=arknet-relay:7443` is the only relay allowance;
+  tracker/web-seed allowances come from their exact configured origins.
+  Each phase captures the full Agent and transfer network namespaces with
+  tcpdump, including both loopback plaintext peer streams. Missing/truncated/
+  dropped captures or TCP gaps fail, as do counterpart addresses in received
+  payloads (text or packed binary, including segmented BEP10 `yourip`). A real
+  plaintext BitTorrent handshake **and** `yourip` are mandatory: opaque MSE/RC4
+  peer streams cannot count as privacy evidence. Network frame addresses are
+  not mistaken for application data. TLS wire payload is conservatively scanned
+  too; an incidental ciphertext match fails rather than being silently ignored.
+  Raw captures can contain capabilities: they stay mode 0600 in the disposable
+  directory and are never copied into diagnostics; only counters are reported.
+  Item 11 also stops every configured relay during positive relay-only flow,
+  requires a 45-second quiet window with the web seed disconnected, then proves
+  web-seed delivery while the relay remains stopped. Outgoing SYN/UDP destinations
+  are classified and firewall DROP/REJECT counters must not increase (tcpdump
+  alone cannot see OUTPUT-blocked attempts).
+  Item 16 freezes B's Agent during positive A-to-B relay flow before revocation,
+  polls Core-delivery and relay-session-closure counts, requires a FIN/RST on the
+  same actively receiving relay socket within **5 seconds**, and keeps the
+  Agent frozen through the 45-second quiet window. Agent cancellation alone
+  cannot pass. Afterwards B must converge to REVOKED/CANCELLED and preserve media.
+  These are acceptance **requirements**, not recorded live results. Run the full
+  harness after connector/Agent integration; unit tests do not close ARKSEC-004.
+  Focused synthetic leak, encrypted-stream, direct-attempt, firewall-counter and
+  revocation negative controls: `python3 -B -m unittest scripts.relay_acceptance_test scripts.mvp_e2e_test -v`.
 - **Failure diagnostics.** When `check-mvp-e2e.py` hits an exception *or any
   item FAILs*, or `check-multi-node-swarm-stack.py` fails, the harness writes a
   sanitized bundle before cleanup. The bundle contains per-Node status,

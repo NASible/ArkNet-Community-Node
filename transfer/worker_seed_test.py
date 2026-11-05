@@ -99,7 +99,7 @@ class SeedModeTests(unittest.TestCase):
         status = self.wait_state(manager, "SEEDING")
         self.assertEqual((status["total_bytes"], status["uploaded_bytes"]), (SIZE, 0))
         handle = manager.seeds[OBJECT_ID].handle
-        self.assertEqual([t["url"] for t in handle.trackers()], [TRACKER])
+        self.assertEqual([t["url"] for t in handle.trackers()], [manager._local_tracker(self.info_hash, TRACKER)])
         self.assertEqual(handle.url_seeds(), [])
         self.assertEqual(handle.http_seeds(), [])
         flags = handle.flags()
@@ -120,7 +120,7 @@ class SeedModeTests(unittest.TestCase):
         self.seed(manager)
         self.wait_state(manager, "VERIFICATION_FAILED")
         self.assertIsNone(manager.seeds[OBJECT_ID].handle)
-        self.assertEqual(manager.session.get_torrents(), [])
+        self.assertEqual(manager.seed_session.get_torrents(), [])
         time.sleep(1.5)  # periodic refresh must not resurrect or repair it
         self.assertEqual(snapshot(self.media), before)
 
@@ -140,7 +140,7 @@ class SeedModeTests(unittest.TestCase):
         with self.assertRaisesRegex(worker.WorkerError, "invalid_request"):
             self.seed(manager)
         self.assertEqual(manager.seeds, {})
-        self.assertEqual(manager.session.get_torrents(), [])
+        self.assertEqual(manager.seed_session.get_torrents(), [])
         self.assertEqual(self.fetched, [])  # rejected before contacting Core
 
     def test_invalid_file_name_urls_hash_or_unconfigured_media_dir_are_rejected(self):
@@ -194,7 +194,7 @@ class SeedModeTests(unittest.TestCase):
         self.assertEqual([s["object_id"] for s in listed["seeds"]], [OBJECT_ID])
         removed = worker.dispatch_request(manager, {"id": 9, "op": "unseed", "object_id": OBJECT_ID})
         self.assertEqual(removed["seed"]["state"], "REMOVED")
-        self.assertEqual(manager.session.get_torrents(), [])
+        self.assertEqual(manager.seed_session.get_torrents(), [])
         self.assertEqual(manager.list_seeds(), [])
         with self.assertRaisesRegex(worker.WorkerError, "not_found"):
             manager.unseed(OBJECT_ID)
@@ -209,10 +209,10 @@ class SeedModeTests(unittest.TestCase):
         refreshed = self.seed(manager, tracker_url=TRACKER_2)
         self.assertEqual(refreshed["state"], "SEEDING")  # no second recheck
         self.assertIs(manager.seeds[OBJECT_ID].handle, handle)
-        self.assertEqual([t["url"] for t in handle.trackers()], [TRACKER_2])
+        self.assertEqual([t["url"] for t in handle.trackers()], [manager._local_tracker(self.info_hash, TRACKER_2)])
         self.assertEqual(handle.url_seeds(), [])
         self.assertEqual(len(self.fetched), 1)  # metadata is not fetched again
-        self.assertEqual(len(manager.session.get_torrents()), 1)
+        self.assertEqual(len(manager.seed_session.get_torrents()), 1)
         for override in ({"size": SIZE + 1}, {"info_hash": "c" * 64}):
             with self.assertRaisesRegex(worker.WorkerError, "conflict"):
                 self.seed(manager, **override)
@@ -236,7 +236,7 @@ class SeedModeTests(unittest.TestCase):
         self.assertEqual(list(self.state.iterdir()), [])
         second = self.manager()
         self.assertEqual(second.list_seeds(), [])
-        self.assertEqual(second.session.get_torrents(), [])
+        self.assertEqual(second.seed_session.get_torrents(), [])
         self.assertEqual(second.list(), [])
         self.assertEqual(snapshot(self.media), before)
 

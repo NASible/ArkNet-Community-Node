@@ -215,6 +215,7 @@ func (t transferOpt) authorizeStart(ctx context.Context, selection mediaselectio
 			return transfer.Request{}, &transferFailure{503, "catalog_unavailable"}
 		}
 		request.TrackerURL, request.WebSeedURL, request.TorrentURL = grant.TrackerURL, grant.WebSeedURL, grant.TorrentURL
+		request.Relays, request.RelayListExpiresAt = t.media.currentRelays(time.Now())
 		return request, nil
 	}
 	return transfer.Request{}, &transferFailure{404, "media_not_found"}

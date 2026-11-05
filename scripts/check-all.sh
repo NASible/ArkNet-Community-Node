@@ -106,8 +106,31 @@ postgres_tests() {
 worker_tests() {
     docker build -q -t "$WORKER_IMAGE" transfer >/dev/null || return 1
     local status=0
-    docker run --rm --network none -u 0 -v "$ROOT/transfer:/w:ro" -w /w --entrypoint python3 \
-        "$WORKER_IMAGE" -B -m unittest -v worker_test worker_seed_test || status=$?
+    docker run --rm --network none -u 10001:10001 -v "$ROOT/transfer:/w:ro" -w /w --entrypoint python3 \
+        "$WORKER_IMAGE" -B -m unittest -v worker_test worker_seed_test worker_relay_test \
+        worker_connector_test relay_connector_test egress_policy_test || status=$?
+    # Real Go relay + tracker with two libtorrent sessions: relayed seed -> download.
+    local bin arch cid
+    bin=$(mktemp -d "${TMPDIR:-/tmp}/arknet-relay-bin.XXXXXX")
+    arch=$(docker version --format '{{.Server.Arch}}')
+    if (cd relay && CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -o "$bin/relay" .) &&
+        (cd tracker && CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -o "$bin/tracker" .); then
+        # mktemp creates 0700 and docker cp keeps the mode; UID 10001 must traverse it.
+        chmod 755 "$bin" "$bin/relay" "$bin/tracker"
+        # docker cp, not a bind mount: the temp dir may be outside the VM's shared paths.
+        if cid=$(docker create --network none -u 10001:10001 -v "$ROOT/transfer:/w:ro" \
+                --tmpfs /work:uid=10001,gid=10001 -w /w -e ARKNET_TEST_TMPDIR=/work \
+                -e ARKNET_TEST_RELAY_BINARY=/probe/relay -e ARKNET_TEST_TRACKER_BINARY=/probe/tracker \
+                --entrypoint python3 "$WORKER_IMAGE" -B -m unittest -v relay_integration_test); then
+            { docker cp "$bin" "$cid:/probe" && docker start -a "$cid"; } || status=$?
+            docker rm -f "$cid" >/dev/null 2>&1
+        else
+            status=1
+        fi
+    else
+        status=1
+    fi
+    rm -rf "$bin"
     docker image rm -f "$WORKER_IMAGE" >/dev/null 2>&1
     return $status
 }

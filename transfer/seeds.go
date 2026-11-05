@@ -57,7 +57,7 @@ func seedRoute(w http.ResponseWriter, r *http.Request, e transferEngine) {
 			}
 			writeJSON(w, 200, map[string]any{"seeds": list})
 		case http.MethodPost:
-			fields, err := exactObject(r, "object_id", "size", "info_hash_v2", "tracker_url", "torrent_url")
+			fields, err := exactObjectWithOptionalFields(r, []string{"relays", "relay_list_expires_at"}, "object_id", "size", "info_hash_v2", "tracker_url", "torrent_url")
 			var id, hash, trackerURL, torrentURL string
 			var size int64
 			if err != nil || json.Unmarshal(fields["object_id"], &id) != nil ||
@@ -66,6 +66,20 @@ func seedRoute(w http.ResponseWriter, r *http.Request, e transferEngine) {
 				json.Unmarshal(fields["tracker_url"], &trackerURL) != nil ||
 				json.Unmarshal(fields["torrent_url"], &torrentURL) != nil ||
 				!validID(id) || size < 0 || !lowerHex(hash) || trackerURL == "" || torrentURL == "" {
+				failure(w, 400, "invalid_request")
+				return
+			}
+			relays, expiresAt, relayErr := parseRelays(fields)
+			if relayErr != nil {
+				failure(w, 400, "invalid_request")
+				return
+			}
+			if relaySeeds, supported := e.(relaySeedEngine); supported {
+				status, err := relaySeeds.SeedWithRelays(id, size, hash, trackerURL, torrentURL, relays, expiresAt)
+				seedResult(w, status, err)
+				return
+			}
+			if len(relays) != 0 {
 				failure(w, 400, "invalid_request")
 				return
 			}

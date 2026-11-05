@@ -31,9 +31,56 @@ go build -o /tmp/arknet-transfer .
 | `ARKNET_TRANSFER_STAGING_DIR` | Required absolute non-root staging directory. |
 | `ARKNET_TRANSFER_STATE_DIR` | Required absolute non-root state directory distinct from staging. |
 | `ARKNET_TRANSFER_WORKER` | Required absolute path to `worker.py` or its executable wrapper. |
-| `ARKNET_TRANSFER_LISTEN_INTERFACES` | `0.0.0.0:0`; numeric libtorrent listener address. |
+| `ARKNET_TRANSFER_LISTEN_INTERFACES` | `0.0.0.0:0` input default; only its port is used. The worker always binds libtorrent to `127.0.0.1`, never an external interface. |
+| `ARKNET_TRANSFER_RELAY_EGRESS` | Comma-separated operator relay `host:port` destinations allowed by the container's boot-time firewall; at most 16. Must cover the Agent's verified signed list. Empty means web-seed-only operation. |
 | `ARKNET_TRANSFER_DOWNLOAD_RATE_LIMIT` | `0`; nonnegative bytes/second, where zero is unlimited. |
 | `ARKNET_TRANSFER_MEDIA_DIR` | Optional; read by the worker only. Directory that holds the Agent-finalized `<object_id>.mp4` files. When it is unset, the worker rejects `seed`. |
+
+## Relay-only peer transport
+
+The Agent supplies runtime-only `relays` (`id`, `address`, `spki_sha256`) and
+`relay_list_expires_at` on add/refresh and seed requests, exclusively from its
+newest unexpired verified Core list. Omitting these fields clears prior relay
+authorization: web-seed downloads remain available, but peer connections do not.
+They are never persisted in manifests or returned in transfer status.
+
+The worker starts a loopback SOCKS5 connector and tracker bridge. Peer SOCKS
+requests accept only the relay virtual range `100.64.0.0/10`; the BitTorrent
+handshake selects the full-hash-bound grant. Relays are tried in signed-list
+order using TLS 1.3 with the listed SPKI pin. A seeder registers with a relay,
+attaches its endpoint attestation to tracker announces, and accepts relayed
+streams by dialing libtorrent on `127.0.0.1`. There is no direct-peer fallback.
+DHT/LSD/PEX and both uTP directions are disabled. Multiple peers can arrive on
+loopback.
+
+libtorrent opens no TCP listener at all once a SOCKS5 proxy is configured, so
+the worker runs two sessions. The **download session** is SOCKS5-only and only
+dials. The **seed session** has no proxy and listens on `127.0.0.1` at the
+configured port (the actual bound port is handed to the connector). It must
+never dial a peer, so the tracker bridge strips `peers`/`peers6` from every seed
+(`left=0`) announce reply and rejects malformed replies. Seeds carry no web
+seeds, and the namespace firewall drops any other attempt.
+
+Incoming/outgoing BitTorrent MSE is disabled because the connector must read the
+swarm handshake and the external relay legs already use TLS.
+
+This libtorrent binding also sends web-seed traffic through SOCKS. The only
+nonvirtual exception is the exact configured trusted web-seed host/IP and port;
+the connector dials the configured origin, not a peer-supplied destination.
+Tracker requests go through the loopback bridge to the configured tracker
+origin, with no redirect following.
+
+The product container entrypoint installs default-deny IPv4/IPv6 namespace
+firewalls before starting the service. Only loopback, established replies, the
+control API, and resolved configured tracker/web-seed/relay TCP destinations are
+allowed. Compose grants `NET_ADMIN`, `SETUID`, `SETGID`, and `SETPCAP` only for this
+initializer, which then uses `setpriv` to run UID/GID 10001 with empty effective,
+inheritable, ambient and bounding capability sets. Keep the root-owned
+initializer and worker sources immutable. Do not override the entrypoint or
+start the service directly in deployment. Changed destination DNS addresses need
+a container restart; changing the signed list cannot widen the firewall.
+
+## API configuration notes
 
 Unset/empty optional settings use their defaults; an empty token fails startup.
 Keep the listener on loopback. A wildcard address explicitly exposes this

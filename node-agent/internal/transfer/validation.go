@@ -3,6 +3,7 @@ package transfer
 import (
 	"net/url"
 	"strings"
+	"time"
 )
 
 // Object IDs follow the catalog's opaque media_<sha256 hex> identity format.
@@ -18,7 +19,7 @@ func lowerHex(s string) bool {
 	return true
 }
 func validRequest(r Request) bool {
-	return validID(r.ObjectID) && r.Size >= 0 && (r.InfoHashV2 == "" || len(r.InfoHashV2) == 64 && lowerHex(r.InfoHashV2)) && validGrantURL(r.TrackerURL) && validGrantURL(r.WebSeedURL) && validGrantURL(r.TorrentURL)
+	return validID(r.ObjectID) && r.Size >= 0 && (r.InfoHashV2 == "" || len(r.InfoHashV2) == 64 && lowerHex(r.InfoHashV2)) && validGrantURL(r.TrackerURL) && validGrantURL(r.WebSeedURL) && validGrantURL(r.TorrentURL) && validRelays(r.Relays, r.RelayListExpiresAt, time.Now())
 }
 func validGrantURL(value string) bool {
 	u, err := url.Parse(value)
@@ -42,7 +43,7 @@ func validStatus(s Status) bool {
 
 func validSeedRequest(r SeedRequest) bool {
 	if !validID(r.ObjectID) || r.Size < 0 || len(r.InfoHashV2) != 64 || !lowerHex(r.InfoHashV2) ||
-		!validGrantURL(r.TrackerURL) || !validGrantURL(r.TorrentURL) {
+		!validGrantURL(r.TrackerURL) || !validGrantURL(r.TorrentURL) || !validRelays(r.Relays, r.RelayListExpiresAt, time.Now()) {
 		return false
 	}
 	torrent, err := url.Parse(r.TorrentURL)

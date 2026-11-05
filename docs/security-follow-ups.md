@@ -8,7 +8,7 @@ item remains open until its acceptance criteria are covered by automated tests.
 | <a id="arksec-001"></a>ARKSEC-001 | Critical | **Closed** 2026-10-31 (Prompts 46A/46B; MVP E2E run `arknet-p43-test-0737adcda8fa`, item 13 and its malicious-Node harness; see [validation](development/prompt46b-validation.md)) | Remove reusable global passwords from the community-Node trust boundary. Replace Node-mediated password submission and Node-held password-derived verifiers with a Core-authenticated, one-time, Node-bound assertion or a reviewed PAKE/passkey design. | A malicious Node cannot capture a credential usable at Core or another Node; assertions bind Node, member, purpose, nonce, and expiry; replay and cross-Node tests pass. |
 | <a id="arksec-002"></a>ARKSEC-002 | High | Closed (2026-10-28 AKDT, Prompt 45B) | Node-local operator sessions now guard every management route before handler side effects. Generated route/matrix and repository-spy tests pass. The operator-authenticated MVP E2E (including Node B denial), upgrade/bootstrap/fingerprint check and real Chromium LAN HTTPS login/logout check passed; see [Prompt 45B validation](development/prompt45b-validation.md). | Anonymous and non-admin callers are denied before side effects; an endpoint/permission matrix is tested; invitation secrets are returned only to an authorized operator. |
 | <a id="arksec-003"></a>ARKSEC-003 | High | Fixed (live proof 2026-10-27) | Enforce Peer Serving OFF in the transfer runtime, including while a torrent is incomplete. The tracker never advertises incomplete peers; the Agent seed reconciler serves only with Peer Serving ON and a fresh Core seed grant, and unseeds within one interval when it turns OFF or authorization ends (`docs/peer-serving.md`). Proven by `scripts/check-multi-node-swarm-stack.py` (`EXIT 0`) on a multi-piece object: Node A sent 2,900 bytes in total while OFF (less than one 16 KiB block), 3,725,555 bytes while ON, and 0 bytes after OFF; see [MVP validation report](mvp-validation-report.md). | A real multi-piece libtorrent test records zero payload upload while disabled; enabling permits upload only with fresh seed authorization; disabling an active session stops upload. |
-| <a id="arksec-004"></a>ARKSEC-004 | High | Open — design accepted 2026-11-03 (Prompt 48, [private relay design](private-relay-design.md)); relay service built (Prompt 48A, [relay](../relay/README.md)); Core relay list and revocation push built (Prompt 48B); tracker relay-only advertisements built (Prompt 48C, [endpoint tokens](relay-endpoint-tokens.md)); Node connector pending (48D); also owns the malicious-Node revocation window recorded by Prompt 47 ([Node revocation](node-revocation.md#malicious-node-residual-window-arksec-004)) | Make private relay the default peer transport and direct peer addressing an explicit opt-in fallback. | With default configuration, peers neither receive each other's origin address nor exchange payload directly; relay failure does not silently enable direct mode. |
+| <a id="arksec-004"></a>ARKSEC-004 | High | **Closed** 2026-11-04 (Prompt 48D; MVP E2E run `arknet-p43-test-795aafddced2`, 17/17, items 11 and 16; see [validation](development/prompt48d-validation.md)). Built on the [private relay design](private-relay-design.md) (48), [relay](../relay/README.md) (48A), Core relay list and revocation push (48B) and [endpoint tokens](relay-endpoint-tokens.md) (48C). Residual malicious-Node grant windows are in [Node revocation](node-revocation.md#malicious-node-residual-window-arksec-004) | Make private relay the default peer transport and direct peer addressing an explicit opt-in fallback. | With default configuration, peers neither receive each other's origin address nor exchange payload directly; relay failure does not silently enable direct mode. |
 | <a id="arksec-005"></a>ARKSEC-005 | Medium | Open | Replace the shared Core development admin bearer and broad Node key authority with identities and route-scoped capabilities. | Separate permissions cover node decisions, user administration, media administration, membership actions, and swarm grants; denied calls do not reach repositories; administrative actions are attributable and auditable. |
 | <a id="arksec-006"></a>ARKSEC-006 | Medium | **Closed for cooperative Nodes** 2026-10-31 (Prompt 47; MVP E2E run `arknet-p43-test-e5cc73079748`, item 16; negative control `arknet-p43-test-5542cab09874`; see [validation](development/prompt47-validation.md)). Malicious-Node enforcement moved to ARKSEC-004 | Define and enforce active-session revocation. Cooperative Agents must stop transfers on authoritative `REVOKED`/`BLOCKED`; malicious-node enforcement requires relay/session controls. | Revocation denies new grants, cancels cooperative active handles, stops byte counters, and bounds any residual authorization window in a documented integration test. |
 | <a id="arksec-007"></a>ARKSEC-007 | Medium | Open | Provide a supported TLS ingress configuration that redacts tracker, torrent, and web-seed bearer URLs. | A sentinel grant traverses the supported ingress and is absent from proxy, Core, tracker, Agent, and UI logs. |
@@ -76,5 +76,34 @@ web-seed grants for at most 5 minutes; an open web-seed response for at most
 30 s past that (Core's write timeout); and open or remembered peer connections
 to seeding Nodes without a time bound. That window is recorded under
 **ARKSEC-004** and documented in [Node revocation](node-revocation.md).
+
+## Phase 20E relay closure (2026-11-04 AKST)
+
+Prompt 48D closes **ARKSEC-004**. Peer transport is relay-only by default: the
+transfer worker dials peers only through its in-namespace connector (SOCKS5
+limited to the virtual `100.64.0.0/10` range), which reaches peers over pinned
+TLS 1.3 to operator relays from Core's signed relay list. Trackers advertise
+only relay-signed virtual endpoints. There is no direct mode and no fallback: a
+root entrypoint installs a default-deny namespace firewall (tracker, web seed,
+configured relays and loopback only) and then drops to UID 10001 with no
+capabilities. DHT, LSD, PEX and uTP are off.
+
+MVP E2E run `arknet-p43-test-795aafddced2` passed 17/17:
+
+- Item 11: Node A seeded 33.58 MB to Node B only through the relay; B verified
+  the SHA-256 with its web seed disconnected. Full-namespace captures of both
+  Agents and both transfer containers held none of the counterpart's addresses
+  (text, packed binary, BEP 10 `yourip`), every outgoing attempt went to an
+  approved gateway, and the firewall recorded 0 denied attempts. With every
+  relay stopped, peer bytes stopped at once and stayed at 0 for 53 s while 76 MB
+  still arrived from Core's web seed.
+- Item 16: with B's Agent frozen (so only Core enforcement could act), Core's
+  revocation push reached the relay 1.74 s after the decision and closed B's
+  live relayed session; B's received bytes stopped 1.36 s after revocation and
+  stayed quiet for 51 s.
+
+What a revoked malicious Node keeps is now bounded by grant lifetime; see
+[Node revocation](node-revocation.md#malicious-node-residual-window-arksec-004).
+The live-test VMs were not redeployed.
 
 The MVP security review is in [MVP security review](mvp-security-review.md).

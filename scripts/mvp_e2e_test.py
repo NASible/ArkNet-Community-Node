@@ -22,6 +22,16 @@ class MVPHarnessTests(unittest.TestCase):
         self.assertIn('node-agent seed reconciler -> transfer service -> libtorrent worker', source)
         self.assertNotIn('NODE_A_SEEDER', source)
 
+    def test_relay_only_acceptance_has_real_configuration_and_capture_guards(self):
+        source = PATH.read_text()
+        for needle in ('relay_acceptance.Capture(', 'ARKNET_RELAYS_FILE',
+                       'ARKNET_RELAY_LIST_SIGNING_KEY_FILE', 'ARKNET_TRANSFER_RELAY_EGRESS',
+                       'ARKNET_TRACKER_RELAY_VERIFY_KEYS_FILE', 'connections_closed',
+                       'assert_no_direct_attempts(', '"pause", b_agent',
+                       '"--internal"', 'all relays down', 'inspect_capture('):
+            self.assertIn(needle, source)
+        self.assertNotIn('allowed = {"arknet-transfer@" + wan}', source)
+
     def test_item_13_covers_the_core_bound_login_model(self):
         # Prompt 46B acceptance: online, offline in window, rejected after it,
         # replay, cross-Node, and the malicious-Node recording harness.

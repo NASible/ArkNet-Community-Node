@@ -45,7 +45,7 @@ func transferRoute(w http.ResponseWriter, r *http.Request, e transferEngine) {
 		case http.MethodGet:
 			writeJSON(w, 200, map[string]any{"transfers": e.List()})
 		case http.MethodPost:
-			fields, err := exactObjectWithOptionalFields(r, []string{"tracker_url", "web_seed_url", "torrent_url"}, "object_id", "size", "info_hash_v2")
+			fields, err := exactObjectWithOptionalFields(r, []string{"tracker_url", "web_seed_url", "torrent_url", "relays", "relay_list_expires_at"}, "object_id", "size", "info_hash_v2")
 			var id, hash, trackerURL, webSeedURL, torrentURL string
 			var size int64
 			if err != nil || json.Unmarshal(fields["object_id"], &id) != nil ||
@@ -55,19 +55,37 @@ func transferRoute(w http.ResponseWriter, r *http.Request, e transferEngine) {
 				failure(w, 400, "invalid_request")
 				return
 			}
+			relays, expiresAt, relayErr := parseRelays(fields)
+			if relayErr != nil {
+				failure(w, 400, "invalid_request")
+				return
+			}
 			trackerRaw, hasTracker := fields["tracker_url"]
 			webSeedRaw, hasWebSeed := fields["web_seed_url"]
 			torrentRaw, hasTorrent := fields["torrent_url"]
 			if hasTracker || hasWebSeed || hasTorrent {
-				authorizedEngine, supported := e.(authorizedTransferEngine)
-				if !supported || !hasTracker || !hasWebSeed || !hasTorrent || json.Unmarshal(trackerRaw, &trackerURL) != nil ||
+				if !hasTracker || !hasWebSeed || !hasTorrent || json.Unmarshal(trackerRaw, &trackerURL) != nil ||
 					json.Unmarshal(webSeedRaw, &webSeedURL) != nil || json.Unmarshal(torrentRaw, &torrentURL) != nil ||
 					trackerURL == "" || webSeedURL == "" || torrentURL == "" {
 					failure(w, 400, "invalid_request")
 					return
 				}
+				if relayEngine, supported := e.(relayTransferEngine); supported {
+					status, err := relayEngine.AddWithAuthorizationAndRelays(id, size, hash, trackerURL, webSeedURL, torrentURL, relays, expiresAt)
+					result(w, status, err)
+					return
+				}
+				authorizedEngine, supported := e.(authorizedTransferEngine)
+				if !supported || len(relays) != 0 {
+					failure(w, 400, "invalid_request")
+					return
+				}
 				status, err := authorizedEngine.AddWithAuthorization(id, size, hash, trackerURL, webSeedURL, torrentURL)
 				result(w, status, err)
+				return
+			}
+			if len(relays) != 0 {
+				failure(w, 400, "invalid_request")
 				return
 			}
 			status, err := e.Add(id, size, hash)

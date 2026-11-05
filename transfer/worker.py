@@ -4,6 +4,7 @@ import base64
 import json
 import os
 import re
+import ipaddress
 import sys
 import tempfile
 import threading
@@ -22,18 +23,41 @@ SECURE_FLAGS = (lt.torrent_flags.disable_dht | lt.torrent_flags.disable_lsd |
                 lt.torrent_flags.disable_pex | lt.torrent_flags.override_trackers |
                 lt.torrent_flags.override_web_seeds)
 TERMINAL = {"COMPLETED", "CANCELLED", "VERIFICATION_FAILED"}
+CONNECTOR_REFUSALS = {"invalid hash", "invalid tracker", "expired relay list", "invalid grant",
+                      "invalid grant scope", "expired grant", "invalid relay", "connector closed",
+                      "too many routes"}
 CHECKING_STATES = {"queued_for_checking", "checking_files", "checking_resume_data", "allocating"}
 
 
-def session_settings(listen_interfaces, rate_limit, allow_private_web_seed=False):
+def session_settings(listen_interfaces, rate_limit, allow_private_web_seed=False, proxy_port=19080):
+    """Download session: every peer connection goes out through the SOCKS5 connector.
+
+    libtorrent opens no TCP listener once a SOCKS5 proxy is configured, so this
+    session only dials. Seeds use seed_session_settings, which listens instead.
+    """
+    # Always loopback: the same-namespace connector is the only peer listener.
+    port = listen_interfaces.rsplit(":", 1)[-1]
     return {
+        "proxy_type": int(lt.proxy_type_t.socks5),
+        "proxy_hostname": "127.0.0.1",
+        "proxy_port": proxy_port,
+        "proxy_peer_connections": True,
+        "proxy_hostnames": True,
+        "proxy_tracker_connections": False,
+        "enable_outgoing_utp": False,
+        "enable_incoming_utp": False,
+        # The connector reads the handshake's swarm key before selecting a grant.
+        # TLS 1.3 already encrypts both external relay legs.
+        "out_enc_policy": int(lt.enc_policy.disabled),
+        "in_enc_policy": int(lt.enc_policy.disabled),
+        "allow_multiple_connections_per_ip": True,
         "enable_dht": False,
         "enable_lsd": False,
         "enable_upnp": False,
         "enable_natpmp": False,
         "broadcast_lsd": False,
         "max_pex_peers": 0,
-        "listen_interfaces": listen_interfaces,
+        "listen_interfaces": "127.0.0.1:" + port,
         "download_rate_limit": rate_limit,
         "ignore_limits_on_local_network": False,
         "announce_to_all_trackers": False,
@@ -42,6 +66,49 @@ def session_settings(listen_interfaces, rate_limit, allow_private_web_seed=False
         "use_dht_as_fallback": False,
         "ssrf_mitigation": not allow_private_web_seed,
     }
+
+
+def seed_session_settings(listen_interfaces):
+    """Seed session: accepts relayed peers that the connector dials on loopback.
+
+    It has no proxy, so it must never dial a peer: the tracker bridge removes
+    every peer from seed announce replies, seeds have no web seeds, and the
+    namespace firewall is the independent backstop.
+    """
+    settings = session_settings(listen_interfaces, 0)
+    settings.update(proxy_type=int(lt.proxy_type_t.none), proxy_hostname="", proxy_port=0,
+                    proxy_peer_connections=False, proxy_hostnames=False)
+    return settings
+
+
+def valid_relays(relays, expires):
+    if not isinstance(relays, list) or len(relays) > 16 or type(expires) is not int:
+        return False
+    if not relays:
+        return expires == 0
+    if expires <= int(time.time()):
+        return False
+    seen = set()
+    for relay in relays:
+        if (not isinstance(relay, dict) or set(relay) != {"id", "address", "spki_sha256"} or
+                not all(isinstance(v, str) for v in relay.values()) or
+                not re.fullmatch(r"[a-z0-9][a-z0-9.-]{0,63}", relay["id"]) or relay["id"] in seen or
+                not re.fullmatch(r"[0-9a-f]{64}", relay["spki_sha256"])):
+            return False
+        try:
+            address = urlsplit("//" + relay["address"])
+            if (not address.hostname or address.username is not None or address.password is not None or
+                    address.path or address.query or address.fragment or address.port is None or not 1 <= address.port <= 65535):
+                return False
+            try:
+                ipaddress.ip_address(address.hostname)
+            except ValueError:
+                if not re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?", address.hostname):
+                    return False
+        except (ValueError, TypeError):
+            return False
+        seen.add(relay["id"])
+    return True
 
 
 def valid_web_seed_origin(origin, allow_http):
@@ -307,8 +374,20 @@ class Manager:
         self.web_seed_origin = web_seed_origin
         self.staging.mkdir(parents=True, exist_ok=True, mode=0o700)
         self.state_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
-        self.session = lt.session(session_settings(listen_interfaces, rate_limit,
-                                                   allow_private_web_seed))
+        from relay_connector import Connector
+        self.connector = Connector(tracker_origin, listen_port=int(listen_interfaces.rsplit(":", 1)[-1]) or 6881,
+                                   web_seed_origin=web_seed_origin)
+        try:
+            self.session = lt.session(session_settings("127.0.0.1:0", rate_limit,
+                                                       allow_private_web_seed, self.connector.proxy_port))
+            self.seed_session = lt.session(seed_session_settings(listen_interfaces))
+            port = self.seed_session.listen_port()
+            if not 1 <= port <= 65535:
+                raise RuntimeError("seed listener unavailable")
+            self.connector.listen_port = port
+        except Exception:
+            self.connector.close()
+            raise
         # Metadata exchange is required for v2 magnets. Deliberately never install ut_pex.
         self.session.add_extension(lt.create_ut_metadata_plugin)
         self.entries = {}
@@ -317,6 +396,23 @@ class Manager:
         self._restore()
         self.saver = threading.Thread(target=self._periodic_save, name="resume-writer", daemon=True)
         self.saver.start()
+
+    def _authorize_relay(self, info_hash, tracker_url, relays, expires, seed=False):
+        relays = [] if relays is None else relays
+        if not valid_relays(relays, expires):
+            raise rejected("relay", "relay_list")
+        try:
+            self.connector.authorize(info_hash, tracker_url, relays, expires, seed=seed)
+        except ValueError as error:
+            # Only the connector's fixed refusal literals are logged; anything
+            # else (which could carry request data) is reported as "other".
+            reason = str(error) if str(error) in CONNECTOR_REFUSALS else "other"
+            print(json.dumps({"event": "relay_authorization_refused", "reason": reason},
+                             separators=(",", ":")), file=sys.stderr, flush=True)
+            raise WorkerError("invalid_request") from None
+
+    def _local_tracker(self, info_hash, tracker_url):
+        return self.connector.tracker_url(info_hash, tracker_url)
 
     def manifest_path(self, object_id):
         return self.state_dir / (object_id + ".json")
@@ -352,7 +448,7 @@ class Manager:
                                 entry.web_seed_url, entry.torrent_data)
         params.ti = info
         params.save_path = str(self.staging / entry.object_id)
-        params.trackers = [entry.tracker_url]
+        params.trackers = [self._local_tracker(entry.info_hash, entry.tracker_url)]
         params.url_seeds = [entry.web_seed_url] if entry.web_seed_url else []
         params.http_seeds = []
         params.flags |= SECURE_FLAGS
@@ -377,6 +473,7 @@ class Manager:
                 continue
 
     def _fail(self, entry):
+        self.connector.remove(entry.info_hash)
         if entry.handle is not None:
             try:
                 entry.handle.pause()
@@ -447,6 +544,7 @@ class Manager:
                 # Leave the swarm: receiving never implies serving. Without this the
                 # handle keeps seeding (even after the Agent moves the file, via the
                 # open descriptor), regardless of the operator's Peer Serving setting.
+                self.connector.remove(entry.info_hash)
                 self.session.remove_torrent(entry.handle)
                 entry.handle = None
                 entry.secured_handle = None
@@ -510,16 +608,17 @@ class Manager:
         except Exception:
             # Never serve unverified bytes; upload mode guarantees nothing was written.
             try:
-                self.session.remove_torrent(seed.handle)
+                self.seed_session.remove_torrent(seed.handle)
             except Exception:
                 pass
+            self.connector.remove(seed.info_hash)
             seed.handle = None
             seed.state = "VERIFICATION_FAILED"
             print(json.dumps({"event": "seed_verification_failed"}, separators=(",", ":")),
                   file=sys.stderr, flush=True)
             return 0
 
-    def seed(self, object_id, size, info_hash, tracker_url, torrent_url, file_name):
+    def seed(self, object_id, size, info_hash, tracker_url, torrent_url, file_name, relays=None, relay_list_expires_at=0):
         with self.lock:
             if (self.media_dir is None or not valid_tracker_url(tracker_url, self.tracker_origin) or
                     not valid_torrent_url(torrent_url, self.web_seed_origin, object_id) or
@@ -533,8 +632,9 @@ class Manager:
                 if existing.size != size or existing.info_hash != info_hash:
                     raise WorkerError("conflict")
                 if existing.handle is not None:
-                    # Fresh grant: refresh only the announce URL, then re-announce.
-                    existing.handle.replace_trackers([lt.announce_entry(tracker_url)])
+                    # Refresh the relay authorization without rebuilding the torrent.
+                    self._authorize_relay(info_hash, tracker_url, relays, relay_list_expires_at, seed=True)
+                    existing.handle.replace_trackers([lt.announce_entry(self._local_tracker(info_hash, tracker_url))])
                     existing.handle.force_reannounce()
                 return existing.status(self._refresh_seed(existing))
             path = self.media_dir / file_name
@@ -556,7 +656,8 @@ class Manager:
             params.ti = metadata
             params.save_path = str(self.media_dir)
             params.renamed_files = {payload[0]: file_name}
-            params.trackers = [tracker_url]
+            self._authorize_relay(info_hash, tracker_url, relays, relay_list_expires_at, seed=True)
+            params.trackers = [self._local_tracker(info_hash, tracker_url)]
             params.url_seeds = []
             params.http_seeds = []
             params.name = object_id
@@ -566,7 +667,7 @@ class Manager:
             params.flags &= ~(lt.torrent_flags.paused | lt.torrent_flags.auto_managed |
                               lt.torrent_flags.seed_mode | lt.torrent_flags.share_mode)
             try:
-                handle = self.session.add_torrent(params)
+                handle = self.seed_session.add_torrent(params)
             except Exception:
                 raise WorkerError("invalid_request")
             seed = Seed(object_id, size, info_hash, handle)
@@ -579,8 +680,9 @@ class Manager:
             if seed is None:
                 raise WorkerError("not_found")
             if seed.handle is not None:
-                self.session.remove_torrent(seed.handle)  # never delete files
+                self.seed_session.remove_torrent(seed.handle)  # never delete files
                 seed.handle = None
+            self.connector.remove(seed.info_hash)
             return {"object_id": object_id, "state": "REMOVED", "total_bytes": seed.size, "uploaded_bytes": 0}
 
     def list_seeds(self):
@@ -608,7 +710,7 @@ class Manager:
         """
         now = time.monotonic() if now is None else now
         handle = entry.handle
-        handle.replace_trackers([lt.announce_entry(entry.tracker_url)])
+        handle.replace_trackers([lt.announce_entry(self._local_tracker(entry.info_hash, entry.tracker_url))])
         for url in list(handle.http_seeds()):
             handle.remove_http_seed(url)
         live = list(handle.url_seeds())
@@ -623,18 +725,19 @@ class Manager:
             handle.add_url_seed(entry.web_seed_url)
             entry.applied_web_seed = (handle, entry.web_seed_url, now)
 
-    def add(self, object_id, size, info_hash, tracker_url, web_seed_url, torrent_url):
+    def add(self, object_id, size, info_hash, tracker_url, web_seed_url, torrent_url, relays=None, relay_list_expires_at=0):
         with self.lock:
             if (not valid_tracker_url(tracker_url, self.tracker_origin) or
                     not valid_web_seed_url(web_seed_url, self.web_seed_origin, object_id) or
                     not valid_torrent_url(torrent_url, self.web_seed_origin, object_id)):
-                raise WorkerError("invalid_request")
+                raise rejected("add", "authorization_urls")
             existing = self.entries.get(object_id)
             if existing:
                 if existing.size != size or existing.info_hash != info_hash:
                     raise WorkerError("conflict")
                 if existing.state not in TERMINAL:
                     try:
+                        self._authorize_relay(info_hash, tracker_url, relays, relay_list_expires_at)
                         existing.tracker_url = tracker_url
                         existing.web_seed_url = web_seed_url
                         if existing.handle is None:
@@ -644,20 +747,29 @@ class Manager:
                             existing.state = "PAUSED"
                         self._apply_authorization(existing)
                     except Exception:
-                        raise WorkerError("invalid_request")
+                        raise rejected("add", "refresh") from None
                 return self.status(existing)
             manifest = {"object_id": object_id, "size": size, "info_hash_v2": info_hash,
                         "state": "DOWNLOADING", "error_code": "", "completed_bytes": 0}
             try:
                 torrent_data = fetch_torrent_metadata(torrent_url)
             except ValueError:
-                raise WorkerError("invalid_request")
+                raise rejected("add", "metadata_fetch") from None
+            try:
+                metadata = lt.torrent_info(torrent_data)
+            except Exception:
+                raise rejected("add", "metadata_parse") from None
+            if not valid_metadata(metadata, info_hash, size):
+                print(json.dumps(metadata_diagnostic(metadata, info_hash, size), separators=(",", ":")),
+                      file=sys.stderr, flush=True)
+                raise rejected("add", "metadata_mismatch")
+            self._authorize_relay(info_hash, tracker_url, relays, relay_list_expires_at)
             entry = Entry(manifest, tracker_url=tracker_url, web_seed_url=web_seed_url,
                           torrent_data=torrent_data)
             try:
                 entry.handle = self.session.add_torrent(self._sanitized_params(entry))
             except Exception:
-                raise WorkerError("invalid_request")
+                raise rejected("add", "add_torrent") from None
             self.entries[object_id] = entry
             self._write_manifest(entry)
             return self.status(entry)
@@ -686,6 +798,7 @@ class Manager:
                     self._save_resume(entry, force=True)
                     self.session.remove_torrent(entry.handle)
                     entry.handle = None
+                self.connector.remove(entry.info_hash)
                 entry.state = "CANCELLED"
                 entry.error_code = ""
             elif action == "pause":
@@ -713,9 +826,11 @@ class Manager:
         self.saver.join(timeout=3)
         with self.lock:
             self.session.pause()
+            self.seed_session.pause()
+            self.connector.close()
             for seed in self.seeds.values():
                 if seed.handle is not None:
-                    self.session.remove_torrent(seed.handle)
+                    self.seed_session.remove_torrent(seed.handle)
                     seed.handle = None
             self.seeds.clear()
             for entry in self.entries.values():
@@ -727,6 +842,13 @@ class Manager:
 
 class WorkerError(Exception):
     pass
+
+
+def rejected(operation, stage, code="invalid_request"):
+    """Log a fixed operation/stage label (never request data) and return the error."""
+    print(json.dumps({"event": operation + "_rejected", "stage": stage}, separators=(",", ":")),
+          file=sys.stderr, flush=True)
+    return WorkerError(code)
 
 
 def exact_request(value, tracker_origin="", web_seed_origin=""):
@@ -742,6 +864,12 @@ def exact_request(value, tracker_origin="", web_seed_origin=""):
         keys.add("object_id")
     elif operation not in {"list", "seeds", "shutdown"}:
         raise WorkerError("invalid_request")
+    if operation in {"add", "seed"}:
+        optional = {"relays", "relay_list_expires_at"} & set(value)
+        if optional and (optional != {"relays", "relay_list_expires_at"} or
+                         not valid_relays(value["relays"], value["relay_list_expires_at"])):
+            raise WorkerError("invalid_request")
+        keys |= optional
     if set(value) != keys:
         raise WorkerError("invalid_request")
     if "object_id" in value and (not isinstance(value["object_id"], str) or not ID_RE.fullmatch(value["object_id"])):
@@ -774,13 +902,16 @@ def dispatch_request(manager, value, tracker_origin="", web_seed_origin=""):
     if operation == "shutdown":
         manager.close()
         return {"id": request_id, "ok": True}
+    relay_options = {}
+    if "relays" in value:
+        relay_options = {"relays": value["relays"], "relay_list_expires_at": value["relay_list_expires_at"]}
     if operation == "add":
         result = {"status": manager.add(value["object_id"], value["size"],
                                         value["info_hash_v2"], value["tracker_url"],
-                                        value["web_seed_url"], value["torrent_url"])}
+                                        value["web_seed_url"], value["torrent_url"], **relay_options)}
     elif operation == "seed":
         result = {"seed": manager.seed(value["object_id"], value["size"], value["info_hash_v2"],
-                                       value["tracker_url"], value["torrent_url"], value["file_name"])}
+                                       value["tracker_url"], value["torrent_url"], value["file_name"], **relay_options)}
     elif operation == "unseed":
         result = {"seed": manager.unseed(value["object_id"])}
     elif operation == "seeds":
@@ -821,6 +952,7 @@ def main():
             if not line:
                 break
             request_id = None
+            operation = None
             try:
                 if len(line) >= 1 << 20 or not line.endswith(b"\n"):
                     raise WorkerError("invalid_request")
@@ -835,6 +967,10 @@ def main():
                 result = {"id": request_id, "error": str(error)}
             except Exception:
                 result = {"id": request_id, "error": "invalid_request"}
+            if "error" in result and operation in ("add", "seed"):
+                # Operation and fixed error code only: never request fields.
+                print(json.dumps({"event": "request_rejected", "op": operation, "error": result["error"]},
+                                 separators=(",", ":")), file=sys.stderr, flush=True)
             print(json.dumps(result, separators=(",", ":")), flush=True)
     finally:
         manager.close()

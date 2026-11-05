@@ -287,6 +287,7 @@ func (r transferReconciler) authorizedRequest(ctx context.Context, selection med
 		return transfer.Request{}, err
 	}
 	request.TrackerURL, request.WebSeedURL, request.TorrentURL = grant.TrackerURL, grant.WebSeedURL, grant.TorrentURL
+	request.Relays, request.RelayListExpiresAt = r.media.currentRelays(time.Now())
 	return request, nil
 }
 
