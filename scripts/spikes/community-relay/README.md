@@ -52,7 +52,7 @@ Admission is checked after mTLS before inner TLS, and every 10 ms for active tun
 
 ## Saved measured results
 
-`result.json` is sanitized structured evidence: **20/20 protocol/negative-control checks PASS**, nine measured 32 MiB transfers (three per compliant topology), and one 1 MiB unsafe fixture. Every payload is received and SHA-256 verified. `build.log` records eight passing unit/integration tests and successful vet; `checks.log` records runtime PASS/FAIL checks. `host-race.log` records a separate macOS race-enabled run of six pure logic/scanner/accounting tests; it is **not** a full Linux integration race run.
+`result.json` is sanitized structured evidence: **20/20 protocol/negative-control checks PASS**, nine measured 32 MiB transfers (three per compliant topology), and one 1 MiB unsafe fixture. Every payload is received and SHA-256 verified. `result.json` is the committed evidence. `run.py` also writes `build.log` (eight passing unit/integration tests and a clean vet) and `checks.log` (runtime PASS/FAIL checks) next to it. Like all `*.log` files they are git-ignored, so rerun to regenerate them.
 
 Medians from the saved run (32 MiB = 33,554,432 application payload bytes):
 
