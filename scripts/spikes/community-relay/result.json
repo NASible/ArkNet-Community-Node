@@ -1,0 +1,656 @@
+{
+  "checks": [
+    {
+      "Name": "wrong_operator_pin_before_any_grant_sent",
+      "Status": "PASS"
+    },
+    {
+      "Name": "tampered_admission_denies_new_tunnel",
+      "Status": "PASS"
+    },
+    {
+      "Name": "expired_admission_denies_new_tunnel",
+      "Status": "PASS"
+    },
+    {
+      "Name": "revoked_admission_denies_new_tunnel",
+      "Status": "PASS"
+    },
+    {
+      "Name": "revoked_C_reproxy_to_direct_listener_rejects_C_bound_grant",
+      "Status": "PASS"
+    },
+    {
+      "Name": "revoked_closes_active_tunnel_within_1s_and_denies_new",
+      "Status": "PASS"
+    },
+    {
+      "Name": "expired_closes_active_tunnel_within_1s_and_denies_new",
+      "Status": "PASS"
+    },
+    {
+      "Name": "community_fixed_operator_target_rejects_connect_not_open_proxy",
+      "Status": "PASS"
+    },
+    {
+      "Name": "A-O-B_rep1_payload_capture_and_egress_conservation",
+      "Status": "PASS"
+    },
+    {
+      "Name": "A-O-B_rep2_payload_capture_and_egress_conservation",
+      "Status": "PASS"
+    },
+    {
+      "Name": "A-O-B_rep3_payload_capture_and_egress_conservation",
+      "Status": "PASS"
+    },
+    {
+      "Name": "A-C-O-B_rep1_payload_capture_and_egress_conservation",
+      "Status": "PASS"
+    },
+    {
+      "Name": "A-C-O-B_rep2_payload_capture_and_egress_conservation",
+      "Status": "PASS"
+    },
+    {
+      "Name": "A-C-O-B_rep3_payload_capture_and_egress_conservation",
+      "Status": "PASS"
+    },
+    {
+      "Name": "A-O-C-B_rep1_payload_capture_and_egress_conservation",
+      "Status": "PASS"
+    },
+    {
+      "Name": "A-O-C-B_rep2_payload_capture_and_egress_conservation",
+      "Status": "PASS"
+    },
+    {
+      "Name": "A-O-C-B_rep3_payload_capture_and_egress_conservation",
+      "Status": "PASS"
+    },
+    {
+      "Name": "same_community_both_legs_is_unsafe_observes_both_node_origins",
+      "Status": "PASS"
+    },
+    {
+      "Name": "A-C-O-B_collusion_negative_control_exposes_both_origins",
+      "Status": "PASS"
+    },
+    {
+      "Name": "A-O-C-B_collusion_negative_control_exposes_both_origins",
+      "Status": "PASS"
+    }
+  ],
+  "collusion_negative_controls": [
+    {
+      "both_origins_known": true,
+      "evidence": "C socket remote plus opposite Node socket local; knowing a test flow is shared",
+      "strong_privacy_condition_satisfied": false,
+      "topology": "A-C-O-B"
+    },
+    {
+      "both_origins_known": true,
+      "evidence": "C socket remote plus opposite Node socket local; knowing a test flow is shared",
+      "strong_privacy_condition_satisfied": false,
+      "topology": "A-O-C-B"
+    }
+  ],
+  "deployment_verdict": "INVALIDATED for strong collusion privacy and operator-egress-saving goals; DO NOT SHIP",
+  "isolation": "one process, logical roles, Linux loopback identities; NOT separate namespaces",
+  "limitations": [
+    "Community colluding with receiving Node, or operating as the opposite Node, can link A to B; strong collusion condition NOT met",
+    "Operator intentionally sees grants and full hash; community sees adjacent origin and TLS timing/length",
+    "TLS wire bytes count successful net.Conn writes outside all TLS, not IP/TCP headers or retransmits",
+    "Loopback one-host throughput includes connect/handshake, payload generation and hash verification; no WAN/CPU isolation",
+    "In-process Core mock has separate ephemeral Ed25519 admission and grant keys, distinct kind domains; no product API compatibility or production security claim",
+    "Streaming capture scans all decrypted outer bytes with separate per-direction tails; any packed-IP collision is a conservative FAIL, no filtering; absence is not a cryptographic proof"
+  ],
+  "medians": {
+    "A-C-O-B": {
+      "community_tls_wire_egress_bytes": 33651281,
+      "operator_application_egress_bytes": 33554432,
+      "operator_direct_wire_egress_bytes": 33601524,
+      "operator_outer_wire_egress_bytes": 3852,
+      "operator_tls_wire_egress_bytes": 33605376,
+      "throughput_mib_s": 361.16346915480005
+    },
+    "A-O-B": {
+      "community_tls_wire_egress_bytes": 0,
+      "operator_application_egress_bytes": 33554432,
+      "operator_direct_wire_egress_bytes": 33603428,
+      "operator_outer_wire_egress_bytes": 0,
+      "operator_tls_wire_egress_bytes": 33603428,
+      "throughput_mib_s": 456.8812078020233
+    },
+    "A-O-C-B": {
+      "community_tls_wire_egress_bytes": 33606030,
+      "operator_application_egress_bytes": 33554432,
+      "operator_direct_wire_egress_bytes": 1904,
+      "operator_outer_wire_egress_bytes": 33693562,
+      "operator_tls_wire_egress_bytes": 33695466,
+      "throughput_mib_s": 337.1288493187648
+    }
+  },
+  "operator_application_egress_saving_bytes": {
+    "A-C-O-B": 0,
+    "A-O-C-B": 0
+  },
+  "protocol_checks_pass": true,
+  "prototype": "THROWAWAY Prompt48E protocol prototype, NOT product responses",
+  "samples": [
+    {
+      "Topology": "A-O-B",
+      "Bytes": 33554432,
+      "Seconds": 0.06978597,
+      "MiBPerSecond": 458.5448908999903,
+      "OperatorApplicationEgress": 33554432,
+      "OperatorTLSWireEgress": 33603428,
+      "OperatorDirectWireEgress": 33603428,
+      "OperatorOuterWireEgress": 0,
+      "CommunityTLSWireEgress": 0,
+      "CommunityDecryptedOuterBytes": 0,
+      "PayloadSHA256Verified": true,
+      "CommunitySecretScanClear": true,
+      "CommunityScanHits": [],
+      "OperatorReadGrantsAndHash": true,
+      "CommunityOrigins": [],
+      "Unsafe": false,
+      "Hops": [
+        {
+          "Owner": "O-direct",
+          "Local": "127.0.0.5:39767",
+          "Remote": "127.0.0.3:55343"
+        },
+        {
+          "Owner": "NodeB",
+          "Local": "127.0.0.3:55343",
+          "Remote": "127.0.0.5:39767"
+        },
+        {
+          "Owner": "NodeA",
+          "Local": "127.0.0.2:44813",
+          "Remote": "127.0.0.5:39767"
+        },
+        {
+          "Owner": "O-direct",
+          "Local": "127.0.0.5:39767",
+          "Remote": "127.0.0.2:44813"
+        }
+      ]
+    },
+    {
+      "Topology": "A-O-B",
+      "Bytes": 33554432,
+      "Seconds": 0.070040088,
+      "MiBPerSecond": 456.8812078020233,
+      "OperatorApplicationEgress": 33554432,
+      "OperatorTLSWireEgress": 33603428,
+      "OperatorDirectWireEgress": 33603428,
+      "OperatorOuterWireEgress": 0,
+      "CommunityTLSWireEgress": 0,
+      "CommunityDecryptedOuterBytes": 0,
+      "PayloadSHA256Verified": true,
+      "CommunitySecretScanClear": true,
+      "CommunityScanHits": [],
+      "OperatorReadGrantsAndHash": true,
+      "CommunityOrigins": [],
+      "Unsafe": false,
+      "Hops": [
+        {
+          "Owner": "O-direct",
+          "Local": "127.0.0.5:35629",
+          "Remote": "127.0.0.3:46435"
+        },
+        {
+          "Owner": "NodeB",
+          "Local": "127.0.0.3:46435",
+          "Remote": "127.0.0.5:35629"
+        },
+        {
+          "Owner": "NodeA",
+          "Local": "127.0.0.2:35627",
+          "Remote": "127.0.0.5:35629"
+        },
+        {
+          "Owner": "O-direct",
+          "Local": "127.0.0.5:35629",
+          "Remote": "127.0.0.2:35627"
+        }
+      ]
+    },
+    {
+      "Topology": "A-O-B",
+      "Bytes": 33554432,
+      "Seconds": 0.081682144,
+      "MiBPerSecond": 391.762488506668,
+      "OperatorApplicationEgress": 33554432,
+      "OperatorTLSWireEgress": 33603428,
+      "OperatorDirectWireEgress": 33603428,
+      "OperatorOuterWireEgress": 0,
+      "CommunityTLSWireEgress": 0,
+      "CommunityDecryptedOuterBytes": 0,
+      "PayloadSHA256Verified": true,
+      "CommunitySecretScanClear": true,
+      "CommunityScanHits": [],
+      "OperatorReadGrantsAndHash": true,
+      "CommunityOrigins": [],
+      "Unsafe": false,
+      "Hops": [
+        {
+          "Owner": "O-direct",
+          "Local": "127.0.0.5:37843",
+          "Remote": "127.0.0.3:43891"
+        },
+        {
+          "Owner": "NodeB",
+          "Local": "127.0.0.3:43891",
+          "Remote": "127.0.0.5:37843"
+        },
+        {
+          "Owner": "NodeA",
+          "Local": "127.0.0.2:54225",
+          "Remote": "127.0.0.5:37843"
+        },
+        {
+          "Owner": "O-direct",
+          "Local": "127.0.0.5:37843",
+          "Remote": "127.0.0.2:54225"
+        }
+      ]
+    },
+    {
+      "Topology": "A-C-O-B",
+      "Bytes": 33554432,
+      "Seconds": 0.086902127,
+      "MiBPerSecond": 368.2303426244101,
+      "OperatorApplicationEgress": 33554432,
+      "OperatorTLSWireEgress": 33605376,
+      "OperatorDirectWireEgress": 33601524,
+      "OperatorOuterWireEgress": 3852,
+      "CommunityTLSWireEgress": 33651281,
+      "CommunityDecryptedOuterBytes": 33603937,
+      "PayloadSHA256Verified": true,
+      "CommunitySecretScanClear": true,
+      "CommunityScanHits": [],
+      "OperatorReadGrantsAndHash": true,
+      "CommunityOrigins": [
+        "127.0.0.2"
+      ],
+      "Unsafe": false,
+      "Hops": [
+        {
+          "Owner": "NodeB",
+          "Local": "127.0.0.3:37413",
+          "Remote": "127.0.0.5:45777"
+        },
+        {
+          "Owner": "O-direct",
+          "Local": "127.0.0.5:45777",
+          "Remote": "127.0.0.3:37413"
+        },
+        {
+          "Owner": "NodeA",
+          "Local": "127.0.0.2:35129",
+          "Remote": "127.0.0.4:44283"
+        },
+        {
+          "Owner": "C-node",
+          "Local": "127.0.0.4:44283",
+          "Remote": "127.0.0.2:35129"
+        },
+        {
+          "Owner": "C-outer",
+          "Local": "127.0.0.4:56279",
+          "Remote": "127.0.0.5:36443"
+        },
+        {
+          "Owner": "O-outer",
+          "Local": "127.0.0.5:36443",
+          "Remote": "127.0.0.4:56279"
+        }
+      ]
+    },
+    {
+      "Topology": "A-C-O-B",
+      "Bytes": 33554432,
+      "Seconds": 0.090566318,
+      "MiBPerSecond": 353.33223991727255,
+      "OperatorApplicationEgress": 33554432,
+      "OperatorTLSWireEgress": 33605376,
+      "OperatorDirectWireEgress": 33601524,
+      "OperatorOuterWireEgress": 3852,
+      "CommunityTLSWireEgress": 33651259,
+      "CommunityDecryptedOuterBytes": 33603937,
+      "PayloadSHA256Verified": true,
+      "CommunitySecretScanClear": true,
+      "CommunityScanHits": [],
+      "OperatorReadGrantsAndHash": true,
+      "CommunityOrigins": [
+        "127.0.0.2"
+      ],
+      "Unsafe": false,
+      "Hops": [
+        {
+          "Owner": "O-direct",
+          "Local": "127.0.0.5:43479",
+          "Remote": "127.0.0.3:54805"
+        },
+        {
+          "Owner": "NodeB",
+          "Local": "127.0.0.3:54805",
+          "Remote": "127.0.0.5:43479"
+        },
+        {
+          "Owner": "NodeA",
+          "Local": "127.0.0.2:48599",
+          "Remote": "127.0.0.4:36669"
+        },
+        {
+          "Owner": "C-node",
+          "Local": "127.0.0.4:36669",
+          "Remote": "127.0.0.2:48599"
+        },
+        {
+          "Owner": "C-outer",
+          "Local": "127.0.0.4:33769",
+          "Remote": "127.0.0.5:43907"
+        },
+        {
+          "Owner": "O-outer",
+          "Local": "127.0.0.5:43907",
+          "Remote": "127.0.0.4:33769"
+        }
+      ]
+    },
+    {
+      "Topology": "A-C-O-B",
+      "Bytes": 33554432,
+      "Seconds": 0.088602538,
+      "MiBPerSecond": 361.16346915480005,
+      "OperatorApplicationEgress": 33554432,
+      "OperatorTLSWireEgress": 33605376,
+      "OperatorDirectWireEgress": 33601524,
+      "OperatorOuterWireEgress": 3852,
+      "CommunityTLSWireEgress": 33654427,
+      "CommunityDecryptedOuterBytes": 33603937,
+      "PayloadSHA256Verified": true,
+      "CommunitySecretScanClear": true,
+      "CommunityScanHits": [],
+      "OperatorReadGrantsAndHash": true,
+      "CommunityOrigins": [
+        "127.0.0.2"
+      ],
+      "Unsafe": false,
+      "Hops": [
+        {
+          "Owner": "O-direct",
+          "Local": "127.0.0.5:46795",
+          "Remote": "127.0.0.3:47457"
+        },
+        {
+          "Owner": "NodeB",
+          "Local": "127.0.0.3:47457",
+          "Remote": "127.0.0.5:46795"
+        },
+        {
+          "Owner": "NodeA",
+          "Local": "127.0.0.2:50195",
+          "Remote": "127.0.0.4:33923"
+        },
+        {
+          "Owner": "C-node",
+          "Local": "127.0.0.4:33923",
+          "Remote": "127.0.0.2:50195"
+        },
+        {
+          "Owner": "C-outer",
+          "Local": "127.0.0.4:39843",
+          "Remote": "127.0.0.5:35463"
+        },
+        {
+          "Owner": "O-outer",
+          "Local": "127.0.0.5:35463",
+          "Remote": "127.0.0.4:39843"
+        }
+      ]
+    },
+    {
+      "Topology": "A-O-C-B",
+      "Bytes": 33554432,
+      "Seconds": 0.094919198,
+      "MiBPerSecond": 337.1288493187648,
+      "OperatorApplicationEgress": 33554432,
+      "OperatorTLSWireEgress": 33695466,
+      "OperatorDirectWireEgress": 1904,
+      "OperatorOuterWireEgress": 33693562,
+      "CommunityTLSWireEgress": 33606030,
+      "CommunityDecryptedOuterBytes": 33603962,
+      "PayloadSHA256Verified": true,
+      "CommunitySecretScanClear": true,
+      "CommunityScanHits": [],
+      "OperatorReadGrantsAndHash": true,
+      "CommunityOrigins": [
+        "127.0.0.3"
+      ],
+      "Unsafe": false,
+      "Hops": [
+        {
+          "Owner": "C-node",
+          "Local": "127.0.0.4:35473",
+          "Remote": "127.0.0.3:50373"
+        },
+        {
+          "Owner": "NodeB",
+          "Local": "127.0.0.3:50373",
+          "Remote": "127.0.0.4:35473"
+        },
+        {
+          "Owner": "C-outer",
+          "Local": "127.0.0.4:54767",
+          "Remote": "127.0.0.5:41731"
+        },
+        {
+          "Owner": "O-outer",
+          "Local": "127.0.0.5:41731",
+          "Remote": "127.0.0.4:54767"
+        },
+        {
+          "Owner": "NodeA",
+          "Local": "127.0.0.2:40705",
+          "Remote": "127.0.0.5:42063"
+        },
+        {
+          "Owner": "O-direct",
+          "Local": "127.0.0.5:42063",
+          "Remote": "127.0.0.2:40705"
+        }
+      ]
+    },
+    {
+      "Topology": "A-O-C-B",
+      "Bytes": 33554432,
+      "Seconds": 0.109543465,
+      "MiBPerSecond": 292.1214880321706,
+      "OperatorApplicationEgress": 33554432,
+      "OperatorTLSWireEgress": 33695466,
+      "OperatorDirectWireEgress": 1904,
+      "OperatorOuterWireEgress": 33693562,
+      "CommunityTLSWireEgress": 33606030,
+      "CommunityDecryptedOuterBytes": 33603962,
+      "PayloadSHA256Verified": true,
+      "CommunitySecretScanClear": true,
+      "CommunityScanHits": [],
+      "OperatorReadGrantsAndHash": true,
+      "CommunityOrigins": [
+        "127.0.0.3"
+      ],
+      "Unsafe": false,
+      "Hops": [
+        {
+          "Owner": "NodeB",
+          "Local": "127.0.0.3:60049",
+          "Remote": "127.0.0.4:35747"
+        },
+        {
+          "Owner": "C-node",
+          "Local": "127.0.0.4:35747",
+          "Remote": "127.0.0.3:60049"
+        },
+        {
+          "Owner": "O-outer",
+          "Local": "127.0.0.5:35973",
+          "Remote": "127.0.0.4:41555"
+        },
+        {
+          "Owner": "C-outer",
+          "Local": "127.0.0.4:41555",
+          "Remote": "127.0.0.5:35973"
+        },
+        {
+          "Owner": "O-direct",
+          "Local": "127.0.0.5:45199",
+          "Remote": "127.0.0.2:48581"
+        },
+        {
+          "Owner": "NodeA",
+          "Local": "127.0.0.2:48581",
+          "Remote": "127.0.0.5:45199"
+        }
+      ]
+    },
+    {
+      "Topology": "A-O-C-B",
+      "Bytes": 33554432,
+      "Seconds": 0.092916461,
+      "MiBPerSecond": 344.39538113704094,
+      "OperatorApplicationEgress": 33554432,
+      "OperatorTLSWireEgress": 33695466,
+      "OperatorDirectWireEgress": 1904,
+      "OperatorOuterWireEgress": 33693562,
+      "CommunityTLSWireEgress": 33606030,
+      "CommunityDecryptedOuterBytes": 33603962,
+      "PayloadSHA256Verified": true,
+      "CommunitySecretScanClear": true,
+      "CommunityScanHits": [],
+      "OperatorReadGrantsAndHash": true,
+      "CommunityOrigins": [
+        "127.0.0.3"
+      ],
+      "Unsafe": false,
+      "Hops": [
+        {
+          "Owner": "C-node",
+          "Local": "127.0.0.4:45799",
+          "Remote": "127.0.0.3:40693"
+        },
+        {
+          "Owner": "C-outer",
+          "Local": "127.0.0.4:50477",
+          "Remote": "127.0.0.5:43139"
+        },
+        {
+          "Owner": "O-outer",
+          "Local": "127.0.0.5:43139",
+          "Remote": "127.0.0.4:50477"
+        },
+        {
+          "Owner": "NodeB",
+          "Local": "127.0.0.3:40693",
+          "Remote": "127.0.0.4:45799"
+        },
+        {
+          "Owner": "NodeA",
+          "Local": "127.0.0.2:54651",
+          "Remote": "127.0.0.5:46665"
+        },
+        {
+          "Owner": "O-direct",
+          "Local": "127.0.0.5:46665",
+          "Remote": "127.0.0.2:54651"
+        }
+      ]
+    },
+    {
+      "Topology": "A-C-O-C-B",
+      "Bytes": 1048576,
+      "Seconds": 0.009246039,
+      "MiBPerSecond": 108.15442158528641,
+      "OperatorApplicationEgress": 1048576,
+      "OperatorTLSWireEgress": 1060614,
+      "OperatorDirectWireEgress": 0,
+      "OperatorOuterWireEgress": 1060614,
+      "CommunityTLSWireEgress": 2114611,
+      "CommunityDecryptedOuterBytes": 2108891,
+      "PayloadSHA256Verified": true,
+      "CommunitySecretScanClear": true,
+      "CommunityScanHits": [],
+      "OperatorReadGrantsAndHash": true,
+      "CommunityOrigins": [
+        "127.0.0.2",
+        "127.0.0.3"
+      ],
+      "Unsafe": true,
+      "Hops": [
+        {
+          "Owner": "C-node",
+          "Local": "127.0.0.4:40421",
+          "Remote": "127.0.0.3:56861"
+        },
+        {
+          "Owner": "C-outer",
+          "Local": "127.0.0.4:37523",
+          "Remote": "127.0.0.5:33281"
+        },
+        {
+          "Owner": "NodeB",
+          "Local": "127.0.0.3:56861",
+          "Remote": "127.0.0.4:40421"
+        },
+        {
+          "Owner": "O-outer",
+          "Local": "127.0.0.5:33281",
+          "Remote": "127.0.0.4:37523"
+        },
+        {
+          "Owner": "C-node",
+          "Local": "127.0.0.4:40421",
+          "Remote": "127.0.0.2:55329"
+        },
+        {
+          "Owner": "NodeA",
+          "Local": "127.0.0.2:55329",
+          "Remote": "127.0.0.4:40421"
+        },
+        {
+          "Owner": "C-outer",
+          "Local": "127.0.0.4:45761",
+          "Remote": "127.0.0.5:33281"
+        },
+        {
+          "Owner": "O-outer",
+          "Local": "127.0.0.5:33281",
+          "Remote": "127.0.0.4:45761"
+        }
+      ]
+    }
+  ],
+  "docker_runtime_verified": {
+    "network": "none",
+    "cap_drop": [
+      "ALL"
+    ],
+    "read_only": true,
+    "user": "65532:65532",
+    "security_opt": [
+      "no-new-privileges:true"
+    ],
+    "published_ports": {},
+    "mounts": [],
+    "image_platform": "arm64"
+  },
+  "container_exit_code": 0,
+  "scoped_cleanup_verified": {
+    "container_absent": true,
+    "image_absent": true
+  }
+}

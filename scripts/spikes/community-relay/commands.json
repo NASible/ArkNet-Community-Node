@@ -1,0 +1,33 @@
+[
+  [
+    "docker",
+    "build",
+    "-t",
+    "prompt48e-community-relay-7f04d1680ccc:throwaway",
+    "scripts/spikes/community-relay"
+  ],
+  [
+    "docker",
+    "create",
+    "--name",
+    "prompt48e-community-relay-7f04d1680ccc",
+    "--network",
+    "none",
+    "--cap-drop",
+    "ALL",
+    "--read-only",
+    "--security-opt",
+    "no-new-privileges:true",
+    "prompt48e-community-relay-7f04d1680ccc:throwaway",
+    "-mib",
+    "32",
+    "-reps",
+    "3"
+  ],
+  [
+    "docker",
+    "start",
+    "-a",
+    "prompt48e-community-relay-7f04d1680ccc"
+  ]
+]

@@ -304,6 +304,13 @@ acceptable only if all of these hold:
 Collusion between a community relay and a Node is bounded by the first
 condition: the operator hop is always between them.
 
+**48E qualification:** the two-hop topology alone does not establish that
+collusion claim, nor does moving a Node leg to a community relay establish an
+operator-egress saving. The [community relay design spike](community-relay-design.md)
+examines both claims explicitly. Community relays remain experimental and are
+not approved for product integration; the accepted operator-only first release
+is unchanged.
+
 ## Questions as asked
 
 
