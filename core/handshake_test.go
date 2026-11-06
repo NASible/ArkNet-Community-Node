@@ -215,7 +215,7 @@ func TestSignedEnrollmentRepositoryErrorsAreSanitized(t *testing.T) {
 	for _, tt := range []struct {
 		err    error
 		status int
-	}{{fmt.Errorf("secret: %w", nodes.ErrEnrollmentConflict), 409}, {errors.New("secret database failure"), 503}} {
+	}{{fmt.Errorf("secret: %w", nodes.ErrEnrollmentConflict), 200}, {errors.New("secret database failure"), 503}} {
 		repo := &handshakeRepo{err: tt.err}
 		w := httptest.NewRecorder()
 		newHandler(nil, repo).ServeHTTP(w, signedRequest("POST", enrollmentPath, body, enrollmentID, priv, fmt.Sprint(time.Now().Unix())))

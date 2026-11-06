@@ -161,6 +161,7 @@ func identityServer(repo *memoryUsers, auth adminAuthorizer) http.Handler {
 func call(t *testing.T, h http.Handler, method, path, body string, headers ...string) (*httptest.ResponseRecorder, map[string]any) {
 	t.Helper()
 	request := httptest.NewRequest(method, path, strings.NewReader(body))
+	request.RemoteAddr = nextTestPeer()
 	for i := 0; i+1 < len(headers); i += 2 {
 		request.Header.Add(headers[i], headers[i+1])
 	}

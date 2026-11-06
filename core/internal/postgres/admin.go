@@ -77,7 +77,7 @@ func (s *Store) ListPending(ctx context.Context, after string, limit int) ([]nod
 	if s == nil || s.db == nil {
 		return nil, errors.New("administration database unavailable")
 	}
-	rows, err := s.db.QueryContext(ctx, "SELECT "+columns+" FROM nodes WHERE enrollment_status=$1 AND trust_status=$2 AND public_id > $3 ORDER BY public_id ASC LIMIT $4", nodes.EnrollmentPending, nodes.TrustUntrusted, after, limit+1)
+	rows, err := s.db.QueryContext(ctx, "SELECT "+columns+" FROM nodes WHERE enrollment_status=$1 AND trust_status=$2 AND created_at > statement_timestamp() - interval '7 days' AND public_id > $3 ORDER BY public_id ASC LIMIT $4", nodes.EnrollmentPending, nodes.TrustUntrusted, after, limit+1)
 	if err != nil {
 		return nil, errors.New("list pending nodes failed")
 	}

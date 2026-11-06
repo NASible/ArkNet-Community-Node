@@ -20,6 +20,8 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+from scripts.rate_limit_retry import retry_429
+
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, *args, **kwargs):  # noqa: D401 - urllib hook
@@ -93,7 +95,9 @@ def core_sign_in(browser, authorize_url, username, password):
     form = {name: values[0] for name, values in query.items()}
     form.update(username=username, password=password)
     core = Browser._origin(authorize_url)
-    status, headers, _, _ = browser.request(core + "/node-login", "POST", form=form)
+    # Browser and API logins share Core's source budget. Re-POST this exact form
+    # only after a 429; never restart the flow or retry authoritative denials.
+    status, headers, _, _ = retry_429(lambda: browser.request(core + "/node-login", "POST", form=form))
     location = headers.get("Location") if status == 303 else None
     assertion = None
     if location and "#assertion=" in location:

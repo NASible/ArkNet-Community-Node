@@ -3,9 +3,13 @@ package main
 import (
 	"arknet/core/internal/nodes"
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -16,6 +20,22 @@ type enrollFunc func(context.Context, string, string) (nodes.Node, error)
 
 func (f enrollFunc) Enroll(ctx context.Context, id, version string) (nodes.Node, error) {
 	return f(ctx, id, version)
+}
+
+func (f enrollFunc) RegisterEnrollment(ctx context.Context, id, version string, _ []byte) (nodes.Node, error) {
+	return f(ctx, id, version)
+}
+func (f enrollFunc) EnrollmentIdentity(context.Context, string) (nodes.Node, []byte, error) {
+	return nodes.Node{}, nil, nodes.ErrNotFound
+}
+func signedEnrollmentTestRequest(t *testing.T) *http.Request {
+	t.Helper()
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := strings.TrimSuffix(enrollmentBody(), "}") + `,"public_key":"` + base64.StdEncoding.EncodeToString(pub) + `"}`
+	return signedRequest("POST", enrollmentPath, body, enrollmentID, priv, fmt.Sprint(time.Now().Unix()))
 }
 
 const enrollmentPath = "/api/federation/v1/enrollments"
@@ -74,15 +94,15 @@ func TestEnrollmentRejectsMalformedRequestsBeforeRepository(t *testing.T) {
 	}
 }
 
-func TestEnrollmentConflictReturns409(t *testing.T) {
+func TestEnrollmentConflictReturnsGenericReceipt(t *testing.T) {
 	repo := enrollFunc(func(context.Context, string, string) (nodes.Node, error) {
 		return nodes.Node{}, fmt.Errorf("internal secret: %w", nodes.ErrEnrollmentConflict)
 	})
-	r := httptest.NewRequest("POST", enrollmentPath, strings.NewReader(enrollmentBody()))
+	r := signedEnrollmentTestRequest(t)
 	r.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	newHandler(nil, repo).ServeHTTP(w, r)
-	if w.Code != 409 || strings.Contains(w.Body.String(), "secret") {
+	if w.Code != 200 || strings.Contains(w.Body.String(), "secret") {
 		t.Fatalf("unsafe conflict response: %d %s", w.Code, w.Body)
 	}
 }
@@ -91,7 +111,7 @@ func TestEnrollmentUnavailableIsSanitized(t *testing.T) {
 	for _, repo := range []nodes.EnrollmentRepository{nil, enrollFunc(func(context.Context, string, string) (nodes.Node, error) {
 		return nodes.Node{}, errors.New("secret database password")
 	})} {
-		r := httptest.NewRequest("POST", enrollmentPath, strings.NewReader(enrollmentBody()))
+		r := signedEnrollmentTestRequest(t)
 		r.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
 		newHandler(nil, repo).ServeHTTP(w, r)
@@ -114,7 +134,7 @@ func TestEnrollmentRequestContextIsBounded(t *testing.T) {
 	})
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	r := httptest.NewRequest("POST", enrollmentPath, strings.NewReader(enrollmentBody())).WithContext(ctx)
+	r := signedEnrollmentTestRequest(t).WithContext(ctx)
 	r.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	newHandler(nil, repo).ServeHTTP(w, r)
@@ -132,7 +152,7 @@ func TestEnrollmentReturnsPendingOnInitialAndRepeat(t *testing.T) {
 	})
 	handler := newHandler(nil, repo)
 	for range 2 {
-		r := httptest.NewRequest("POST", enrollmentPath, strings.NewReader(enrollmentBody()))
+		r := signedEnrollmentTestRequest(t)
 		r.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
 		handler.ServeHTTP(w, r)

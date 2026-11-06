@@ -29,22 +29,26 @@ hostnames, or filesystem data. Core does not store request headers or transport
 addresses as enrollment metadata. As with any HTTP connection, the network peer
 or ingress can still observe a source address; this is not transport anonymity.
 
-Core returns HTTP 200 for both a new request and an identical pending request:
+Core returns the same HTTP 200 receipt for valid signed submissions, including
+new, pending, decided, conflicting-key and quota-denied requests:
 
 ```json
 {"node_id":"<same node ID>","enrollment_status":"PENDING"}
 ```
 
-Core stores the supplied opaque ID in the existing `nodes` table with `PENDING`
-enrollment and `UNTRUSTED` trust. The unique public-ID constraint and conflict-safe
-insert make retries/concurrent requests idempotent. Repeated submission does not
-replace existing software version, trust, enrollment, creation time, or last-seen
-metadata. An existing record with non-pending enrollment or non-untrusted trust
-is rejected rather than downgraded. No global node directory endpoint is added.
+When capacity permits, Core stores a new opaque ID with `PENDING` enrollment and
+`UNTRUSTED` trust. The receipt is not proof that a row exists: actual status
+requires the pinned signing key. Repeated submissions do not replace existing
+software version, trust, enrollment, creation time, last-seen metadata or key.
+Decided records are preserved, never downgraded. Pending admission is capped at
+1,000 records, expiring seven days after initial creation; retries never refresh
+that deadline. No global node directory endpoint is added. See
+[abuse controls](core-abuse-controls.md).
 
 Requests are bounded to 4 KiB and strict JSON. Malformed/missing fields return
-400; oversized bodies return 413; unsupported content type returns 415; conflicting
-existing enrollment returns 409; database failure returns a sanitized 503.
+400; oversized bodies return 413; unsupported content type returns 415; invalid
+proof returns 401; rate limits return 429 with Retry-After; database failure
+returns a sanitized 503. Unsigned enrollment is no longer supported.
 
 ## Agent configuration and lifecycle
 

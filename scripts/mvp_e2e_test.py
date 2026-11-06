@@ -44,6 +44,13 @@ class MVPHarnessTests(unittest.TestCase):
         self.assertLess(source.index('def offline_auth'), source.index('def offline_playback'))
         self.assertLess(source.index('def offline_playback'), source.index('def after_window'))
 
+    def test_offline_window_starts_after_rate_limited_hostile_login_probes(self):
+        source = PATH.read_text()
+        self.assertGreater(source.rindex('nodes["login_issued_at"] = time.time()'),
+                           source.rindex('for value in captured:'))
+        self.assertLess(source.rindex('nodes["login_issued_at"] = time.time()'),
+                        source.index('def offline():'))
+
     def test_diagnostics_bundle_is_written_before_cleanup_on_any_failure(self):
         # Item failures are recorded without raising; diagnostics must not depend on an exception.
         source = PATH.read_text()

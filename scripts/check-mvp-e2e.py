@@ -725,6 +725,12 @@ def main(argv=None):
             results.evidence(13, f"malicious-Node harness: {len(relay.received)} bytes received by Node A's Agent during a"
                                  f" login; none of {len(captured)} captured values contains the password or Core session,"
                                  " signs in at Core (password or bearer), or opens a session at Node B (assertion or bearer)")
+            # Hostile API probes now honor production admission limits and can
+            # outlast the short offline window. Obtain a real fresh Core grant
+            # before measuring that window; do not extend it or fake timestamps.
+            session, _ = node_login("a", browser)
+            nodes["member_token"], nodes["member_browser"] = session["token"], browser
+            nodes["login_issued_at"] = time.time()
         item(13, online_global_login)
 
         # ------------------------- 12 offline playback, 13b offline auth, 14

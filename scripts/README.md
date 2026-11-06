@@ -133,7 +133,7 @@ invalid transitions. `node-state-probe.go` is test-only Go source mounted into
 the disposable build container at `/src/probe/main.go`; it is not a host command
 or public state-change endpoint.
 
-Enrollment end-to-end check (Python 3 and Docker Compose required):
+Enrollment end-to-end check (Python 3, Docker Compose and OpenSSL 3 required):
 
 ```sh
 python3 scripts/check-enrollment-stack.py
@@ -141,7 +141,8 @@ python3 scripts/check-enrollment-stack.py
 
 Starts isolated Core and Node projects with separate private databases and a
 shared application-only test transport network. Verifies real outbound enrollment,
-concurrent idempotent retries, identifying-field rejection, restart/recreation,
+signed conflicting-key retries with generic receipts and no state mutation,
+identifying-field rejection, restart/recreation,
 and real repository tests. It removes only its disposable resources. No local
 `.env` or development database is modified. The ordinary Node stack check
 explicitly disables enrollment so it stays independent of Core.
@@ -160,6 +161,35 @@ Uses an isolated Core/PostgreSQL 18 project and generated development credential
 to verify authorization, complete pagination, approval/rejection, invalid and
 duplicate actions, concurrent decisions, restart/recreation persistence and real
 repository tests. It never modifies a developer `.env` or existing services.
+
+Both enrollment harnesses use `enrollment_signing.py` (Python stdlib + OpenSSL 3)
+for the exact four-field registration body and Ed25519 proof headers. A distinct
+ephemeral key is retained per node across retries, never logged or placed in argv.
+Signing files are mode 0600 inside mode 0700 temporary directories, removed after
+each signature; Hermes runs keep them in `~/.hermes/cache/scratch`, otherwise
+Python's `TMPDIR` is used. Homebrew OpenSSL 3 is discovered on macOS; set
+`ARKNET_TEST_OPENSSL` to select another OpenSSL 3 executable (system LibreSSL
+cannot sign these probes). Normal and malformed attempts are spaced by 7.5 seconds
+to stay below production peer/global admission limits, not disable them. The
+enrollment retry/negative-payload section therefore takes about 2.5 minutes.
+Administrative decision conflicts still return 409; signed enrollment retries
+after decisions return the generic 200/PENDING receipt while preserving state.
+`check-core-stack.py` has no direct enrollment submission and needs no signer.
+
+Offline helper/harness regression tests (no Docker, Core or live VM needed):
+
+```sh
+python3 -m unittest scripts.enrollment_signing_test scripts.enrollment_harness_test scripts.rate_limit_retry_test scripts.login_admission_test -v
+```
+
+MVP E2E's Core API login probes and browser `/node-login` share the production
+source budget. Their helpers honor 429 `Retry-After` only (45-second monotonic
+retry window, at most eight attempts, existing per-request I/O timeouts).
+The browser re-POSTs the same form; 401/403/503 and other authoritative outcomes
+are returned unchanged, with no retry or offline fallback. No other routes gain
+automatic retries. After the paced hostile-login probes, E2E obtains a real fresh
+Core login/grant before starting its measured offline window; it does not extend
+the configured window or bypass production limits.
 
 ## Private tracker verification
 

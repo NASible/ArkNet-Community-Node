@@ -2,21 +2,25 @@
 """Verify outbound enrollment using disposable Core and Node Compose projects.
 
 No developer .env or database is changed. Generated passwords stay in environment.
-Only test-specific resources are removed. Docker Compose and Python 3 required.
+Only test-specific resources are removed. Docker Compose, Python 3 and OpenSSL 3 required.
 """
-import concurrent.futures
 import json
 import os
 from pathlib import Path
 import secrets
 import socket
 import subprocess
+import sys
 import tempfile
 import urllib.error
 import urllib.request
 import uuid
 
 ROOT = Path(__file__).resolve().parent.parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+from scripts.enrollment_signing import EnrollmentSigner, temporary_root  # noqa: E402
+from scripts import operator_login  # noqa: E402
 
 
 def free_port():
@@ -30,7 +34,7 @@ def main():
     network = prefix + "-transport"
     env = dict(os.environ, POSTGRES_USER="arknet", PGSSLMODE="disable",
                ARKNET_CORE_PORT=free_port(), ARKNET_AGENT_PORT=free_port(),
-               ARKNET_UI_PORT=free_port(), ARKNET_CORE_URL="",
+               ARKNET_UI_PORT=free_port(), ARKNET_MEMBER_PORT=free_port(), ARKNET_CORE_URL="",
                ARKNET_CORE_ALLOW_HTTP="false")
     environments = {
         "core": dict(env, POSTGRES_DB="arknet_core", POSTGRES_PASSWORD=secrets.token_hex(32)),
@@ -44,10 +48,22 @@ def main():
         return subprocess.run(["docker", *args], check=True, capture_output=True, text=True).stdout.strip()
 
     def fetch_status():
-        with urllib.request.urlopen("http://127.0.0.1:" + env["ARKNET_AGENT_PORT"] + "/api/v1/status", timeout=5) as response:
+        request = urllib.request.Request("http://127.0.0.1:" + env["ARKNET_AGENT_PORT"] + "/api/v1/status",
+                                         headers=operator.headers)
+        with urllib.request.urlopen(request, timeout=5) as response:
             return json.load(response)
 
-    with tempfile.TemporaryDirectory(prefix=prefix) as directory:
+    def request(url, method="GET", body=None, headers=None):
+        data = None if body is None else json.dumps(body).encode()
+        req = urllib.request.Request(url, data=data, method=method,
+                                     headers={"Content-Type": "application/json", **(headers or {})})
+        try:
+            with urllib.request.urlopen(req, timeout=5) as response:
+                return response.status, dict(response.headers), response.read()
+        except urllib.error.HTTPError as error:
+            return error.code, dict(error.headers), error.read()
+
+    with tempfile.TemporaryDirectory(prefix=prefix, dir=temporary_root()) as directory, EnrollmentSigner() as signer:
         overrides = {}
         for kind, service, local_network in [("core", "arknet-core", "core"), ("node", "arknet-agent", "node")]:
             override = {"services": {service: {"networks": [local_network, "enrollment-test"]}},
@@ -85,6 +101,10 @@ def main():
             compose("core", "up", "--build", "-d", "--wait", "--wait-timeout", "120")
             assert sql("core", "SELECT count(*) FROM nodes") == "0"
             compose("node", "up", "--build", "-d", "--wait", "--wait-timeout", "120", "postgres", "arknet-agent")
+            code = operator_login.setup_code(compose("node", "exec", "-T", "arknet-agent", "arknet-agent",
+                                                     "operator", "setup-code", capture=True))
+            operator = operator_login.bootstrap("http://127.0.0.1:" + env["ARKNET_AGENT_PORT"], code, request,
+                                                member_base="http://127.0.0.1:" + env["ARKNET_MEMBER_PORT"])
             initial = fetch_status()
             assert initial["state"] == "ENROLLMENT_PENDING", initial
             node_id = initial["node_id"]
@@ -100,17 +120,22 @@ def main():
             payload = {"node_id": node_id, "version": initial["version"], "capabilities": {}}
 
             def post(body):
-                request = urllib.request.Request(endpoint, data=json.dumps(body).encode(),
-                                                 headers={"Content-Type": "application/json"}, method="POST")
+                extra = {key: value for key, value in body.items()
+                         if key not in {"node_id", "version", "capabilities", "public_key"}}
+                request = signer.request(endpoint, body["node_id"], body["version"], extra=extra)
                 with urllib.request.urlopen(request, timeout=10) as response:
                     assert response.status == 200
                     assert json.load(response) == {"node_id": node_id, "enrollment_status": "PENDING"}
 
-            with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
-                list(pool.map(post, [payload] * 16))
+            # This probe deliberately has a different key from the real Agent.
+            # Valid conflicting-key proofs get the same generic receipt and must
+            # not change the Agent's pinned identity or metadata. Pace actual
+            # attempts below the 5-burst/10-per-minute peer limit (also global).
+            for _ in range(16):
+                post(payload)
             assert sql("core", "SELECT count(*) FROM nodes") == "1"
             assert json.loads(sql("core", "SELECT row_to_json(n) FROM nodes n")) == row
-            print("PASS: concurrent repeated requests create no duplicates and do not overwrite existing metadata", flush=True)
+            print("PASS: paced signed conflicting-key retries return generic receipts without duplicates or metadata changes", flush=True)
 
             for forbidden in ["wan_ip", "mac_address", "hardware_serial", "operator_hostname", "filesystem"]:
                 bad = dict(payload, **{forbidden: "must-not-be-stored"})

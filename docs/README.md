@@ -16,6 +16,7 @@ Architecture, development, and operations documentation belongs here.
   post-review security work with acceptance criteria.
 - [Multi-node swarm proof](multi-node-swarm-proof.md): Prompt 27 measured results.
 - [Global users](global-users.md): Core-owned accounts, password storage, and sessions.
+- [Core abuse controls](core-abuse-controls.md): shared login limits, signed enrollment, pending quota and fixed expiry.
 - [Node invitations](node-invitations.md): privacy-preserving membership invitations.
 - [Pairwise membership IDs](pairwise-membership-ids.md): per-Node user pseudonyms.
 - [Node-local users](local-users.md): Node-scoped accounts, offline authentication, and privacy boundaries.

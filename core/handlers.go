@@ -118,7 +118,7 @@ func newCoreHandler(database databaseHealth, tracker *trackerGrantIssuer, webSee
 			mux.HandleFunc("GET /api/torrent/v1/media/{id}/{grant}", torrentMetadataHandler(catalogStore, tracker, webSeed))
 		}
 	}
-	return mux
+	return newAbuseControls(time.Now).wrap(mux)
 }
 
 // handleHealth returns a health response for the /health endpoint.

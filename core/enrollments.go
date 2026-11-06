@@ -55,7 +55,7 @@ func enrollmentHandler(repository nodes.EnrollmentRepository) http.HandlerFunc {
 		}
 		// encoding/json accepts case-insensitive struct fields. Require exact wire keys.
 		var fields map[string]json.RawMessage
-		if !uniqueEnrollmentFields(body) || json.Unmarshal(body, &fields) != nil || (len(fields) != 3 && len(fields) != 4) || fields["node_id"] == nil || fields["version"] == nil || fields["capabilities"] == nil || request.Capabilities == nil || len(request.Capabilities) != 0 || !nodes.ValidPublicID(request.NodeID) || !nodes.ValidSoftwareVersion(request.Version) {
+		if !uniqueEnrollmentFields(body) || json.Unmarshal(body, &fields) != nil || len(fields) != 4 || fields["public_key"] == nil || fields["node_id"] == nil || fields["version"] == nil || fields["capabilities"] == nil || request.Capabilities == nil || len(request.Capabilities) != 0 || !nodes.ValidPublicID(request.NodeID) || !nodes.ValidSoftwareVersion(request.Version) {
 			http.Error(w, "invalid enrollment request", http.StatusBadRequest)
 			return
 		}
@@ -76,45 +76,18 @@ func enrollmentHandler(repository nodes.EnrollmentRepository) http.HandlerFunc {
 			}
 			ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 			defer cancel()
-			node, err := handshake.RegisterEnrollment(ctx, request.NodeID, request.Version, key)
-			if err != nil {
-				if errors.Is(err, nodes.ErrEnrollmentConflict) {
-					http.Error(w, "enrollment conflicts with existing state", http.StatusConflict)
-				} else {
-					http.Error(w, "enrollment unavailable", http.StatusServiceUnavailable)
-				}
+			_, err = handshake.RegisterEnrollment(ctx, request.NodeID, request.Version, key)
+			if err != nil && !errors.Is(err, nodes.ErrEnrollmentConflict) {
+				http.Error(w, "enrollment unavailable", http.StatusServiceUnavailable)
 				return
 			}
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(struct {
 				NodeID           string                 `json:"node_id"`
 				EnrollmentStatus nodes.EnrollmentStatus `json:"enrollment_status"`
-			}{node.PublicID, nodes.EnrollmentPending})
+			}{request.NodeID, nodes.EnrollmentPending})
 			return
 		}
-		if len(fields) != 3 {
-			http.Error(w, "invalid enrollment request", 400)
-			return
-		}
-		if repository == nil {
-			http.Error(w, "enrollment unavailable", http.StatusServiceUnavailable)
-			return
-		}
-		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-		defer cancel()
-		if _, err := repository.Enroll(ctx, request.NodeID, request.Version); err != nil {
-			if errors.Is(err, nodes.ErrEnrollmentConflict) {
-				http.Error(w, "enrollment conflicts with existing state", http.StatusConflict)
-			} else {
-				http.Error(w, "enrollment unavailable", http.StatusServiceUnavailable)
-			}
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(struct {
-			NodeID           string                 `json:"node_id"`
-			EnrollmentStatus nodes.EnrollmentStatus `json:"enrollment_status"`
-		}{request.NodeID, nodes.EnrollmentPending})
 	}
 }
 

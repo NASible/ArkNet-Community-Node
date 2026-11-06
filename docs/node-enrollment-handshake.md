@@ -112,10 +112,13 @@ binding; this implementation does not silently reset prior decisions, issue
 credentials to ID claimants, or add a public reset/recovery endpoint. Never delete
 Node storage or rotate a completed credential automatically to work around this.
 
-The old three-field submission remains a pending-only compatibility receipt. It
-never yields authenticated approval or credentials; upgraded Agents use the signed
-four-field flow. Core's existing approval/rejection API remains separate and uses
-scoped, audited administrator tokens (see core-administration.md).
+The old unsigned three-field compatibility submission is removed. All enrollment
+requires the signed four-field flow. Valid signed submissions share one generic
+PENDING receipt regardless of existing state or quota; this never grants trust
+or changes a decided record. Pending requests expire seven days after initial
+creation, and retries do not extend expiry. See [abuse controls](core-abuse-controls.md).
+Core's approval/rejection API remains separate and uses scoped, audited
+administrator tokens (see core-administration.md).
 
 ## Running and verification
 

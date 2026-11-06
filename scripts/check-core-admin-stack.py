@@ -3,6 +3,7 @@
 
 No developer .env or database is changed; generated credentials stay in environment.
 Only this uniquely named project's resources are removed.
+Requires OpenSSL 3 for disposable per-node Ed25519 enrollment proofs.
 """
 import concurrent.futures
 import json
@@ -20,6 +21,7 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 from scripts.core_admin import mint_admin_token  # noqa: E402
+from scripts.enrollment_signing import EnrollmentSigner  # noqa: E402
 
 
 def main():
@@ -49,7 +51,11 @@ def main():
         data = None if body is None else json.dumps(body).encode()
         if data is not None:
             headers["Content-Type"] = "application/json"
-        req = urllib.request.Request(base + path, data=data, headers=headers, method=method)
+        if method == "POST" and path == enrollment:
+            assert body is not None
+            req = signer.request(base + path, body["node_id"], body["version"])
+        else:
+            req = urllib.request.Request(base + path, data=data, headers=headers, method=method)
         try:
             response = urllib.request.urlopen(req, timeout=10)
         except urllib.error.HTTPError as error:
@@ -72,6 +78,7 @@ def main():
 
     admin = "/api/admin/v1/nodes/"
     enrollment = "/api/federation/v1/enrollments"
+    signer = EnrollmentSigner()
     try:
         compose("up", "--build", "-d", "--wait", "--wait-timeout", "120")
         tokens["decide"] = mint_admin_token(compose, "admin-stack", "nodes.decide")
@@ -112,7 +119,8 @@ def main():
             assert row(id) == expected
             for duplicate in ["approve", "reject"]:
                 request("POST", admin + id + "/" + duplicate, status=409)
-            request("POST", enrollment, bodies[id], credential=None, status=409)
+            assert request("POST", enrollment, bodies[id], credential=None) == {
+                "node_id": id, "enrollment_status": "PENDING"}
             assert row(id) == expected
         assert [n["node_id"] for n in request("GET", admin + "pending")["nodes"]] == [ids[2]]
         print("PASS: approval updates trust; rejection persists; repeats/opposite actions/re-enrollment cannot overwrite decisions", flush=True)
@@ -201,6 +209,7 @@ def main():
         compose("logs", "--tail", "25", check=False)
         raise
     finally:
+        signer.__exit__()
         compose("down", "--volumes", "--remove-orphans")
         if subprocess.run(["docker", "image", "inspect", image], capture_output=True).returncode == 0:
             subprocess.run(["docker", "image", "rm", image], check=True, capture_output=True)

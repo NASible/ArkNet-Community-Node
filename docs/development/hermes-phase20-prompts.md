@@ -44,6 +44,7 @@ prompt that depends on an undecided item must stop and ask, not assume.
 | D7 | The shared development admin bearer | **Confirmed 2026-11-05:** removed completely; local development and harnesses mint scoped tokens. | 49 |
 | D8 | Permission set | **Confirmed 2026-11-05:** admin `nodes.decide`, `users.admin`, `media.admin`, `relays.read`; Node `memberships` and `swarm` on top of always-on base routes. Every admin action, allowed or denied, goes to an append-only audit table without secrets. | 49 |
 | D9 | Splitting Node keys | **Confirmed 2026-11-05:** no second key now. All Node keys would share one Agent process and data directory, so a split would not reduce blast radius; Core enforces per-Node capabilities per route instead. Revisit when a component with its own trust boundary needs a key. | 49 |
+| D10 | Login and enrollment abuse policy | **Confirmed:** Core API/browser password login share a budget (10/min per socket-peer IP, burst 5; global 60/min, burst 10); enrollment submissions have a separate equal budget. Status polling gets a higher budget. Bounded process-local state fails closed when full; ignore forwarding headers; restart resets limits. Atomically cap pending enrollments at 1,000, expiring 7 days after initial creation without extending on retries. Require signed enrollment; new, pending, conflicting-key and decided submissions share one generic receipt. Only the pinned key may read status. | 49A |
 
 ---
 
@@ -463,6 +464,10 @@ unsigned compatibility path.
 
 Acceptance criteria: limits, quotas and expiry are tested; unknown and
 decided Node IDs return indistinguishable responses; the E2E still passes.
+
+Implemented on `phase20/49a-login-enrollment-abuse`; see
+[49A validation](prompt49a-validation.md). Scoped acceptance passed; the full
+gate has a separately recorded product-swarm relay-configuration failure.
 
 ## Prompt 49B — Supported TLS Ingress With URL Redaction (ARKSEC-007)
 

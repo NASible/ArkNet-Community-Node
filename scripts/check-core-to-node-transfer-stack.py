@@ -27,6 +27,7 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 from scripts.core_admin import ScopedAdmin  # noqa: E402
+from scripts.rate_limit_retry import retry_429  # noqa: E402
 REAL_TRANSFER = ROOT / "deploy/node/compose.transfer.yaml"
 MIN_VIDEO_BYTES = 16 * 1024 * 1024
 
@@ -148,12 +149,20 @@ def request(url, method="GET", body=None, headers=None, timeout=20):
         data = json.dumps(body, separators=(",", ":")).encode()
         request_headers.setdefault("Content-Type", "application/json")
     req = urllib.request.Request(url, data=data, method=method, headers=request_headers)
-    try:
-        response = urllib.request.urlopen(req, timeout=timeout)
-    except urllib.error.HTTPError as error:
-        response = error
-    with response:
-        return response.status, dict(response.headers), response.read()
+    def attempt():
+        try:
+            response = urllib.request.urlopen(req, timeout=timeout)
+        except urllib.error.HTTPError as error:
+            response = error
+        with response:
+            return response.status, dict(response.headers), response.read()
+
+    # MVP E2E reuses this helper for successful and deliberately wrong-password
+    # API probes; these share admission budget with browser /node-login. Scope
+    # retries to this one Core login route, preserving all other error semantics.
+    if method == "POST" and urllib.parse.urlsplit(url).path == "/api/identity/v1/sessions":
+        return retry_429(attempt)
+    return attempt()
 
 
 def request_json(url, method="GET", body=None, headers=None, expected=(200,)):

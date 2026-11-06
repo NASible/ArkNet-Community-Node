@@ -192,6 +192,7 @@ func (f *loginFixture) submit(s loginStart, username, password string, headers .
 	form.Set("username", username)
 	form.Set("password", password)
 	request := httptest.NewRequest("POST", "/node-login", strings.NewReader(form.Encode()))
+	request.RemoteAddr = nextTestPeer()
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	request.Header.Set("Sec-Fetch-Site", "same-origin")
 	for i := 0; i+1 < len(headers); i += 2 {
@@ -395,6 +396,7 @@ func TestNodeLoginRejectsBadCredentialsDisabledUsersAndCrossSitePosts(t *testing
 	form.Set("username", "alice")
 	form.Set("password", testPassword)
 	request := httptest.NewRequest("POST", "/node-login", strings.NewReader(form.Encode()))
+	request.RemoteAddr = nextTestPeer()
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	response := httptest.NewRecorder()
 	f.handler.ServeHTTP(response, request)

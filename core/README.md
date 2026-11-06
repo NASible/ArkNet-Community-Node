@@ -6,6 +6,10 @@ Signed Node enrollment, approval, heartbeats, and approved-Node media catalog
 reads are implemented. User identities are not. See the
 [enrollment contract](../docs/node-enrollment.md) and
 [media catalog](../docs/media-catalog.md).
+Core login and enrollment admission use bounded rate limits; pending enrollment
+is capped at 1,000 records with fixed seven-day expiry. See
+[Core abuse controls](../docs/core-abuse-controls.md), including proxy and
+process-local limitations.
 
 ## Recommended local development
 
