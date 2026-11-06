@@ -25,8 +25,6 @@ services:
     environment:
       ARKNET_CORE_ADDR: :8080
       ARKNET_CORE_LOG_LEVEL: ${ARKNET_CORE_LOG_LEVEL:-INFO}
-      ARKNET_CORE_DEV_ADMIN_ENABLED: ${ARKNET_CORE_DEV_ADMIN_ENABLED:-false}
-      ARKNET_CORE_DEV_ADMIN_TOKEN: ${ARKNET_CORE_DEV_ADMIN_TOKEN:-}
       ARKNET_CORE_SHUTDOWN_TIMEOUT: 10s
       # Core consumes these settings and migrates automatically at startup.
       PGHOST: postgres

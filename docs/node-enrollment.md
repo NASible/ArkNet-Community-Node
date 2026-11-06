@@ -146,7 +146,7 @@ future approval/trust workflow. No Core administrator secret belongs on a Node.
 ## Core enrollment administration
 
 See [Core enrollment administration](core-enrollment-administration.md) for the separate `/api/admin/v1/` endpoints,
-explicit development-only authorization, pending pagination, approval and persisted
+scoped administrator tokens, pending pagination, approval and persisted
 rejection. The completed signed handshake lets the Agent learn approval and
 persist `CONNECTED`; private credentials are generated locally, not issued by
 Core. No Core admin UI is implemented.

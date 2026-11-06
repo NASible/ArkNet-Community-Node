@@ -32,11 +32,7 @@ func run(ctx context.Context, cfg config, logger *slog.Logger) error {
 		return fmt.Errorf("database migration failed: %w", err)
 	}
 	logger.Info("database_ready")
-	var authorizer adminAuthorizer
-	if cfg.devAdminEnabled {
-		authorizer = developmentAdminAuthorizer(cfg.devAdminToken)
-		logger.Warn("development_administrative_authorization_enabled")
-	}
+	authorizer := newTokenAuthorizer(database)
 	if cfg.nodeLogin != nil {
 		cfg.nodeLogin.logger = logger
 		logger.Info("node_login_enabled", "key_id", cfg.nodeLogin.signer.KeyID().String(), "published_keys", len(cfg.nodeLogin.published))

@@ -28,6 +28,35 @@ def ssh(machine, command, data=None, timeout=600):
     return result.stdout
 
 
+CORE_COMPOSE = 'cd /opt/arknet && sudo docker compose --env-file runtime.env -f compose.json'
+ADMIN_PERMISSIONS = {'nodes.decide', 'users.admin', 'media.admin', 'relays.read'}
+
+
+def core_machine():
+    return next(m for m in MACHINES.values() if m['role'] == 'core')
+
+
+def mint_core_admin(name, *permissions, ttl='2h'):
+    """Mint a scoped Core admin token on the Core VM's shell; return (token, token_id).
+
+    The token is held only in memory by the caller and is never printed.
+    """
+    if not permissions or not set(permissions) <= ADMIN_PERMISSIONS or len(set(permissions)) != len(permissions):
+        raise ValueError('name one or more known permissions, without repeats')
+    args = ['create-token', '--name', name, '--ttl', ttl]
+    for permission in permissions:
+        args += ['--permission', permission]
+    out = ssh(core_machine(), CORE_COMPOSE + ' exec -T arknet-core arknet-core admin ' + ' '.join(shlex.quote(a) for a in args))
+    result = json.loads(out)
+    if not result.get('token', '').startswith('arknet_adm_') or sorted(result.get('permissions', [])) != sorted(permissions):
+        raise RuntimeError('Core did not mint the requested scoped token')
+    return result['token'], result['token_id']
+
+
+def revoke_core_admin(token_id):
+    ssh(core_machine(), CORE_COMPOSE + ' exec -T arknet-core arknet-core admin revoke-token --token-id ' + shlex.quote(token_id))
+
+
 def put(machine, path, content, mode=0o644):
     if isinstance(content, str):
         content = content.encode()
@@ -47,7 +76,9 @@ def load_secrets():
     path = directory / 'runtime.json'
     if path.exists():
         return json.loads(path.read_text())
-    data = {'core_admin_token': secrets.token_hex(32), 'machines': {}, 'global_users': {}}
+    # No shared Core admin token is stored (ARKSEC-005): scripts mint scoped,
+    # short-lived tokens with mint_core_admin() and revoke them when done.
+    data = {'machines': {}, 'global_users': {}}
     for host in MACHINES:
         data['machines'][host] = {'database_password': secrets.token_hex(32),
                                   'transfer_token': secrets.token_hex(32),

@@ -234,7 +234,7 @@ verifies one pending record despite concurrent retries and Agent recreation.
 ## Core enrollment administration
 
 See [Core enrollment administration](../docs/core-enrollment-administration.md) for the separate `/api/admin/v1/` endpoints,
-explicit development-only authorization, pending pagination, approval and persisted
+scoped administrator tokens, pending pagination, approval and persisted
 rejection. The completed signed handshake lets the Agent learn approval and
 persist `CONNECTED`; private credentials are generated locally, not issued by
 Core. No Core admin UI is implemented.

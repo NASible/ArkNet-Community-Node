@@ -36,7 +36,7 @@ func approvedNode(t *testing.T) (*handshakeRepo, ed25519.PrivateKey) {
 	t.Helper()
 	public, private, _ := ed25519.GenerateKey(rand.Reader)
 	return &handshakeRepo{key: public, node: nodes.Node{PublicID: enrollmentID, EnrollmentStatus: nodes.EnrollmentApproved,
-		TrustStatus: nodes.TrustTrusted}}, private
+		TrustStatus: nodes.TrustTrusted, Capabilities: nodes.AllCapabilities()}}, private
 }
 
 func relayListPath(id string) string { return "/api/federation/v1/nodes/" + id + "/relays" }

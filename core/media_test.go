@@ -84,7 +84,7 @@ func approvedMediaRepository(t *testing.T) (*mediaRepository, ed25519.PrivateKey
 	}
 	now := time.Date(2026, 10, 14, 4, 0, 0, 0, time.UTC)
 	return &mediaRepository{
-		node: nodes.Node{PublicID: enrollmentID, EnrollmentStatus: nodes.EnrollmentApproved, TrustStatus: nodes.TrustTrusted},
+		node: nodes.Node{PublicID: enrollmentID, EnrollmentStatus: nodes.EnrollmentApproved, TrustStatus: nodes.TrustTrusted, Capabilities: nodes.AllCapabilities()},
 		key:  publicKey,
 		objects: []store.Object{
 			{ID: activeMediaID, ObjectType: media.ObjectTypeVideo, Title: "Active movie", Size: 1024, State: media.ObjectActive, CreatedAt: now, UpdatedAt: now},

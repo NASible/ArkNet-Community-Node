@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"time"
 
+	"arknet/core/internal/admins"
 	"arknet/core/internal/nodes"
 	"arknet/core/internal/store"
 	"arknet/core/internal/users"
@@ -30,14 +31,26 @@ func administrativeView(node nodes.Node) administrativeNode {
 // withAdministration keeps the entire administrative namespace behind one
 // replaceable authorizer, including unknown routes and unsupported methods.
 func withAdministration(public http.Handler, repository nodes.AdministrationRepository, authorizer adminAuthorizer) http.Handler {
-	admin := http.NewServeMux()
+	routes := newAdminRoutes(http.NewServeMux(), authorizer)
+	registerAdministrativeRoutes(routes, repository)
+	mux := http.NewServeMux()
+	mux.Handle("/api/admin/", authenticateAdmin(authorizer, routes.mux))
+	mux.Handle("/", public)
+	return mux
+}
+
+// registerAdministrativeRoutes adds every admin route, each behind exactly one
+// permission (ARKSEC-005).
+func registerAdministrativeRoutes(routes *adminRoutes, repository nodes.AdministrationRepository) {
 	metadata, _ := repository.(nodes.MetadataRepository)
-	admin.HandleFunc("GET /api/admin/v1/nodes/{node_id}", administrativeMetadataHandler(metadata))
+	routes.handle("GET /api/admin/v1/nodes/{node_id}", admins.NodesDecide, "node_id", administrativeMetadataHandler(metadata))
+	capabilities, _ := repository.(nodes.CapabilityRepository)
+	routes.handle("PUT /api/admin/v1/nodes/{node_id}/capabilities", admins.NodesDecide, "node_id", nodeCapabilitiesHandler(capabilities))
 	userAdministration, _ := repository.(users.Repository)
-	registerUserAdministration(admin, userAdministration)
+	registerUserAdministration(routes, userAdministration)
 	mediaAdministration, _ := repository.(store.MediaCatalogRepository)
-	registerMediaAdministration(admin, mediaAdministration)
-	admin.HandleFunc("GET /api/admin/v1/nodes/pending", func(w http.ResponseWriter, r *http.Request) {
+	registerMediaAdministration(routes, mediaAdministration)
+	routes.handle("GET /api/admin/v1/nodes/pending", admins.NodesDecide, "", func(w http.ResponseWriter, r *http.Request) {
 		query, err := url.ParseQuery(r.URL.RawQuery)
 		if err != nil {
 			adminError(w, 400, "invalid pagination")
@@ -88,7 +101,7 @@ func withAdministration(public http.Handler, repository nodes.AdministrationRepo
 		}{views, next})
 	})
 	for _, action := range []string{"approve", "reject", "revoke"} {
-		admin.HandleFunc("POST /api/admin/v1/nodes/{node_id}/"+action, func(w http.ResponseWriter, r *http.Request) {
+		routes.handle("POST /api/admin/v1/nodes/{node_id}/"+action, admins.NodesDecide, "node_id", func(w http.ResponseWriter, r *http.Request) {
 			id := r.PathValue("node_id")
 			if !nodes.ValidPublicID(id) {
 				adminError(w, 400, "invalid node ID")
@@ -129,24 +142,6 @@ func withAdministration(public http.Handler, repository nodes.AdministrationRepo
 			}{node.PublicID, node.EnrollmentStatus, node.TrustStatus})
 		})
 	}
-	protected := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Cache-Control", "no-store")
-		w.Header().Add("Vary", "Authorization")
-		if authorizer == nil {
-			http.NotFound(w, r)
-			return
-		}
-		if !authorizer.Authorized(r) {
-			w.Header().Set("WWW-Authenticate", `Bearer realm="arknet-core-admin"`)
-			adminError(w, 401, "administrative authorization required")
-			return
-		}
-		admin.ServeHTTP(w, r)
-	})
-	mux := http.NewServeMux()
-	mux.Handle("/api/admin/", protected)
-	mux.Handle("/", public)
-	return mux
 }
 
 func writeAdminJSON(w http.ResponseWriter, status int, value any) {

@@ -15,6 +15,7 @@ import secrets
 import shutil
 import socket
 import subprocess
+import sys
 import tempfile
 import time
 import urllib.error
@@ -23,6 +24,9 @@ import urllib.request
 import uuid
 
 ROOT = Path(__file__).resolve().parent.parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+from scripts.core_admin import ScopedAdmin  # noqa: E402
 REAL_TRANSFER = ROOT / "deploy/node/compose.transfer.yaml"
 MIN_VIDEO_BYTES = 16 * 1024 * 1024
 
@@ -259,16 +263,14 @@ def main():
     known_secrets = []
     made_network = False
     core_port, agent_port, jellyfin_port = free_port(), free_port(), free_port()
-    admin_token = secrets.token_hex(32)
     transfer_token = secrets.token_hex(32)
     core_password, node_password = secrets.token_hex(32), secrets.token_hex(32)
     jellyfin_password = secrets.token_urlsafe(24)
-    known_secrets.extend([admin_token, transfer_token, core_password, node_password, jellyfin_password])
+    known_secrets.extend([transfer_token, core_password, node_password, jellyfin_password])
 
     core_env = dict(os.environ, POSTGRES_USER="arknet", POSTGRES_DB="arknet_core",
                     POSTGRES_PASSWORD=core_password, PGSSLMODE="disable",
-                    ARKNET_CORE_PORT=str(core_port), ARKNET_CORE_DEV_ADMIN_ENABLED="true",
-                    ARKNET_CORE_DEV_ADMIN_TOKEN=admin_token,
+                    ARKNET_CORE_PORT=str(core_port),
                     ARKNET_TRACKER_PORT=str(free_port()),
                     ARKNET_TRACKER_ANNOUNCE_URL="http://arknet-tracker:6969",
                     ARKNET_TRACKER_ANNOUNCE_INTERVAL="5s", ARKNET_TRACKER_PEER_TTL="30s",
@@ -398,7 +400,9 @@ def main():
             status, _, value = request_json(agent_base + "/api/v1/status")
             return value if status == 200 and value.get("state") == wanted else None
         node = wait_until("pending Node enrollment", lambda: node_in_state("ENROLLMENT_PENDING"), 120)
-        admin_headers = {"Authorization": "Bearer " + admin_token}
+        core_admin = ScopedAdmin(core_compose, "transfer-stack", "nodes.decide")
+        admin_headers = core_admin.headers()
+        known_secrets.extend(core_admin.secrets())
         request_json(core_base + "/api/admin/v1/nodes/" + node["node_id"] + "/approve",
                      "POST", headers=admin_headers)
         wait_until("approved connected Node", lambda: node_in_state("CONNECTED"), 120)

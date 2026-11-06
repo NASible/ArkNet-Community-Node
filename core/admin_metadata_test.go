@@ -37,7 +37,7 @@ func TestAdminNodeMetadataAndAuthorization(t *testing.T) {
 			want := 200
 			if auth == nil {
 				want = 404
-			} else if !auth.Authorized(nil) {
+			} else if auth == adminAuthorizer(allowAdmin(false)) {
 				want = 401
 			}
 			if w.Code != want {
@@ -53,9 +53,9 @@ func TestAdminNodeMetadataAndAuthorization(t *testing.T) {
 			if json.Unmarshal(w.Body.Bytes(), &got) != nil {
 				t.Fatal(w.Body)
 			}
-			n := 6
+			n := 7 // includes "capabilities" (Prompt 49)
 			if present {
-				n = 7
+				n = 8
 			}
 			if len(got) != n || string(got["node_id"]) != `"`+enrollmentID+`"` || string(got["version"]) != `"v2"` {
 				t.Fatalf("metadata %s", w.Body)

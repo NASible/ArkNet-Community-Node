@@ -88,7 +88,7 @@ The same short-lived download authorization gates Core's
 [range-capable HTTP web seed](docs/core-web-seed.md), which maps only opaque
 ArkNet media IDs to operator-approved files under a dedicated content root.
 Core's database schema is embedded in `core/internal/postgres/migrations/`. Operator
-and user identity are not implemented; development-only Core administration and
+and user identity are not implemented; scoped Core administrator tokens and
 machine-held Node federation credentials remain separate security boundaries.
 
 The [Core development Compose stack](deploy/core/README.md) starts Core and a
@@ -113,7 +113,7 @@ When adding future components, inspect existing code, make the smallest change
 for the current task, add meaningful tests, and update the relevant docs.
 Never commit credentials, local media, or runtime state.
 
-Node Agent local state is persisted in PostgreSQL; see [Agent storage and startup](node-agent/README.md). Continuous federation connectivity and user identities remain unimplemented. Core enrollment decisions are available through the opt-in development administrative API.
+Node Agent local state is persisted in PostgreSQL; see [Agent storage and startup](node-agent/README.md). Continuous federation connectivity and user identities remain unimplemented. Core enrollment decisions are available through the administrative API with scoped, audited tokens.
 
 ## Mock transfer interface
 
@@ -133,10 +133,11 @@ download worker is implemented. See [Node media selection](docs/node-media-selec
 ## Core enrollment administration
 
 See [Core enrollment administration](docs/core-enrollment-administration.md) for the separate `/api/admin/v1/` endpoints,
-explicit development-only authorization, pending pagination, approval and persisted
+pending pagination, approval and persisted
 rejection. The completed signed handshake lets the Agent learn approval and
 persist `CONNECTED`; private credentials are generated locally, not issued by
-Core. No Core admin UI is implemented.
+Core. No Core admin UI is implemented. Administrators use scoped, audited tokens
+minted on the Core host; see [Core administration](docs/core-administration.md).
 
 ## Completed enrollment handshake
 

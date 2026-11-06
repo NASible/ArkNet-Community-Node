@@ -42,6 +42,7 @@ from scripts import operator_login  # noqa: E402
 from scripts import global_login  # noqa: E402
 from scripts import revocation_meter  # noqa: E402
 from scripts import relay_acceptance  # noqa: E402
+from scripts.core_admin import ScopedAdmin  # noqa: E402
 
 # Node heartbeat interval for this run. A revoked Node learns of Core's decision
 # at its next heartbeat; its transfers must stop within this plus the slack.
@@ -140,14 +141,14 @@ def main(argv=None):
     gateway_ips = {}
     failure = None
 
-    admin_token, core_password = secrets.token_hex(32), secrets.token_hex(32)
+    core_password = secrets.token_hex(32)
     global_password, local_password = "global-" + secrets.token_urlsafe(18), "local-" + secrets.token_urlsafe(18)
-    known_secrets.extend((admin_token, core_password, global_password, local_password))
+    known_secrets.extend((core_password, global_password, local_password))
     core_port = free_port()
     core_base = f"http://127.0.0.1:{core_port}"
     core_env = dict(os.environ, POSTGRES_USER="arknet", POSTGRES_DB="arknet_core", POSTGRES_PASSWORD=core_password,
-                    PGSSLMODE="disable", ARKNET_CORE_PORT=str(core_port), ARKNET_CORE_DEV_ADMIN_ENABLED="true",
-                    ARKNET_CORE_DEV_ADMIN_TOKEN=admin_token, ARKNET_TRACKER_PORT=str(free_port()),
+                    PGSSLMODE="disable", ARKNET_CORE_PORT=str(core_port),
+                    ARKNET_TRACKER_PORT=str(free_port()),
                     ARKNET_TRACKER_ANNOUNCE_URL="http://arknet-tracker:6969", ARKNET_TRACKER_ANNOUNCE_INTERVAL="5s",
                     ARKNET_TRACKER_PEER_TTL="30s", ARKNET_CORE_WEB_SEED_ORIGIN="http://arknet-core:8080")
     core_override = temporary / "core-override.yaml"
@@ -186,7 +187,10 @@ def main(argv=None):
         cfg["jelly_base"] = f"http://127.0.0.1:{cfg['jellyfin_port']}"
         nodes[label] = cfg
     projects = (core_project, nodes["a"]["project"], nodes["b"]["project"])
-    admin = {"Authorization": "Bearer " + admin_token}
+    # One least-privilege administrator token per duty (ARKSEC-005), minted
+    # with the shell CLI inside the Core container once Core is up.
+    core_admins = {name: ScopedAdmin(lambda *i, **k: core_compose(*i, **k), "e2e-" + name.replace(".", "-"), name)
+                   for name in ("nodes.decide", "users.admin", "media.admin")}
 
     def core_compose(*items, capture=False, check=True, timeout=600):
         return run(["docker", "compose", "-p", core_project, "-f", str(ROOT / "deploy/core/compose.yaml"),
@@ -302,13 +306,13 @@ def main(argv=None):
         wait_until("A downloaded relay fixture", lambda: (media_object("a", obj["id"]) or {}).get("local_state") == "AVAILABLE", 600)
         wait_until("A product seed ready", lambda: any(s["object_id"] == obj["id"] and s["state"] == "SEEDING" for s in transfer_seeds("a")), 120)
 
-    def jellyfin_stream(label, digest, size):
+    def jellyfin_stream(label, object_id, digest, size):
         cfg = nodes[label]
         auth = {"X-Emby-Token": cfg["jelly_access"]}
         request_json(cfg["jelly_base"] + "/Library/Refresh", "POST", {}, auth, expected=(204,))
         item = wait_until("Jellyfin indexed " + label, lambda: next((e for e in request_json(
             cfg["jelly_base"] + "/Items?Recursive=true&IncludeItemTypes=Movie&Fields=Path", headers=auth)[2].get("Items", [])
-            if e.get("Type") == "Movie"), None), 180)
+            if e.get("Type") == "Movie" and e.get("Path") == "/srv/arknet/media/" + object_id + ".mp4"), None), 180)
         stream_status, _, streamed = request(cfg["jelly_base"] + "/Videos/" + item["Id"] + "/stream.mp4?" +
                                              urllib.parse.urlencode({"Static": "true", "api_key": cfg["jelly_key"]}), timeout=180)
         return stream_status == 200 and len(streamed) == size and hashlib.sha256(streamed).hexdigest() == digest
@@ -487,6 +491,8 @@ def main(argv=None):
         os.chmod(core_override, 0o600)
 
         core_compose("up", "--build", "-d", "--wait", "--wait-timeout", "240")
+        for credential in core_admins.values():
+            known_secrets.append(credential.token)
         core_id = container(core_compose, "arknet-core")
         for label, cfg in nodes.items():
             run(["docker", "network", "connect", "--alias", "arknet-core", cfg["uplink"], core_id])
@@ -508,7 +514,7 @@ def main(argv=None):
         print("SETUP: Core, tracker, web seed, Node A and Node B are running", flush=True)
         if args.inject_failure == "after-setup":
             # The message deliberately carries a known secret: the bundle must redact it.
-            raise RuntimeError("injected harness failure after setup (admin token " + admin_token + ")")
+            raise RuntimeError("injected harness failure after setup (admin token " + core_admins["nodes.decide"].token + ")")
         if args.setup_only:
             raise SetupOnly()
 
@@ -518,11 +524,11 @@ def main(argv=None):
                 pending = wait_until(label + " pending", lambda l=label: in_state(l, "ENROLLMENT_PENDING"), 120)
                 cfg["node_id"] = pending["node_id"]
             assert nodes["a"]["node_id"] != nodes["b"]["node_id"]
-            listed = request_json(core_base + "/api/admin/v1/nodes/pending", headers=admin)[2]["nodes"]
+            listed = request_json(core_base + "/api/admin/v1/nodes/pending", headers=core_admins["nodes.decide"].headers())[2]["nodes"]
             assert {n["node_id"] for n in listed} == {nodes["a"]["node_id"], nodes["b"]["node_id"]}
             results.evidence(2, "both fresh Nodes self-enrolled outbound and are listed PENDING in Core")
             for label, cfg in nodes.items():
-                decision = request_json(core_base + f"/api/admin/v1/nodes/{cfg['node_id']}/approve", "POST", headers=admin)[2]
+                decision = request_json(core_base + f"/api/admin/v1/nodes/{cfg['node_id']}/approve", "POST", headers=core_admins["nodes.decide"].headers())[2]
                 assert decision["enrollment_status"] == "APPROVED" and decision["trust_status"] == "TRUSTED"
                 wait_until(label + " connected", lambda l=label: in_state(l, "CONNECTED"), 120)
             keys = core_sql("SELECT count(DISTINCT enrollment_public_key) FROM nodes")
@@ -534,7 +540,7 @@ def main(argv=None):
         # ------------------------------------------------------- 4 global user
         def global_user():
             created = request_json(core_base + "/api/admin/v1/users", "POST",
-                                   {"username": "alice-e2e", "password": global_password}, admin, expected=(201,))[2]
+                                   {"username": "alice-e2e", "password": global_password}, core_admins["users.admin"].headers(), expected=(201,))[2]
             nodes["user_id"] = created["user_id"]
             login = request_json(core_base + "/api/identity/v1/sessions", "POST",
                                  {"username": "alice-e2e", "password": global_password}, expected=(200, 201))[2]
@@ -750,7 +756,7 @@ def main(argv=None):
         item(13, offline_auth)
 
         def offline_playback():
-            assert jellyfin_stream("a", video["sha256"], video["size"])
+            assert jellyfin_stream("a", video["id"], video["sha256"], video["size"])
             results.evidence(12, "with Core and tracker stopped, Jellyfin on Node A streamed the exact completed MP4")
         item(12, offline_playback)
 
@@ -852,12 +858,12 @@ def main(argv=None):
 
         # ----------------------------------------------- 15 removed media
         def removed():
-            removed_object = request_json(core_base + f"/api/admin/v1/media/{video['id']}/remove", "POST", headers=admin)[2]
+            removed_object = request_json(core_base + f"/api/admin/v1/media/{video['id']}/remove", "POST", headers=core_admins["media.admin"].headers())[2]
             assert removed_object["state"] == "REMOVED"
             retained = wait_until("A REMOVED_RETAINED", lambda: (lambda o: o if o and o["local_state"] == "REMOVED_RETAINED" else None)(
                 media_object("a", video["id"])), 120)
             results.evidence(15, "Core tombstone propagated; Node A state " + retained["local_state"])
-            assert jellyfin_stream("a", video["sha256"], video["size"])
+            assert jellyfin_stream("a", video["id"], video["sha256"], video["size"])
             again = request(nodes["a"]["base"] + f"/api/v1/media/{video['id']}/selection", "POST", {}, op("a"))
             assert again[0] == 409
             sources = core_sql(f"SELECT count(*) FROM media_replicas r JOIN media_objects m ON m.id=r.media_object_id "
@@ -873,7 +879,7 @@ def main(argv=None):
             federation = request(core_base + f"/api/federation/v1/nodes/{nodes['a']['node_id']}/memberships")[0]
             assert federation == 404, federation
             assert request(core_base + f"/api/federation/v1/nodes/{nodes['a']['node_id']}/media")[0] == 401  # control: route exists
-            assert request(core_base + "/api/admin/v1/users", headers=admin)[0] in (404, 405)
+            assert request(core_base + "/api/admin/v1/users", headers=core_admins["users.admin"].headers())[0] in (404, 405)
             run(["npm", "run", "build"], cwd=ROOT / "node-ui", capture=True, timeout=300)
             bundle = "".join(p.read_text(errors="replace") for p in (ROOT / "node-ui/dist/assets").glob("*.js"))
             assert bundle and "global-members" not in bundle
@@ -969,7 +975,7 @@ def main(argv=None):
                            lambda: revocation_meter.recent_rate(sampler.samples) >= 128 * 1024, 30, .25)
                 revoked_at = time.time()
                 revoked_monotonic = time.monotonic()
-                decision = request_json(core_base + f"/api/admin/v1/nodes/{nodes['b']['node_id']}/revoke", "POST", headers=admin)[2]
+                decision = request_json(core_base + f"/api/admin/v1/nodes/{nodes['b']['node_id']}/revoke", "POST", headers=core_admins["nodes.decide"].headers())[2]
                 assert decision["enrollment_status"] == "REVOKED" and decision["trust_status"] == "BLOCKED"
 
                 def events(service):

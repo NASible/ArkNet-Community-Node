@@ -128,7 +128,7 @@ def main():
     site = work / "site"
     site.mkdir()
     procs, server = [], None
-    admin_token, pg_password = secrets.token_hex(32), secrets.token_hex(24)
+    pg_password = secrets.token_hex(24)
     try:
         # ---- Core
         sh("docker", "run", "-d", "--name", PG_NAME, "-e", f"POSTGRES_PASSWORD={pg_password}", "-e", "POSTGRES_USER=arknet",
@@ -141,16 +141,20 @@ def main():
         core_bin = work / "arknet-core"
         sh("go", "build", "-o", str(core_bin), ".", cwd=ROOT / "core")
         core_log = open(work / "core.log", "w")
-        procs.append(subprocess.Popen([str(core_bin)], stdout=core_log, stderr=subprocess.STDOUT, env={
-            "PATH": os.environ["PATH"], "ARKNET_CORE_ADDR": f"127.0.0.1:{CORE_PORT}",
-            "DATABASE_URL": f"postgres://arknet:{pg_password}@127.0.0.1:{PG_PORT}/core?sslmode=disable",
-            "ARKNET_CORE_DEV_ADMIN_ENABLED": "true", "ARKNET_CORE_DEV_ADMIN_TOKEN": admin_token}))
+        core_env = {"PATH": os.environ["PATH"], "ARKNET_CORE_ADDR": f"127.0.0.1:{CORE_PORT}",
+                    "DATABASE_URL": f"postgres://arknet:{pg_password}@127.0.0.1:{PG_PORT}/core?sslmode=disable"}
+        procs.append(subprocess.Popen([str(core_bin)], stdout=core_log, stderr=subprocess.STDOUT, env=core_env))
         for _ in range(30):
             try:
                 urllib.request.urlopen(f"http://127.0.0.1:{CORE_PORT}/health", timeout=2)
                 break
             except OSError:
                 time.sleep(1)
+
+        # Scoped administrator token from the shell CLI (ARKSEC-005).
+        admin_token = json.loads(subprocess.run(
+            [str(core_bin), "admin", "create-token", "--name", "install-vm-check", "--permission", "nodes.decide", "--ttl", "2h"],
+            env=core_env, check=True, capture_output=True, text=True).stdout)["token"]
 
         def pending():
             request = urllib.request.Request(f"http://127.0.0.1:{CORE_PORT}/api/admin/v1/nodes/pending",

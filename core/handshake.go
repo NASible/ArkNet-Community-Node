@@ -43,6 +43,19 @@ func verifyNodeProof(r *http.Request, body []byte, id string, key []byte) bool {
 	message := fmt.Sprintf("ARKNET-NODE-V1\n%s\n%s\n%x\n%s\n%s", r.Method, r.URL.EscapedPath(), sha256.Sum256(body), timestamps[0], id)
 	return ed25519.Verify(ed25519.PublicKey(key), []byte(message), sig)
 }
+
+// nodeCapable refuses an authenticated, approved Node that lacks the route's
+// capability (ARKSEC-005). It runs before any repository is touched.
+func nodeCapable(w http.ResponseWriter, node nodes.Node, required ...nodes.Capability) bool {
+	for _, capability := range required {
+		if !node.Can(capability) {
+			http.Error(w, "node capability not granted", http.StatusForbidden)
+			return false
+		}
+	}
+	return true
+}
+
 func unauthorizedNode(w http.ResponseWriter) {
 	http.Error(w, "node authentication failed", http.StatusUnauthorized)
 }

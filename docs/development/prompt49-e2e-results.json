@@ -1,0 +1,173 @@
+{
+  "schema": "arknet.prompt43.mvp-e2e.v1",
+  "run_id": "arknet-p43-test-68e413875194",
+  "completed": true,
+  "items": [
+    {
+      "item": 2,
+      "name": "Enrollment",
+      "status": "PASS",
+      "evidence": [
+        "both fresh Nodes self-enrolled outbound and are listed PENDING in Core",
+        "approval completed the signed handshake; both CONNECTED with 2 distinct pinned keys"
+      ]
+    },
+    {
+      "item": 3,
+      "name": "Node restart",
+      "status": "PASS",
+      "evidence": [
+        "Agent restart and container recreation kept node ID, CONNECTED enrollment, queued selection and local users; Core still has exactly 2 Nodes"
+      ]
+    },
+    {
+      "item": 4,
+      "name": "Global user",
+      "status": "PASS",
+      "evidence": [
+        "Core created a global user, issued a session, and rejected a wrong password"
+      ]
+    },
+    {
+      "item": 5,
+      "name": "Local-only user",
+      "status": "PASS",
+      "evidence": [
+        "local user authenticates on Node A only; Core database dump has no trace of it"
+      ]
+    },
+    {
+      "item": 6,
+      "name": "Pairwise node membership",
+      "status": "PASS",
+      "evidence": [
+        "one global user received different random member IDs on A and B; neither Node stores the username, global user ID, the other Node's member ID, or the other Node's ID"
+      ]
+    },
+    {
+      "item": 7,
+      "name": "Jellyfin",
+      "status": "PASS",
+      "evidence": [
+        "both Agents report local Jellyfin healthy; Jellyfin set up with ArkNet library on read-only media"
+      ]
+    },
+    {
+      "item": 8,
+      "name": "Media selection",
+      "status": "PASS",
+      "evidence": [
+        "signed catalog fetch listed the object; operator selection queued it"
+      ]
+    },
+    {
+      "item": 9,
+      "name": "BitTorrent v2 Core -> Node transfer",
+      "status": "PASS",
+      "evidence": [
+        "real libtorrent transfer started from the Core web seed (5259264 bytes)",
+        "object verified AVAILABLE with exact SHA-256 and a signed replica report in Core"
+      ]
+    },
+    {
+      "item": 10,
+      "name": "Interrupted transfer/resume",
+      "status": "PASS",
+      "evidence": [
+        "Core stopped and transfer container restarted mid-download; progress retained (5259264 bytes)",
+        "fresh authorization resumed retained pieces to completion"
+      ]
+    },
+    {
+      "item": 11,
+      "name": "Node A -> Node B swarm contribution",
+      "status": "PASS",
+      "evidence": [
+        "node-agent seed reconciler -> transfer service -> libtorrent worker",
+        "a/arknet-agent full namespace pcap (loopback included): {\"packets\": 9349, \"received_payload_bytes\": 389011, \"tcp_streams\": 463, \"counterpart_addresses_checked\": 8}",
+        "a/arknet-transfer full namespace pcap (loopback included): {\"packets\": 7770, \"received_payload_bytes\": 33685986, \"tcp_streams\": 130, \"counterpart_addresses_checked\": 8, \"connections_classified\": 64, \"firewall_denied_attempts\": 0, \"plaintext_peer_bytes\": 33581352}",
+        "b/arknet-agent full namespace pcap (loopback included): {\"packets\": 17917, \"received_payload_bytes\": 796212, \"tcp_streams\": 932, \"counterpart_addresses_checked\": 8}",
+        "b/arknet-transfer full namespace pcap (loopback included): {\"packets\": 14473, \"received_payload_bytes\": 68708454, \"tcp_streams\": 245, \"counterpart_addresses_checked\": 8, \"connections_classified\": 146, \"firewall_denied_attempts\": 0}",
+        "relay-only private v2 peer contribution: 33581352 loopback bytes from A's libtorrent; B completed exact SHA-256 with its Core web seed disconnected",
+        "a/arknet-agent full namespace pcap (loopback included): {\"packets\": 5894, \"received_payload_bytes\": 259468, \"tcp_streams\": 304, \"counterpart_addresses_checked\": 8}",
+        "a/arknet-transfer full namespace pcap (loopback included): {\"packets\": 741, \"received_payload_bytes\": 384502, \"tcp_streams\": 87, \"counterpart_addresses_checked\": 8, \"connections_classified\": 90, \"firewall_denied_attempts\": 0, \"plaintext_peer_bytes\": 361035}",
+        "b/arknet-agent full namespace pcap (loopback included): {\"packets\": 14351, \"received_payload_bytes\": 812243, \"tcp_streams\": 729, \"counterpart_addresses_checked\": 8}",
+        "b/arknet-transfer full namespace pcap (loopback included): {\"packets\": 6827, \"received_payload_bytes\": 149856317, \"tcp_streams\": 164, \"counterpart_addresses_checked\": 8, \"connections_classified\": 101, \"firewall_denied_attempts\": 0}",
+        "all relays down: {\"rate_before\": 145646.2553730791, \"stopped_after\": 0.0, \"quiet_seconds\": 53.459070920944214, \"residual_bytes\": 5932, \"received_after_revocation\": 355}; 75979983 origin bytes, 0 late peer bytes; all outgoing attempts gateway-classified"
+      ]
+    },
+    {
+      "item": 12,
+      "name": "Offline Jellyfin playback",
+      "status": "PASS",
+      "evidence": [
+        "with Core and tracker stopped, Jellyfin on Node A streamed the exact completed MP4"
+      ]
+    },
+    {
+      "item": 13,
+      "name": "Core-bound global authentication",
+      "status": "PASS",
+      "evidence": [
+        "online login: the password was typed only on Core's page; Core redirected to Node A's registered callback; Node A verified the one-time assertion and created a session",
+        "replayed assertion rejected by Node A (same and new login); Node A's assertion rejected by Node B",
+        "malicious-Node harness: 941 bytes received by Node A's Agent during a login; none of 11 captured values contains the password or Core session, signs in at Core (password or bearer), or opens a session at Node B (assertion or bearer)",
+        "Core offline: the browser's device credential and Node A's Core-signed grant gave an offline session inside the window; a browser without a device credential was refused; Node A's device credential was refused by Node B; local user still authenticates",
+        "after the 180s offline window, offline login was rejected and the offline session had ended"
+      ]
+    },
+    {
+      "item": 14,
+      "name": "Core reconnect",
+      "status": "PASS",
+      "evidence": [
+        "Core outage moved Node A to DEGRADED while the Agent kept serving",
+        "Core restored; Node A reconnected automatically to CONNECTED with no re-enrollment"
+      ]
+    },
+    {
+      "item": 15,
+      "name": "Removed-media retention",
+      "status": "PASS",
+      "evidence": [
+        "Core tombstone propagated; Node A state REMOVED_RETAINED",
+        "retained file still byte-identical and playable in Jellyfin; reselection refused; no longer an eligible source"
+      ]
+    },
+    {
+      "item": 16,
+      "name": "Node revocation",
+      "status": "PASS",
+      "evidence": [
+        "Core push / relay live-session closure while B Agent frozen: [{\"after_seconds\": 0.244, \"core_deliveries\": 0, \"relay_pushes\": 0, \"connections_closed\": 0}, {\"after_seconds\": 0.679, \"core_deliveries\": 1, \"relay_pushes\": 1, \"connections_closed\": 2}]",
+        "relay-only revocation byte stop: {\"rate_before\": 222113.35944941724, \"stopped_after\": 0.0, \"quiet_seconds\": 51.66714596748352, \"residual_bytes\": 354, \"received_after_revocation\": 0}",
+        "a/arknet-agent full namespace pcap (loopback included): {\"packets\": 2069, \"received_payload_bytes\": 89194, \"tcp_streams\": 106, \"counterpart_addresses_checked\": 8}",
+        "a/arknet-transfer full namespace pcap (loopback included): {\"packets\": 1081, \"received_payload_bytes\": 2883517, \"tcp_streams\": 33, \"counterpart_addresses_checked\": 8, \"connections_classified\": 16, \"firewall_denied_attempts\": 0, \"plaintext_peer_bytes\": 2869776}",
+        "b/arknet-agent full namespace pcap (loopback included): {\"packets\": 1101, \"received_payload_bytes\": 60078, \"tcp_streams\": 51, \"counterpart_addresses_checked\": 8}",
+        "b/arknet-transfer full namespace pcap (loopback included): {\"packets\": 2235, \"received_payload_bytes\": 9825473, \"tcp_streams\": 73, \"counterpart_addresses_checked\": 8, \"connections_classified\": 55, \"firewall_denied_attempts\": 0}",
+        "pcap: 606689 real A peer bytes in last 3s; {\"closed_live_sockets\": 1, \"push_observed_after\": 0.679}",
+        "after unfreeze B converged to REVOKED/CANCELLED, refuses new transfers (409 node_revoked), retained media exact",
+        "Node A unaffected (CONNECTED)"
+      ]
+    },
+    {
+      "item": 19,
+      "name": "Operator cannot enumerate global users",
+      "status": "PASS",
+      "evidence": [
+        "Agent and Core membership listing routes return 404; Core has no user listing; operator API surfaces and UI bundle carry no global username or user ID"
+      ]
+    },
+    {
+      "item": 20,
+      "name": "Node A cannot arbitrarily access Node B",
+      "status": "PASS",
+      "evidence": [
+        "from Node A's Agent and transfer containers, every Node B address is unreachable, including its transfer-control API; separate internal gateway networks expose no direct peer path",
+        "Node A's federation credential presented for Node B's Core route was rejected (401)",
+        "Node B's management address returned 401 to anonymous callers, to Node A's operator session and to a member bearer token on status, users, invitations, settings and updates",
+        "Node B's member listener returned 404 for management status; its management listener returned 404 for member login; health remained available only on the member listener"
+      ]
+    }
+  ]
+}

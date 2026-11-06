@@ -40,6 +40,10 @@ prompt that depends on an undecided item must stop and ask, not assume.
 | D3 | How long global users can log in offline | **Confirmed 2026-10-29:** at most 30 days on a Node since the last online verification. Core may set a shorter limit per Node or per user. See [global login decisions](../global-login-assertions.md#decisions). | 46 |
 | D4 | First login for a global user on a Node | Redirect to Core, which requires Core to be reachable once per Node per offline window. Adopted with the Prompt 46 decisions (Core login page, Node-registered callback). | 46 |
 | D5 | Who operates the private relay | **Confirmed 2026-11-03:** the ArkNet operator runs most relays; community-run relays only as one hop of a two-hop path through an operator relay, end-to-end encrypted to it, admitted by Core (48E). No direct mode in the first release. See [relay decisions](../private-relay-design.md#decisions-confirmed-2026-11-03). | 48 |
+| D6 | How Core administrators authenticate | **Confirmed 2026-11-05:** per-administrator API tokens, stored hashed in Core with explicit permissions, a default 30-day expiry and revocation; minted only from a shell on the Core host (`arknet-core admin create-token`). No browser login. Scripts mint per-run tokens with only the permissions they need. | 49 |
+| D7 | The shared development admin bearer | **Confirmed 2026-11-05:** removed completely; local development and harnesses mint scoped tokens. | 49 |
+| D8 | Permission set | **Confirmed 2026-11-05:** admin `nodes.decide`, `users.admin`, `media.admin`, `relays.read`; Node `memberships` and `swarm` on top of always-on base routes. Every admin action, allowed or denied, goes to an append-only audit table without secrets. | 49 |
+| D9 | Splitting Node keys | **Confirmed 2026-11-05:** no second key now. All Node keys would share one Agent process and data directory, so a split would not reduce blast radius; Core enforces per-Node capabilities per route instead. Revisit when a component with its own trust boundary needs a key. | 49 |
 
 ---
 

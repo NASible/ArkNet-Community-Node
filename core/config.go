@@ -15,8 +15,6 @@ type config struct {
 	databaseURL     string
 	logLevel        slog.Level
 	shutdownTimeout time.Duration
-	devAdminEnabled bool
-	devAdminToken   string
 	tracker         *trackerGrantIssuer
 	webSeed         *webSeedConfig
 	nodeLogin       *nodeLoginConfig
@@ -72,17 +70,10 @@ func loadConfig(getenv func(string) string) (config, error) {
 		u.RawQuery = query.Encode()
 		cfg.databaseURL = u.String()
 	}
-	flag := getenv("ARKNET_CORE_DEV_ADMIN_ENABLED")
-	if flag != "" && flag != "false" && flag != "true" {
-		return config{}, fmt.Errorf("ARKNET_CORE_DEV_ADMIN_ENABLED must be true or false")
-	}
-	cfg.devAdminEnabled = flag == "true"
-	cfg.devAdminToken = getenv("ARKNET_CORE_DEV_ADMIN_TOKEN")
-	if cfg.devAdminEnabled && !validDevelopmentToken(cfg.devAdminToken) {
-		return config{}, fmt.Errorf("ARKNET_CORE_DEV_ADMIN_TOKEN must be exactly 64 lowercase hexadecimal characters")
-	}
-	if !cfg.devAdminEnabled && cfg.devAdminToken != "" {
-		return config{}, fmt.Errorf("development administrator token requires explicit development administrator enablement")
+	for _, removed := range []string{"ARKNET_CORE_DEV_ADMIN_ENABLED", "ARKNET_CORE_DEV_ADMIN_TOKEN"} {
+		if getenv(removed) != "" {
+			return config{}, fmt.Errorf("%s was removed; mint a scoped administrator token with `arknet-core admin create-token`", removed)
+		}
 	}
 	tracker, err := loadTrackerGrantIssuer(getenv("ARKNET_TRACKER_ANNOUNCE_URL"), getenv("ARKNET_TRACKER_SIGNING_KEY_FILE"))
 	if err != nil {

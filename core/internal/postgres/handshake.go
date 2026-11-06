@@ -16,9 +16,13 @@ var _ nodes.HandshakeRepository = (*Store)(nil)
 func scanIdentity(row scanner) (nodes.Node, []byte, error) {
 	var node nodes.Node
 	var key, health []byte
-	err := row.Scan(&node.ID, &node.PublicID, &node.EnrollmentStatus, &node.TrustStatus, &node.SoftwareVersion, &node.CreatedAt, &node.LastSeenAt, &node.CurrentState, &health, &key)
+	var capabilities string
+	err := row.Scan(&node.ID, &node.PublicID, &node.EnrollmentStatus, &node.TrustStatus, &node.SoftwareVersion, &node.CreatedAt, &node.LastSeenAt, &node.CurrentState, &health, &capabilities, &key)
 	if err == nil {
 		err = decodeHealth(&node, health)
+	}
+	if err == nil {
+		err = decodeCapabilities(&node, capabilities)
 	}
 	return node, key, err
 }

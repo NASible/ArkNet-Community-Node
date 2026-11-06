@@ -5,7 +5,7 @@ import datetime
 import subprocess
 import sys
 import urllib.parse
-from ops import HERE, MACHINES, load_secrets, save_secrets
+from ops import HERE, MACHINES, load_secrets, mint_core_admin, revoke_core_admin, save_secrets
 from private_api import TLS, request, tunnel, wait
 sys.path.insert(0, str(HERE.parent.parent))
 from scripts import global_login  # noqa: E402
@@ -17,7 +17,16 @@ machine = MACHINES[args.host]
 label = args.host[-1]
 secrets = load_secrets()
 local = secrets['machines'][args.host]
-admin = {'Authorization': 'Bearer ' + secrets['core_admin_token']}
+# Scoped, short-lived Core admin tokens (ARKSEC-005), minted on first use on the
+# Core VM's shell and revoked when this run ends. Never stored or printed.
+minted = {}
+
+
+def admin(permission):
+    if permission not in minted:
+        minted[permission] = mint_core_admin('init-' + args.host, permission, ttl='1h')
+    return {'Authorization': 'Bearer ' + minted[permission][0]}
+
 core = 'https://core.nodenet.arknet.media'
 
 with tunnel(machine, 8096) as jelly:
@@ -64,46 +73,50 @@ with tunnel(machine, 8096) as jelly:
     print('JELLYFIN_CONFIGURED_AND_LIBRARY_VERIFIED', args.host, username, flush=True)
 
 subprocess.run([sys.executable, str(HERE / 'deploy-stack.py'), args.host], check=True, stdout=subprocess.DEVNULL)
-with tunnel(machine, 8082) as agent:
-    def enrolled():
-        state = request(agent + '/api/v1/status')[1]
-        return state if state.get('state') in ('ENROLLMENT_PENDING', 'CONNECTED') else None
-    state = wait(args.host + ' enrollment', enrolled, 180)
-    node_id = state['node_id']
-    local['node_id'] = node_id
-    save_secrets(secrets)
-    if state['state'] != 'CONNECTED':
-        _, decision = request(core + '/api/admin/v1/nodes/' + node_id + '/approve', 'POST', headers=admin)
-        assert decision['enrollment_status'] == 'APPROVED'
-    connected = wait(args.host + ' connected', lambda: (s if (s := request(agent + '/api/v1/status')[1]).get('state') == 'CONNECTED' else None), 180)
-    assert connected['jellyfin_healthy'] is True
-    peer = request(agent + '/api/v1/settings/peer-serving')[1]
-    # Do not enable peer serving as a side effect of deployment.
-    assert peer.get('enabled') is False
-    owner = secrets['global_users']['user-' + label]
-    if not owner.get('user_id'):
-        _, created = request(core + '/api/admin/v1/users', 'POST',
-                             {'username': owner['username'], 'password': owner['password']}, admin)
-        owner['user_id'] = created['user_id']
+try:
+    with tunnel(machine, 8082) as agent:
+        def enrolled():
+            state = request(agent + '/api/v1/status')[1]
+            return state if state.get('state') in ('ENROLLMENT_PENDING', 'CONNECTED') else None
+        state = wait(args.host + ' enrollment', enrolled, 180)
+        node_id = state['node_id']
+        local['node_id'] = node_id
         save_secrets(secrets)
-    _, login = request(core + '/api/identity/v1/sessions', 'POST', {'username': owner['username'], 'password': owner['password']})
-    session = {'Authorization': 'Bearer ' + login['token']}
-    if not owner.get('member_id'):
-        expires = (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=1)).strftime('%Y-%m-%dT%H:%M:%SZ')
-        _, invite = request(agent + '/api/v1/invitations', 'POST', {'role': 'MEMBER', 'expires_at': expires, 'max_uses': 1})
-        _, accepted = request(core + '/api/identity/v1/invitations/accept', 'POST', {'secret': invite['secret']}, session)
-        assert accepted['node_id'] == node_id
-        owner['member_id'] = accepted['member_id']
-        owner['node_id'] = node_id
-        save_secrets(secrets)
-    request(core + '/api/identity/v1/home-node', 'PUT', {'node_id': node_id}, session)
-    # Verify the Core-bound pairwise login on the public member host (Prompt 46B):
-    # the password goes only to Core's page; the Node verifies Core's assertion.
-    member = 'https://member-' + args.host[-1] + '.nodenet.arknet.media'
-    node_session, _ = global_login.login(global_login.Browser(TLS), member, member + '/login/callback',
-                                         owner['username'], owner['password'])
-    assert node_session.get('token') and node_session['member_id'] == owner['member_id']
-    request(core + '/api/identity/v1/session', 'DELETE', headers=session, expected=(200, 204))
-    print('NODE_CONNECTED_OWNER_MEMBERSHIP_LOGIN_VERIFIED', args.host, owner['username'], flush=True)
+        if state['state'] != 'CONNECTED':
+            _, decision = request(core + '/api/admin/v1/nodes/' + node_id + '/approve', 'POST', headers=admin('nodes.decide'))
+            assert decision['enrollment_status'] == 'APPROVED'
+        connected = wait(args.host + ' connected', lambda: (s if (s := request(agent + '/api/v1/status')[1]).get('state') == 'CONNECTED' else None), 180)
+        assert connected['jellyfin_healthy'] is True
+        peer = request(agent + '/api/v1/settings/peer-serving')[1]
+        # Do not enable peer serving as a side effect of deployment.
+        assert peer.get('enabled') is False
+        owner = secrets['global_users']['user-' + label]
+        if not owner.get('user_id'):
+            _, created = request(core + '/api/admin/v1/users', 'POST',
+                                 {'username': owner['username'], 'password': owner['password']}, admin('users.admin'))
+            owner['user_id'] = created['user_id']
+            save_secrets(secrets)
+        _, login = request(core + '/api/identity/v1/sessions', 'POST', {'username': owner['username'], 'password': owner['password']})
+        session = {'Authorization': 'Bearer ' + login['token']}
+        if not owner.get('member_id'):
+            expires = (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=1)).strftime('%Y-%m-%dT%H:%M:%SZ')
+            _, invite = request(agent + '/api/v1/invitations', 'POST', {'role': 'MEMBER', 'expires_at': expires, 'max_uses': 1})
+            _, accepted = request(core + '/api/identity/v1/invitations/accept', 'POST', {'secret': invite['secret']}, session)
+            assert accepted['node_id'] == node_id
+            owner['member_id'] = accepted['member_id']
+            owner['node_id'] = node_id
+            save_secrets(secrets)
+        request(core + '/api/identity/v1/home-node', 'PUT', {'node_id': node_id}, session)
+        # Verify the Core-bound pairwise login on the public member host (Prompt 46B):
+        # the password goes only to Core's page; the Node verifies Core's assertion.
+        member = 'https://member-' + args.host[-1] + '.nodenet.arknet.media'
+        node_session, _ = global_login.login(global_login.Browser(TLS), member, member + '/login/callback',
+                                             owner['username'], owner['password'])
+        assert node_session.get('token') and node_session['member_id'] == owner['member_id']
+        request(core + '/api/identity/v1/session', 'DELETE', headers=session, expected=(200, 204))
+        print('NODE_CONNECTED_OWNER_MEMBERSHIP_LOGIN_VERIFIED', args.host, owner['username'], flush=True)
+finally:
+    for _, token_id in minted.values():
+        revoke_core_admin(token_id)
 
 subprocess.run([sys.executable, str(HERE / 'activate-ingress.py'), args.host], check=True)

@@ -25,8 +25,7 @@ def main():
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
         port = str(sock.getsockname()[1])
-    env = dict(os.environ, ARKNET_CORE_DEV_ADMIN_ENABLED="false", ARKNET_CORE_DEV_ADMIN_TOKEN="",
-               POSTGRES_PASSWORD=secrets.token_hex(32),
+    env = dict(os.environ, POSTGRES_PASSWORD=secrets.token_hex(32),
                POSTGRES_USER="arknet", POSTGRES_DB="arknet_core",
                ARKNET_CORE_PORT=port, ARKNET_CORE_LOG_LEVEL="INFO", PGSSLMODE="disable")
     base = ["docker", "compose", "-p", project]

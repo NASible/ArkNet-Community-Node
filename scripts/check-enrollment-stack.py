@@ -28,7 +28,7 @@ def free_port():
 def main():
     prefix = "arknet-enrollment-test-" + uuid.uuid4().hex[:12]
     network = prefix + "-transport"
-    env = dict(os.environ, ARKNET_CORE_DEV_ADMIN_ENABLED="false", ARKNET_CORE_DEV_ADMIN_TOKEN="", POSTGRES_USER="arknet", PGSSLMODE="disable",
+    env = dict(os.environ, POSTGRES_USER="arknet", PGSSLMODE="disable",
                ARKNET_CORE_PORT=free_port(), ARKNET_AGENT_PORT=free_port(),
                ARKNET_UI_PORT=free_port(), ARKNET_CORE_URL="",
                ARKNET_CORE_ALLOW_HTTP="false")

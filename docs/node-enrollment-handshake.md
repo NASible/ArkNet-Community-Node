@@ -115,7 +115,7 @@ Node storage or rotate a completed credential automatically to work around this.
 The old three-field submission remains a pending-only compatibility receipt. It
 never yields authenticated approval or credentials; upgraded Agents use the signed
 four-field flow. Core's existing approval/rejection API remains separate and uses
-its explicitly development-only authorization until real administrator auth is added.
+scoped, audited administrator tokens (see core-administration.md).
 
 ## Running and verification
 

@@ -2,9 +2,10 @@
 """Rotate every live-test credential in place, then prove new accepted / old rejected.
 
 Rotates: the three global-user passwords, the three Jellyfin administrator
-passwords (and their access tokens), the Core admin token, every PostgreSQL
-role password, and every Agent-to-transfer token. Removes the unused
-operator_password entries and the Core admin token from Node VMs.
+passwords (and their access tokens), every PostgreSQL role password, and every
+Agent-to-transfer token. Removes the unused operator_password entries and any
+legacy shared Core admin token. Core admin access uses scoped, short-lived
+tokens minted on the Core VM (ARKSEC-005), so there is no admin token to rotate.
 
 Crash safety: old and new values are written to secrets/rotation-pending.json
 (0600) before anything changes. Every step is idempotent, so rerunning after a
@@ -26,7 +27,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-from ops import HERE, MACHINES, load_secrets, save_secrets, ssh
+from ops import HERE, MACHINES, load_secrets, mint_core_admin, revoke_core_admin, save_secrets, ssh
 from private_api import TLS, request, wait
 sys.path.insert(0, str(HERE.parent.parent))
 from scripts import global_login  # noqa: E402
@@ -59,8 +60,8 @@ def write_private(path, text):
 
 # ------------------------------------------------------------------ plan
 def make_plan(state):
-    old = {'core_admin_token': state['core_admin_token'], 'machines': {}, 'global_users': {}}
-    new = {'core_admin_token': rng.token_hex(32), 'machines': {}, 'global_users': {}}
+    old = {'machines': {}, 'global_users': {}}
+    new = {'machines': {}, 'global_users': {}}
     for host in MACHINES:
         local = state['machines'][host]
         keys = ['database_password'] + (['transfer_token', 'jellyfin_password', 'jellyfin_access_token']
@@ -183,7 +184,7 @@ def node_healthy(host):
 # ---------------------------------------------------------------- phases
 def rotate_runtime_and_databases(state, plan):
     new = plan['new']
-    state['core_admin_token'] = new['core_admin_token']
+    state.pop('core_admin_token', None)  # legacy shared bearer (removed in Prompt 49)
     for host in MACHINES:
         local = state['machines'][host]
         local.pop('operator_password', None)  # generated at bootstrap, never used by any service
@@ -266,14 +267,19 @@ def rotate_jellyfin(state, plan):
 def verify_machine_secrets(plan):
     old, new = plan['old'], plan['new']
     admin = CORE + '/api/admin/v1/nodes/pending'
-    for token, want, label in ((new['core_admin_token'], 200, 'new'), (old['core_admin_token'], 401, 'old')):
+    token, token_id = mint_core_admin('rotation-check', 'nodes.decide', ttl='10m')
+    try:
         status, _ = request(admin, headers={'Authorization': 'Bearer ' + token}, expected=(200, 401))
-        assert status == want, label + ' Core admin token: HTTP ' + str(status)
-    passed('Core admin token: new accepted, old rejected')
-    for host in NODES:
+        assert status == 200, 'scoped Core admin token: HTTP ' + str(status)
+    finally:
+        revoke_core_admin(token_id)
+    status, _ = request(admin, headers={'Authorization': 'Bearer ' + token}, expected=(200, 401))
+    assert status == 401, 'revoked Core admin token: HTTP ' + str(status)
+    passed('Core admin: scoped token accepted, then refused once revoked')
+    for host in MACHINES:
         count = ssh(host, 'sudo sh -c "grep -c CORE_ADMIN_TOKEN /opt/arknet/runtime.env || true"').decode().strip()
-        assert count == '0', host + ': Core admin token still present on a Node'
-    passed('Core admin token absent from all Node VMs')
+        assert count == '0', host + ': a shared Core admin token is still deployed'
+    passed('no shared Core admin token on any VM')
     for host in MACHINES:
         assert database_accepts(host, new['machines'][host]['database_password']), host + ': new DB password refused'
         assert not database_accepts(host, old['machines'][host]['database_password']), host + ': old DB password accepted'
@@ -305,7 +311,10 @@ def write_access(state):
                   'Jellyfin administrator username: ' + local['jellyfin_username'],
                   'Jellyfin administrator password: ' + local['jellyfin_password'], '']
     lines += ['CORE ADMINISTRATION (trusted operator)', 'Core API: ' + CORE,
-              'Admin Authorization bearer token: ' + state['core_admin_token'],
+              'Admin tokens are scoped and short-lived; mint one on the Core VM with:',
+              '  cd /opt/arknet && sudo docker compose --env-file runtime.env -f compose.json exec -T arknet-core \\',
+              '    arknet-core admin create-token --name <you> --permission nodes.decide --ttl 1d',
+              'Revoke it with: arknet-core admin revoke-token --token-id <token_id>',
               'Core has no separate administration dashboard in the current product.',
               'Global users change their own password with POST /api/identity/v1/password and a Core session.',
               'Peer Serving is OFF. Transfers use the Core web seed; use the explicit Start action.', '']

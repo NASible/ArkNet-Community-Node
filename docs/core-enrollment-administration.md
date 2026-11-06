@@ -1,50 +1,17 @@
 # Core Enrollment Administration
 
 Enrollment administration is separate from the public federation request API.
-It is disabled by default and currently uses an **explicitly development-only**
-Bearer token. No Core admin UI or real identity provider is implemented. The
-separate node handshake now provides node-bound credentials and outbound approval
-checks; it does not implement operator identity.
+It is authorized by scoped, per-administrator tokens that are minted on the
+Core host. Every route on this page requires the `nodes.decide` permission,
+and every call is audited. See [Core administration](core-administration.md)
+for minting, permissions, the audit log and Node capabilities. No Core admin
+UI is implemented.
 
-## Development authorization
-
-Set these in your existing `deploy/core/.env` for local development only:
-
-```dotenv
-ARKNET_CORE_DEV_ADMIN_ENABLED=true
-ARKNET_CORE_DEV_ADMIN_TOKEN=<generated token>
-```
-
-Generate the token locally:
-
-```sh
-python3 -c 'import secrets; print(secrets.token_hex(32))'
-```
-
-The token must be exactly 64 lowercase hexadecimal characters. Malformed tokens
-are rejected, not trimmed or normalized. There is no default or embedded token.
-Setting a token without explicit enablement fails configuration validation.
-Errors and application logs do not echo the token. Never commit it, send it to
-an Agent, put it in a URL, or expose this development API publicly. Keep the
-Core Compose port bound to loopback. This shared token is not production
-authentication and provides no individual administrator identity or audit trail.
-
-Rebuild the existing configured Core stack:
-
-```sh
-(cd deploy/core && docker compose up --build -d --wait)
-```
-
-When disabled, administrative routes return HTTP 404. When enabled, missing or
-invalid authorization returns HTTP 401 before repository access, including for
-unknown administrative paths and unsupported methods. Credentials must be in
-one `Authorization: Bearer <token>` header; query parameters are never used for
-authentication. Administrative responses use `Cache-Control: no-store`.
-
-`adminAuthorizer` in `core/admin_auth.go` is the replaceable authorization boundary.
-Routing and repositories do not inspect development credentials. A real
-identity/permission verifier can replace that implementation without changing
-enrollment handlers or the storage operations.
+Missing or invalid authorization returns HTTP 401 before routing, including
+for unknown administrative paths. A token without `nodes.decide` gets 403 and
+no repository is touched. Credentials must be in one `Authorization: Bearer`
+header; query parameters are never used for authentication. Administrative
+responses use `Cache-Control: no-store`.
 
 ## Endpoints
 
@@ -102,8 +69,9 @@ schema columns already support these states, so no migration rewrite is needed.
 ## Safe errors and persistence
 
 - **400:** malformed opaque node ID, pagination, or action parameters/body.
-- **401:** enabled administrative API without valid authorization.
-- **404:** disabled administrative API, unknown route, or missing node.
+- **401:** missing, unknown, expired or revoked administrator token.
+- **403:** valid token without the `nodes.decide` permission.
+- **404:** unknown route or missing node.
 - **405:** authenticated request using an unsupported method.
 - **409:** duplicate/opposite action or any noneligible existing node state.
 - **503:** unavailable repository/database; raw driver details are not returned.
@@ -120,22 +88,21 @@ sessions. Legacy approvals without a pinned key fail closed for authentication.
 
 ## Examples
 
-Supply the token from your local secret handling, rather than committing it or
-placing it in shell history as a literal:
+Mint a short-lived token and keep it out of shell history:
 
 ```sh
-read -r -s CORE_ADMIN_TOKEN
-export CORE_ADMIN_TOKEN
+TOKEN=$(cd deploy/core && docker compose exec -T arknet-core arknet-core admin create-token \
+  --name "$USER" --permission nodes.decide --ttl 1h | python3 -c 'import json,sys; print(json.load(sys.stdin)["token"])')
 # For the default local Core port:
-curl --fail -H "Authorization: Bearer $CORE_ADMIN_TOKEN" \
+curl --fail -H "Authorization: Bearer $TOKEN" \
   http://127.0.0.1:8083/api/admin/v1/nodes/pending
 # Set NODE_ID to the exact opaque node_id returned by the listing.
-curl --fail -X POST -H "Authorization: Bearer $CORE_ADMIN_TOKEN" \
+curl --fail -X POST -H "Authorization: Bearer $TOKEN" \
   "http://127.0.0.1:8083/api/admin/v1/nodes/$NODE_ID/approve"
 # Or reject a different pending node:
-curl --fail -X POST -H "Authorization: Bearer $CORE_ADMIN_TOKEN" \
+curl --fail -X POST -H "Authorization: Bearer $TOKEN" \
   "http://127.0.0.1:8083/api/admin/v1/nodes/$NODE_ID/reject"
-unset CORE_ADMIN_TOKEN
+unset TOKEN
 ```
 
 ## Verification
@@ -152,7 +119,8 @@ The live check uses a fresh uniquely named Core/PostgreSQL 18 project, generated
 credentials, and loopback ports. It verifies authorization, complete pagination,
 trust updates, retained rejection, invalid and duplicate actions, simultaneous
 competing decisions, restart/recreation persistence, public re-enrollment
-conflicts, disabled-mode isolation, and the real PostgreSQL test suite. Only its
+conflicts, scoped-token denial, audit attribution, revocation, refusal of the
+removed dev-bearer setting, and the real PostgreSQL test suite. Only its
 own containers, volumes, network, and Go helper image are removed; no development
 `.env`, existing services, or developer database is changed. Run live stack checks
 sequentially on constrained Docker VMs.

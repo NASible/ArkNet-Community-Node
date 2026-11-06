@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"arknet/core/internal/admins"
 	"arknet/core/internal/users"
 )
 
@@ -259,8 +260,8 @@ type administrativeUser struct {
 
 // registerUserAdministration adds routes to the protected admin mux only.
 // There is deliberately no user listing: the global directory is not browsable.
-func registerUserAdministration(admin *http.ServeMux, repo users.Repository) {
-	admin.HandleFunc("POST /api/admin/v1/users", func(w http.ResponseWriter, r *http.Request) {
+func registerUserAdministration(routes *adminRoutes, repo users.Repository) {
+	routes.handle("POST /api/admin/v1/users", admins.UsersAdmin, "", func(w http.ResponseWriter, r *http.Request) {
 		rawUsername, password, ok := readCredentialsBody(w, r)
 		if !ok {
 			adminError(w, http.StatusBadRequest, "user creation requires exactly username and password strings")
@@ -298,7 +299,7 @@ func registerUserAdministration(admin *http.ServeMux, repo users.Repository) {
 		writeAdminJSON(w, http.StatusCreated, administrativeUser{user.ID, user.Username, user.Status, user.CreatedAt})
 	})
 	for action, status := range map[string]users.Status{"disable": users.StatusDisabled, "enable": users.StatusActive} {
-		admin.HandleFunc("POST /api/admin/v1/users/{user_id}/"+action, func(w http.ResponseWriter, r *http.Request) {
+		routes.handle("POST /api/admin/v1/users/{user_id}/"+action, admins.UsersAdmin, "user_id", func(w http.ResponseWriter, r *http.Request) {
 			id := r.PathValue("user_id")
 			if !users.ValidUserID(id) {
 				adminError(w, http.StatusBadRequest, "invalid user ID")

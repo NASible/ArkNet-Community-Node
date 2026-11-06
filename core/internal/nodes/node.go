@@ -54,6 +54,58 @@ type Node struct {
 	SoftwareVersion  string
 	CreatedAt        time.Time
 	LastSeenAt       *time.Time
+	// Capabilities are the Node-key authorities Core grants this Node beyond
+	// the always-on base routes (ARKSEC-005). Absent means none.
+	Capabilities []Capability
+}
+
+// Capability is one route group a Node key may use.
+type Capability string
+
+const (
+	// CapabilityMemberships: invitations, offline authorizations, login callbacks.
+	CapabilityMemberships Capability = "memberships"
+	// CapabilitySwarm: tracker grants, replica reports, the relay list.
+	CapabilitySwarm Capability = "swarm"
+)
+
+var allCapabilities = []Capability{CapabilityMemberships, CapabilitySwarm}
+
+func AllCapabilities() []Capability { return append([]Capability(nil), allCapabilities...) }
+
+func (n Node) Can(c Capability) bool {
+	for _, held := range n.Capabilities {
+		if held == c && c != "" {
+			return true
+		}
+	}
+	return false
+}
+
+var ErrInvalidCapabilities = errors.New("invalid node capabilities")
+
+// NormalizeCapabilities accepts a possibly empty set of known, unique
+// capabilities and returns it sorted. Empty means base routes only.
+func NormalizeCapabilities(values []string) ([]Capability, error) {
+	out := []Capability{}
+	for _, c := range allCapabilities {
+		count := 0
+		for _, v := range values {
+			if v == string(c) {
+				count++
+			}
+		}
+		if count > 1 {
+			return nil, ErrInvalidCapabilities
+		}
+		if count == 1 {
+			out = append(out, c)
+		}
+	}
+	if len(out) != len(values) {
+		return nil, ErrInvalidCapabilities
+	}
+	return out, nil
 }
 
 // Repository is the original internally generated node creation/read boundary.
@@ -87,6 +139,11 @@ type AdministrationRepository interface {
 	Approve(ctx context.Context, publicID string) (Node, error)
 	Reject(ctx context.Context, publicID string) (Node, error)
 	Revoke(ctx context.Context, publicID string) (Node, error)
+}
+
+// CapabilityRepository replaces a Node's capability set (ARKSEC-005).
+type CapabilityRepository interface {
+	SetCapabilities(ctx context.Context, publicID string, capabilities []Capability) (Node, error)
 }
 
 // MetadataRepository is the read-only boundary for the protected admin detail.

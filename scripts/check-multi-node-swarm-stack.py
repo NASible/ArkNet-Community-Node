@@ -23,6 +23,9 @@ import time
 import uuid
 
 ROOT = Path(__file__).resolve().parent.parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+from scripts.core_admin import ScopedAdmin  # noqa: E402
 PROMPT25 = Path(__file__).with_name("check-core-to-node-transfer-stack.py")
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
@@ -140,12 +143,11 @@ def main(argv=None):
     failure = None; made_network = set(); known_secrets = []
     projects = (core_project, node_a_project, node_b_project)
 
-    admin_token, core_password = secrets.token_hex(32), secrets.token_hex(32)
-    known_secrets.extend((admin_token, core_password))
+    core_password = secrets.token_hex(32)
+    known_secrets.append(core_password)
     core_port = free_port()
     core_env = dict(os.environ, POSTGRES_USER="arknet", POSTGRES_DB="arknet_core",
                     POSTGRES_PASSWORD=core_password, PGSSLMODE="disable", ARKNET_CORE_PORT=str(core_port),
-                    ARKNET_CORE_DEV_ADMIN_ENABLED="true", ARKNET_CORE_DEV_ADMIN_TOKEN=admin_token,
                     ARKNET_TRACKER_PORT=str(free_port()), ARKNET_TRACKER_ANNOUNCE_URL="http://arknet-tracker:6969",
                     ARKNET_TRACKER_ANNOUNCE_INTERVAL="2s", ARKNET_TRACKER_PEER_TTL="30s",
                     ARKNET_CORE_WEB_SEED_ORIGIN="http://arknet-core:8088")
@@ -325,7 +327,9 @@ def main(argv=None):
             known_secrets.extend(signed_in.secrets)
             operator_headers[cfg["base"]] = signed_in.headers
 
-        admin_headers = {"Authorization": "Bearer " + admin_token}
+        core_admin = ScopedAdmin(core_compose, "multi-node-swarm", "nodes.decide")
+        admin_headers = core_admin.headers()
+        known_secrets.extend(core_admin.secrets())
         for label in ("a", "b"):
             cfg = node_configs[label]
             node = wait_until(label + " enrollment", lambda c=cfg: node_state(c["base"], "ENROLLMENT_PENDING"), 120)

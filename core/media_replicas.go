@@ -82,6 +82,9 @@ func mediaReplicaHandler(catalog store.MediaCatalogRepository, replicas store.Me
 			http.Error(w, "node is not approved", http.StatusForbidden)
 			return
 		}
+		if !nodeCapable(w, node, nodes.CapabilitySwarm) {
+			return
+		}
 
 		object, err := catalog.GetMediaObjectByPublicID(ctx, mediaID)
 		if errors.Is(err, store.ErrNotFound) {

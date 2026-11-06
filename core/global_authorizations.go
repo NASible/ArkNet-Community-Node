@@ -42,7 +42,7 @@ func authorizeOfflineNode(w http.ResponseWriter, r *http.Request, body []byte, i
 		adminError(w, http.StatusForbidden, "node is not approved")
 		return false
 	}
-	return true
+	return nodeCapable(w, node, nodes.CapabilityMemberships)
 }
 
 // retiredGlobalAuthorizationHandler answers the former Node-relayed password

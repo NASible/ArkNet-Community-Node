@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"arknet/core/internal/admins"
 	"arknet/core/internal/nodes"
 )
 
@@ -39,9 +40,19 @@ func (s *adminStoreStub) Reject(_ context.Context, id string) (nodes.Node, error
 	return nodes.Node{PublicID: id, EnrollmentStatus: "REJECTED", TrustStatus: "BLOCKED"}, s.err
 }
 
+// allowAdmin(true) authenticates every request as a principal holding every
+// permission; allowAdmin(false) authenticates none. Permission scoping is
+// covered by admin_scopes_test.go.
 type allowAdmin bool
 
-func (a allowAdmin) Authorized(*http.Request) bool { return bool(a) }
+func (a allowAdmin) Authenticate(*http.Request) (admins.Principal, error) {
+	if !a {
+		return admins.Principal{}, admins.ErrNotFound
+	}
+	return admins.Principal{AdminID: "admin_" + strings.Repeat("0", 64), TokenID: "admtok_" + strings.Repeat("0", 64),
+		Permissions: admins.AllPermissions()}, nil
+}
+func (allowAdmin) AppendAudit(context.Context, admins.AuditEntry) error { return nil }
 
 func TestAdministrativeNamespaceAndAuthorization(t *testing.T) {
 	for _, test := range []struct {

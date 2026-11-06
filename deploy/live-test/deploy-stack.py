@@ -25,9 +25,7 @@ db = 'arknet_core' if core else 'arknet_node'
 # Community Nodes never receive Core administrative credentials (security review
 # requirement); each machine gets only the secrets its own services use.
 env = {'POSTGRES_PASSWORD': local['database_password']}
-if machine['role'] == 'core':
-    env['CORE_ADMIN_TOKEN'] = secrets['core_admin_token']
-else:
+if machine['role'] != 'core':
     env.update({'TRANSFER_TOKEN': local['transfer_token'], 'JELLYFIN_API_KEY': local.get('jellyfin_api_key', '')})
 put(machine, base + '/runtime.env', '\n'.join(k + '=' + v for k, v in env.items()) + '\n', 0o600)
 
@@ -76,8 +74,7 @@ print('TRACKER_KEYS_READY')
 '''
     print(ssh(machine, 'sudo python3 -c ' + shlex.quote(generation)).decode().strip())
     services['arknet-core'] = {**hardening, 'image': images['core'], 'mem_limit': '256m',
-        'environment': {**pgenv, 'ARKNET_CORE_ADDR': ':8080', 'ARKNET_CORE_DEV_ADMIN_ENABLED': 'true',
-            'ARKNET_CORE_DEV_ADMIN_TOKEN': '${CORE_ADMIN_TOKEN}', 'ARKNET_TRACKER_ANNOUNCE_URL': 'https://tracker.nodenet.arknet.media',
+        'environment': {**pgenv, 'ARKNET_CORE_ADDR': ':8080', 'ARKNET_TRACKER_ANNOUNCE_URL': 'https://tracker.nodenet.arknet.media',
             'ARKNET_TRACKER_SIGNING_KEY_FILE': '/run/secrets/tracker-signing-key',
             'ARKNET_ASSERTION_SIGNING_KEY_FILE': '/run/secrets/assertion-signing-key',
             'ARKNET_CORE_WEB_SEED_ORIGIN': 'https://core.nodenet.arknet.media', 'ARKNET_CORE_WEB_SEED_ROOT': '/srv/arknet/web-seed'},

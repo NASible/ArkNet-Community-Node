@@ -74,7 +74,12 @@ func TestPairwiseMigrationBackfillsExistingMembershipsRandomly(t *testing.T) {
 	if err := migrate(ctx, s.db, old); err != nil {
 		t.Fatal(err)
 	}
-	node := approvedNode(t, s, 7)
+	// Raw SQL: store methods read columns added by later migrations.
+	node := fmt.Sprintf("node_%064x", 7)
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO nodes (public_id, enrollment_status, trust_status, software_version)
+		VALUES ($1, 'APPROVED', 'TRUSTED', 'v')`, node); err != nil {
+		t.Fatal(err)
+	}
 	for i := 0; i < 3; i++ {
 		if _, err := s.db.ExecContext(ctx, `INSERT INTO global_users (public_id, username, password_hash) VALUES ($1, $2, $3)`,
 			fmt.Sprintf("user_%064x", i+1), fmt.Sprintf("legacy%d", i), testHash); err != nil {

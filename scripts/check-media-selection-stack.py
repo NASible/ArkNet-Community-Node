@@ -10,6 +10,7 @@ from pathlib import Path
 import secrets
 import socket
 import subprocess
+import sys
 import tempfile
 import time
 import urllib.error
@@ -17,6 +18,9 @@ import urllib.request
 import uuid
 
 ROOT = Path(__file__).resolve().parent.parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+from scripts.core_admin import ScopedAdmin  # noqa: E402
 
 
 def free_port():
@@ -28,7 +32,7 @@ def free_port():
 def main(with_transfer=False):
     prefix = "arknet-media-test-" + uuid.uuid4().hex[:12]
     network = prefix + "-transport"
-    token = secrets.token_hex(32)
+    core_admin = None  # scoped token minted after Core starts
     transfer_token = secrets.token_hex(32)
     core_port, node_port = free_port(), free_port()
     allocation = 1 << 30  # One GiB, configured in GiB and accounted in bytes.
@@ -37,7 +41,6 @@ def main(with_transfer=False):
         envs[kind] = dict(os.environ, POSTGRES_USER="arknet", POSTGRES_DB="arknet_" + kind,
                           POSTGRES_PASSWORD=secrets.token_hex(32), PGSSLMODE="disable",
                           ARKNET_CORE_PORT=core_port, ARKNET_AGENT_PORT=node_port,
-                          ARKNET_CORE_DEV_ADMIN_ENABLED="true", ARKNET_CORE_DEV_ADMIN_TOKEN=token,
                           ARKNET_CORE_URL="http://arknet-core:8080", ARKNET_CORE_ALLOW_HTTP="true",
                           ARKNET_HEARTBEAT_INTERVAL="5s", ARKNET_MEDIA_STORAGE_ALLOCATION_GIB="1",
                           ARKNET_MEDIA_STORAGE_ALLOCATION_BYTES="")
@@ -87,6 +90,8 @@ def main(with_transfer=False):
                                     check=check, text=True, capture_output=capture)
             return result.stdout.strip() if capture else None
 
+        core_admin = ScopedAdmin(lambda *a, **k: compose("core", *a, **k), "media-selection-stack", "nodes.decide")
+
         def sql(kind, statement):
             return compose(kind, "exec", "-T", "postgres", "psql", "-U", "arknet", "-d", "arknet_" + kind,
                            "-At", "-v", "ON_ERROR_STOP=1", "-c", statement, capture=True)
@@ -99,7 +104,7 @@ def main(with_transfer=False):
             compose("node", "up", "--build", "-d", "--wait", "--wait-timeout", "120", "postgres", "arknet-agent")
             node = wait_state("ENROLLMENT_PENDING")
             status, _ = request(core_url, "/api/admin/v1/nodes/" + node["node_id"] + "/approve", "POST",
-                                headers={"Authorization": "Bearer " + token})
+                                headers=core_admin.headers())
             assert status == 200
             wait_state("CONNECTED")
 

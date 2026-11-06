@@ -86,9 +86,9 @@ and credentials survive restart; ordinary heartbeat observations are refreshed.
 
 ## Viewing Core's current report
 
-The development administrator authorization mechanism remains opt-in and
-separate from node credential authentication. With the existing Core admin
-Bearer authorization, request:
+Administrator authorization is separate from node credential authentication.
+With a scoped administrator token holding `nodes.decide` (see
+[Core administration](core-administration.md)), request:
 
 `GET /api/admin/v1/nodes/{node_id}`
 

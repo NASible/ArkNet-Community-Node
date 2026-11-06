@@ -7,7 +7,8 @@ Jellyfin library state, or information about unrelated local files.
 
 ## Core operator action
 
-With the development administration API enabled, an authorized Core operator
+An administrator holding a token with the `media.admin` permission (see
+[Core administration](core-administration.md))
 removes an active object with an empty request body:
 
 ```text

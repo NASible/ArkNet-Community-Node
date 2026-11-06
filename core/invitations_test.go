@@ -47,7 +47,7 @@ func newMemoryInvitations(t *testing.T) (*memoryInvitations, ed25519.PrivateKey)
 	}
 	return &memoryInvitations{
 		memoryUsers: newMemoryUsers(),
-		node:        nodes.Node{PublicID: enrollmentID, EnrollmentStatus: nodes.EnrollmentApproved, TrustStatus: nodes.TrustTrusted},
+		node:        nodes.Node{PublicID: enrollmentID, EnrollmentStatus: nodes.EnrollmentApproved, TrustStatus: nodes.TrustTrusted, Capabilities: nodes.AllCapabilities()},
 		key:         pub, invitations: map[[32]byte]*memoryInvitation{}, proofs: map[[32]byte]bool{}, members: map[string]memberships.Member{},
 	}, priv
 }
@@ -57,7 +57,7 @@ func (m *memoryInvitations) RegisterEnrollment(context.Context, string, string, 
 }
 func (m *memoryInvitations) EnrollmentIdentity(_ context.Context, id string) (nodes.Node, []byte, error) {
 	if key, ok := m.otherNodes[id]; ok {
-		return nodes.Node{PublicID: id, EnrollmentStatus: nodes.EnrollmentApproved, TrustStatus: nodes.TrustTrusted}, key, nil
+		return nodes.Node{PublicID: id, EnrollmentStatus: nodes.EnrollmentApproved, TrustStatus: nodes.TrustTrusted, Capabilities: nodes.AllCapabilities()}, key, nil
 	}
 	if id != m.node.PublicID {
 		return nodes.Node{}, nil, nodes.ErrNotFound

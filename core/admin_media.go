@@ -7,14 +7,15 @@ import (
 	"net/http"
 	"time"
 
+	"arknet/core/internal/admins"
 	"arknet/core/internal/media"
 	"arknet/core/internal/store"
 )
 
 // registerMediaAdministration exposes only ArkNet catalog state. It never
 // accepts or returns Node filesystem paths, Jellyfin state, or arbitrary files.
-func registerMediaAdministration(admin *http.ServeMux, repo store.MediaCatalogRepository) {
-	admin.HandleFunc("POST /api/admin/v1/media/{id}/remove", func(w http.ResponseWriter, r *http.Request) {
+func registerMediaAdministration(routes *adminRoutes, repo store.MediaCatalogRepository) {
+	routes.handle("POST /api/admin/v1/media/{id}/remove", admins.MediaAdmin, "id", func(w http.ResponseWriter, r *http.Request) {
 		id := r.PathValue("id")
 		if !media.ValidMediaID(id) {
 			adminError(w, http.StatusBadRequest, "invalid media ID")

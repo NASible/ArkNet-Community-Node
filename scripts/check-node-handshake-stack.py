@@ -10,6 +10,7 @@ from pathlib import Path
 import secrets
 import socket
 import subprocess
+import sys
 import tempfile
 import time
 import urllib.error
@@ -17,6 +18,9 @@ import urllib.request
 import uuid
 
 ROOT = Path(__file__).resolve().parent.parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+from scripts.core_admin import ScopedAdmin  # noqa: E402
 
 
 def free_port():
@@ -28,7 +32,7 @@ def free_port():
 def main():
     prefix = "arknet-handshake-test-" + uuid.uuid4().hex[:12]
     network = prefix + "-transport"
-    token = secrets.token_hex(32)
+    admin = None  # scoped token minted after Core starts
     core_port = free_port()
     kinds = ["core", "a", "b"]
     projects = {kind: prefix + "-" + kind for kind in kinds}
@@ -37,8 +41,6 @@ def main():
     for kind in kinds:
         envs[kind] = dict(os.environ, POSTGRES_USER="arknet", POSTGRES_DB="arknet_core" if kind == "core" else "arknet_node",
                           POSTGRES_PASSWORD=secrets.token_hex(32), PGSSLMODE="disable", ARKNET_CORE_PORT=core_port,
-                          ARKNET_CORE_DEV_ADMIN_ENABLED="true" if kind == "core" else "false",
-                          ARKNET_CORE_DEV_ADMIN_TOKEN=token if kind == "core" else "",
                           ARKNET_CORE_URL="", ARKNET_CORE_ALLOW_HTTP="false", ARKNET_AGENT_PORT=free_port(), ARKNET_UI_PORT=free_port())
 
     def docker(*args, capture=True, environment=None):
@@ -63,7 +65,7 @@ def main():
 
     def approve(node_id):
         req = urllib.request.Request("http://127.0.0.1:" + core_port + "/api/admin/v1/nodes/" + node_id + "/approve",
-                                     headers={"Authorization": "Bearer " + token}, method="POST")
+                                     headers=admin.headers(), method="POST")
         with urllib.request.urlopen(req, timeout=10) as response:
             assert response.status == 200
             assert json.load(response) == {"node_id": node_id, "enrollment_status": "APPROVED", "trust_status": "TRUSTED"}
@@ -87,6 +89,8 @@ def main():
                                      "-f", str(overrides[kind]), *args], cwd=ROOT / "deploy" / component,
                                     env=envs[kind], check=check, text=True, capture_output=capture)
             return result.stdout.strip() if capture else None
+
+        admin = ScopedAdmin(lambda *a, **k: compose("core", *a, **k), "handshake-stack", "nodes.decide")
 
         def sql(kind, statement):
             return compose(kind, "exec", "-T", "postgres", "psql", "-U", "arknet", "-d", envs[kind]["POSTGRES_DB"],
@@ -176,7 +180,7 @@ def main():
             for kind in ["a", "b"]:
                 assert wait_state(kind, "CONNECTED")["node_id"] == ids[kind]
                 logs = compose(kind, "logs", "arknet-agent", capture=True)
-                assert token not in logs
+                assert not any(t in logs for t in admin.secrets())
                 assert "private_seed" not in json.dumps(status(kind))
             print("PASS: real PostgreSQL migration/persistence/handshake tests; secrets absent from public status", flush=True)
         except Exception:

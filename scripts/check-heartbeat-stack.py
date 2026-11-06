@@ -17,6 +17,9 @@ import urllib.request
 import uuid
 
 ROOT = Path(__file__).resolve().parent.parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+from scripts.core_admin import ScopedAdmin  # noqa: E402
 sys.path.insert(0, str(ROOT))
 from scripts import operator_login  # noqa: E402
 
@@ -30,7 +33,7 @@ def free_port():
 def main():
     prefix = "arknet-heartbeat-test-" + uuid.uuid4().hex[:12]
     network = prefix + "-transport"
-    token = secrets.token_hex(32)
+    core_admin = None  # scoped token minted after Core starts
     ui_port = free_port()
     ports = {"core": free_port(), "node": free_port()}
     member_port = free_port()
@@ -40,8 +43,7 @@ def main():
                    ARKNET_CORE_PORT=ports["core"], ARKNET_AGENT_PORT=ports["node"], ARKNET_UI_PORT=ui_port,
                    ARKNET_MEMBER_PORT=member_port,
                    ARKNET_CORE_URL="", ARKNET_CORE_ALLOW_HTTP="false", ARKNET_HEARTBEAT_INTERVAL="5s",
-                   ARKNET_CORE_DEV_ADMIN_ENABLED="true" if k == "core" else "false",
-                   ARKNET_CORE_DEV_ADMIN_TOKEN=token if k == "core" else "") for k in ports}
+                   ) for k in ports}
     images = {k: prefix + "-" + k + "-tests" for k in ports}
 
     # Node management routes need an operator session (45B); /health is on the
@@ -49,7 +51,7 @@ def main():
     operator = None
 
     def http(kind, path, method="GET", admin=False):
-        headers = {"Authorization": "Bearer " + token} if admin else {}
+        headers = core_admin.headers() if admin else {}
         if kind in ("node", "ui"):
             headers.update(operator.headers)
         port = {"ui": ui_port, "member": member_port}.get(kind) or ports[kind]
@@ -105,6 +107,8 @@ def main():
                                 "-f", str(files[kind]), *args], env=envs[kind], cwd=ROOT / "deploy" / kind,
                                check=check, capture_output=capture, text=True)
             return r.stdout.strip() if capture else None
+
+        core_admin = ScopedAdmin(lambda *a, **k: compose("core", *a, **k), "heartbeat-stack", "nodes.decide")
 
         def sql(kind, query):
             return compose(kind, "exec", "-T", "postgres", "psql", "-U", "arknet", "-d", envs[kind]["POSTGRES_DB"],
@@ -224,7 +228,7 @@ def main():
                                ("RECONNECTING", "OFFLINE"), ("OFFLINE", "RECONNECTING"),
                                ("RECONNECTING", "CONNECTED")]:
                 assert transition in events, (transition, events)
-            assert token not in raw_logs and envs["node"]["POSTGRES_PASSWORD"] not in raw_logs
+            assert not any(t in raw_logs for t in core_admin.secrets()) and envs["node"]["POSTGRES_PASSWORD"] not in raw_logs
             assert not any(secret in raw_logs for secret in operator.secrets)
             print("PASS: UI proxy and structured logs expose the full MESH outage/reconnect transition path", flush=True)
             print("PASS: restored Core automatically reconnects using original credential, without re-enrollment", flush=True)

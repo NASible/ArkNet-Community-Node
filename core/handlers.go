@@ -142,7 +142,7 @@ func handleHealth(db databaseHealth) http.HandlerFunc {
 // authorizeMediaNode authenticates a read as the approved node named in its
 // node-scoped route. Catalog reads are never available through a global,
 // unauthenticated endpoint.
-func authorizeMediaNode(w http.ResponseWriter, r *http.Request, repo nodes.HandshakeRepository) bool {
+func authorizeMediaNode(w http.ResponseWriter, r *http.Request, repo nodes.HandshakeRepository, required ...nodes.Capability) bool {
 	w.Header().Set("Cache-Control", "no-store")
 	id := r.PathValue("node_id")
 	body := r.Body
@@ -177,7 +177,7 @@ func authorizeMediaNode(w http.ResponseWriter, r *http.Request, repo nodes.Hands
 		http.Error(w, "node is not approved", http.StatusForbidden)
 		return false
 	}
-	return true
+	return nodeCapable(w, node, required...)
 }
 
 // mediaListHandler handles the authenticated node catalog endpoint.
@@ -399,6 +399,9 @@ func authorizeTrackerGrantNode(w http.ResponseWriter, r *http.Request, repo node
 	}
 	if node.EnrollmentStatus != nodes.EnrollmentApproved || node.TrustStatus != nodes.TrustTrusted {
 		http.Error(w, "node is not approved", http.StatusForbidden)
+		return nil, false
+	}
+	if !nodeCapable(w, node, nodes.CapabilitySwarm) {
 		return nil, false
 	}
 	return data, true

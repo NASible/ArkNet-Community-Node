@@ -52,6 +52,9 @@ func invitationCreateHandler(repo memberships.Repository, identities nodes.Hands
 			adminError(w, http.StatusForbidden, "node is not approved")
 			return
 		}
+		if !nodeCapable(w, node, nodes.CapabilityMemberships) {
+			return
+		}
 		fields, ok := exactObject(body, "role", "expires_at", "max_uses")
 		var role, expiresValue string
 		var maxUses int

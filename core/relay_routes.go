@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"time"
 
+	"arknet/core/internal/admins"
 	"arknet/core/internal/nodes"
 	"arknet/core/internal/relayrevocations"
 )
@@ -58,7 +59,7 @@ func withRelays(next http.Handler, cfg *relaysConfig, identities nodes.Handshake
 	mux := http.NewServeMux()
 	mux.Handle("/", next)
 	mux.HandleFunc("GET /api/federation/v1/nodes/{node_id}/relays", func(w http.ResponseWriter, r *http.Request) {
-		if !authorizeMediaNode(w, r, identities) {
+		if !authorizeMediaNode(w, r, identities, nodes.CapabilitySwarm) {
 			return
 		}
 		token, err := signRelayList(cfg, now())
@@ -69,18 +70,9 @@ func withRelays(next http.Handler, cfg *relaysConfig, identities nodes.Handshake
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]string{"relay_list": token})
 	})
-	mux.HandleFunc("GET /api/admin/v1/relays", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Cache-Control", "no-store")
-		w.Header().Add("Vary", "Authorization")
-		if authorizer == nil {
-			http.NotFound(w, r)
-			return
-		}
-		if !authorizer.Authorized(r) {
-			w.Header().Set("WWW-Authenticate", `Bearer realm="arknet-core-admin"`)
-			adminError(w, 401, "administrative authorization required")
-			return
-		}
+	relayAdmin := newAdminRoutes(http.NewServeMux(), authorizer)
+	mux.Handle("GET /api/admin/v1/relays", authenticateAdmin(authorizer, relayAdmin.mux))
+	relayAdmin.handle("GET /api/admin/v1/relays", admins.RelaysRead, "", func(w http.ResponseWriter, r *http.Request) {
 		type relayView struct {
 			ID         string `json:"id"`
 			Address    string `json:"address"`
