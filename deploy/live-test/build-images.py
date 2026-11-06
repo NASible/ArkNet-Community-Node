@@ -8,7 +8,7 @@ import shlex
 import tarfile
 from ops import ROOT, HERE, ssh
 
-allowed = ['core', 'tracker', 'transfer', 'node-agent', 'node-ui']
+allowed = ['core', 'tracker', 'relay', 'transfer', 'node-agent', 'node-ui']
 files = []
 for folder in allowed:
     for path in sorted((ROOT / folder).rglob('*')):
@@ -27,6 +27,7 @@ for folder in allowed:
 # Guard against accidentally excluding product source packages as runtime data.
 assert any(rel.parts[:3] == ('core', 'internal', 'media') for rel, _ in files)
 assert any(str(rel) == 'transfer/worker.py' for rel, _ in files)
+assert any(str(rel) == 'relay/Dockerfile' for rel, _ in files)
 for name in ['ui.Dockerfile', 'ui-nginx.conf']:
     files.append((Path('deploy/live-test') / name, HERE / name))
 hash_state = hashlib.sha256()
@@ -40,12 +41,13 @@ with tarfile.open(fileobj=bundle, mode='w:gz') as archive:
         archive.addfile(item, io.BytesIO(data))
 revision = hash_state.hexdigest()
 record = {'source_sha256': revision, 'images': {}}
-for host, components in [('nodenet-core', ['core', 'tracker']), ('nodenet-node-a', ['agent', 'transfer', 'ui'])]:
+# The operator-run relay (Prompt 48A, decision D5) runs beside the tracker on Core.
+for host, components in [('nodenet-core', ['core', 'tracker', 'relay']), ('nodenet-node-a', ['agent', 'transfer', 'ui'])]:
     print('UPLOAD_ALLOWLIST', host, len(files), 'files', flush=True)
     ssh(host, 'sudo install -d -m 0755 /opt/arknet/source && sudo tar -xzpf - -C /opt/arknet/source', bundle.getvalue())
     for component in components:
         tag = 'nodenet-' + component + ':' + revision[:12]
-        context = {'core': 'core', 'tracker': 'tracker', 'agent': 'node-agent', 'transfer': 'transfer', 'ui': '.'}[component]
+        context = {'core': 'core', 'tracker': 'tracker', 'relay': 'relay', 'agent': 'node-agent', 'transfer': 'transfer', 'ui': '.'}[component]
         dockerfile = ' -f deploy/live-test/ui.Dockerfile' if component == 'ui' else ''
         command = ('cd /opt/arknet/source && sudo docker build --label org.arknet.source.sha256=' + revision +
                    ' --build-arg GOMAXPROCS=2 -t ' + tag + dockerfile + ' ' + context)

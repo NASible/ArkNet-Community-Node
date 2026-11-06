@@ -1,24 +1,26 @@
 {
-  "verified_at": "2026-10-28T07:00:16.993496+00:00",
+  "verified_at": "2026-11-06T23:00:34.402093+00:00",
   "machines": {
     "nodenet-core": {
       "all_containers_healthy": true,
       "image_ids": {
-        "core": "sha256:f268ab6d68cd6b56568a971813292ec7519675552ec0c74aa73d8c915a5c5502",
-        "tracker": "sha256:a470fd44d45d2873e092b985a6ddbda4f9d2740b091a26d5b0e103a3dc85cd97"
+        "core": "sha256:b5f976f75e28476af708a83e423a835451b49a0e1bedcf425a432ee0b904bbeb",
+        "relay": "sha256:557543e23414e5d8caa46c2f6155f06009dac05b4def646d0e2a333702248786",
+        "tracker": "sha256:f42bec133c6dc3c1873390020872d1f03e5f2d39946b512f85f34df69ad030dd"
       },
-      "running_container_count": 3,
+      "running_container_count": 4,
       "ufw_authoritative": true
     },
     "nodenet-node-a": {
       "all_containers_healthy": true,
       "state": "CONNECTED",
+      "anonymous_management_refused": true,
       "peer_serving_enabled": false,
       "release_manifest_available": true,
       "image_ids": {
-        "agent": "sha256:8f63052f9e56138be01dc7ad06e642b9d911ac44e63fac0c6716531044d23e13",
-        "transfer": "sha256:c4010f748443ce95c72bfce6e4d0d513cf1b731b491be8678a3cbed150eb9c4f",
-        "ui": "sha256:b003ffd744b827dd374688283d3de5856e474d4395398bf6510e662e22efacd8"
+        "agent": "sha256:0a3cf75f17aa96ef4ccf0a13f650580fe3ead4f649b7791a60938eec82ce979c",
+        "transfer": "sha256:ace883bfa637cb8329aad39d23c920a3d52cf25a5b0e4d3f476b41546b44fd21",
+        "ui": "sha256:da168fa0ab40ed4ba9449069a01b42c10be7b3e3a630fe03cb789c6dbb28c706"
       },
       "running_container_count": 5,
       "ufw_authoritative": true
@@ -26,12 +28,13 @@
     "nodenet-node-b": {
       "all_containers_healthy": true,
       "state": "CONNECTED",
+      "anonymous_management_refused": true,
       "peer_serving_enabled": false,
       "release_manifest_available": true,
       "image_ids": {
-        "agent": "sha256:8f63052f9e56138be01dc7ad06e642b9d911ac44e63fac0c6716531044d23e13",
-        "transfer": "sha256:c4010f748443ce95c72bfce6e4d0d513cf1b731b491be8678a3cbed150eb9c4f",
-        "ui": "sha256:b003ffd744b827dd374688283d3de5856e474d4395398bf6510e662e22efacd8"
+        "agent": "sha256:0a3cf75f17aa96ef4ccf0a13f650580fe3ead4f649b7791a60938eec82ce979c",
+        "transfer": "sha256:ace883bfa637cb8329aad39d23c920a3d52cf25a5b0e4d3f476b41546b44fd21",
+        "ui": "sha256:da168fa0ab40ed4ba9449069a01b42c10be7b3e3a630fe03cb789c6dbb28c706"
       },
       "running_container_count": 5,
       "ufw_authoritative": true
@@ -39,12 +42,13 @@
     "nodenet-node-c": {
       "all_containers_healthy": true,
       "state": "CONNECTED",
+      "anonymous_management_refused": true,
       "peer_serving_enabled": false,
       "release_manifest_available": true,
       "image_ids": {
-        "agent": "sha256:8f63052f9e56138be01dc7ad06e642b9d911ac44e63fac0c6716531044d23e13",
-        "transfer": "sha256:c4010f748443ce95c72bfce6e4d0d513cf1b731b491be8678a3cbed150eb9c4f",
-        "ui": "sha256:b003ffd744b827dd374688283d3de5856e474d4395398bf6510e662e22efacd8"
+        "agent": "sha256:0a3cf75f17aa96ef4ccf0a13f650580fe3ead4f649b7791a60938eec82ce979c",
+        "transfer": "sha256:ace883bfa637cb8329aad39d23c920a3d52cf25a5b0e4d3f476b41546b44fd21",
+        "ui": "sha256:da168fa0ab40ed4ba9449069a01b42c10be7b3e3a630fe03cb789c6dbb28c706"
       },
       "running_container_count": 5,
       "ufw_authoritative": true
@@ -52,12 +56,14 @@
   },
   "boundaries": {
     "nodenet-core_private_ports_blocked_on_lan": true,
+    "relay_blocked_on_core_lan_and_from_operator_mac": true,
     "nodenet-node-a_private_ports_blocked_on_lan": true,
     "nodenet-node-a_lan_jellyfin_only": true,
     "nodenet-node-b_private_ports_blocked_on_lan": true,
     "nodenet-node-b_lan_jellyfin_only": true,
     "nodenet-node-c_private_ports_blocked_on_lan": true,
     "nodenet-node-c_lan_jellyfin_only": true,
+    "nodes_reach_relay_tls13_over_vpn": true,
     "node_a_denied_cross_machine_ssh": true,
     "node_a_denied_node_b_management": true,
     "node_a_denied_core_administration": true,

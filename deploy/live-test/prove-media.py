@@ -10,7 +10,7 @@ import subprocess
 import urllib.parse
 import urllib.request
 from ops import HERE, MACHINES, load_secrets, put, ssh
-from private_api import TLS, request, wait
+from private_api import TLS, operator_headers, request, wait
 
 record_file = HERE / 'sample-proof.json'
 if record_file.exists():
@@ -55,15 +55,16 @@ for host, machine in MACHINES.items():
     if machine['role'] != 'node':
         continue
     base = 'https://node-' + host[-1] + '.nodenet.arknet.media'
+    operator = operator_headers(host)  # Node management requires an operator session (Prompt 45B)
     def catalog_item():
-        return next((item for item in request(base + '/api/v1/media')[1]['objects'] if item['id'] == sample['object_id']), None)
+        return next((item for item in request(base + '/api/v1/media', headers=operator)[1]['objects'] if item['id'] == sample['object_id']), None)
     item = wait(host + ' signed catalog', catalog_item, 120)
     if item['local_state'] == 'NOT_PRESENT':
-        request(base + '/api/v1/media/' + sample['object_id'] + '/selection', 'POST', {})
+        request(base + '/api/v1/media/' + sample['object_id'] + '/selection', 'POST', {}, operator)
     # Exercise the supported explicit operator Start action. This proof does
     # not claim that queued selections begin automatically.
     if catalog_item()['local_state'] != 'AVAILABLE':
-        request(base + '/api/v1/media/' + sample['object_id'] + '/transfer/start', 'POST', {})
+        request(base + '/api/v1/media/' + sample['object_id'] + '/transfer/start', 'POST', {}, operator)
     sample['start_trigger'] = 'operator transfer/start action'
     wait(host + ' real download AVAILABLE', lambda: (i if (i := catalog_item()) and i['local_state'] == 'AVAILABLE' else None), 180)
     verification = ssh(host, 'sudo python3 -c ' + shlex.quote("import hashlib,json; from pathlib import Path; p=Path('/srv/arknet/media/" + sample['object_id'] + ".mp4'); print(json.dumps({'sha256':hashlib.sha256(p.read_bytes()).hexdigest(),'bytes':p.stat().st_size}))"))

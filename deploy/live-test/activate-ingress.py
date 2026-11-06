@@ -10,8 +10,12 @@ machine = MACHINES[args.host]
 common = '''    ssl_certificate /etc/arknet/tls/server.crt;
     ssl_certificate_key /etc/arknet/tls/server.key;
     ssl_protocols TLSv1.2 TLSv1.3;
+    # Grant-bearing URLs (/announce/<grant>, web-seed/torrent media paths) must
+    # never reach a log: no access sink, and nginx cannot redact request lines
+    # in its error log at any level, so it has no request-time sink either
+    # (same rule as deploy/core/ingress/nginx.conf, Prompt 49B).
     access_log off;
-    error_log /var/log/nginx/arknet-error.log crit;
+    error_log /dev/null;
     client_max_body_size 16m;
     location = /infrastructure/health {
         default_type text/plain;

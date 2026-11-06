@@ -6,7 +6,7 @@ import subprocess
 import sys
 import urllib.parse
 from ops import HERE, MACHINES, load_secrets, mint_core_admin, revoke_core_admin, save_secrets
-from private_api import TLS, request, tunnel, wait
+from private_api import TLS, operator_headers, request, tunnel, wait
 sys.path.insert(0, str(HERE.parent.parent))
 from scripts import global_login  # noqa: E402
 
@@ -74,9 +74,13 @@ with tunnel(machine, 8096) as jelly:
 
 subprocess.run([sys.executable, str(HERE / 'deploy-stack.py'), args.host], check=True, stdout=subprocess.DEVNULL)
 try:
-    with tunnel(machine, 8082) as agent:
+    with tunnel(machine, 8082) as agent, tunnel(machine, 8086) as member_listener:
+        # Management routes require a Node operator session (Prompt 45B);
+        # sign-in is a public route on the member listener (Prompt 45C).
+        operator = operator_headers(args.host, member_listener)
+
         def enrolled():
-            state = request(agent + '/api/v1/status')[1]
+            state = request(agent + '/api/v1/status', headers=operator)[1]
             return state if state.get('state') in ('ENROLLMENT_PENDING', 'CONNECTED') else None
         state = wait(args.host + ' enrollment', enrolled, 180)
         node_id = state['node_id']
@@ -85,9 +89,9 @@ try:
         if state['state'] != 'CONNECTED':
             _, decision = request(core + '/api/admin/v1/nodes/' + node_id + '/approve', 'POST', headers=admin('nodes.decide'))
             assert decision['enrollment_status'] == 'APPROVED'
-        connected = wait(args.host + ' connected', lambda: (s if (s := request(agent + '/api/v1/status')[1]).get('state') == 'CONNECTED' else None), 180)
+        connected = wait(args.host + ' connected', lambda: (s if (s := request(agent + '/api/v1/status', headers=operator)[1]).get('state') == 'CONNECTED' else None), 180)
         assert connected['jellyfin_healthy'] is True
-        peer = request(agent + '/api/v1/settings/peer-serving')[1]
+        peer = request(agent + '/api/v1/settings/peer-serving', headers=operator)[1]
         # Do not enable peer serving as a side effect of deployment.
         assert peer.get('enabled') is False
         owner = secrets['global_users']['user-' + label]
@@ -100,7 +104,7 @@ try:
         session = {'Authorization': 'Bearer ' + login['token']}
         if not owner.get('member_id'):
             expires = (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=1)).strftime('%Y-%m-%dT%H:%M:%SZ')
-            _, invite = request(agent + '/api/v1/invitations', 'POST', {'role': 'MEMBER', 'expires_at': expires, 'max_uses': 1})
+            _, invite = request(agent + '/api/v1/invitations', 'POST', {'role': 'MEMBER', 'expires_at': expires, 'max_uses': 1}, operator)
             _, accepted = request(core + '/api/identity/v1/invitations/accept', 'POST', {'secret': invite['secret']}, session)
             assert accepted['node_id'] == node_id
             owner['member_id'] = accepted['member_id']

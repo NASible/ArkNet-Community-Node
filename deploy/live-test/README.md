@@ -113,13 +113,28 @@ VM. Node-local data never goes into Core. The Mac must be awake/logged in and
 VPN-reachable for the off-VM pull. Keys, schedules, restoration boundaries, and
 excluded data are documented in the [operator guide](OPERATOR-GUIDE.md).
 
-Peer Serving remains OFF; peer ports are not published. P2P swarms, transfer
+Peer Serving remains OFF; peer ports are not published. Peer transport is the
+private relay (Prompt 48D default, no direct mode). It runs on the Core VM beside
+the tracker, published on loopback and exposed at `100.64.0.21:7443` only to the
+three Node VPN addresses by a systemd socket proxy plus explicit UFW rules
+(`harden-management.py --relay`, recorded in `/etc/arknet/network-policy.json`).
+Its keys and TLS certificate are generated on the Core VM and never leave it.
+Nodes reach it as `relay.nodenet.arknet.media` through a container hosts entry;
+the transfer service refuses IP-literal relay addresses in 100.64.0.0/10.
+
+Node management requires a Node operator session (Prompt 45B). Verifiers sign in
+with each Node's operator password and TOTP from `secrets/runtime.json`; the first
+run bootstraps the operator with a one-time setup code read from the Agent shell.
+`reissue-node-tls.py` reissues a Node's leaf certificate from the existing CA
+when a required name (such as `member-x`) is missing, keeping a backup and
+restoring it if `nginx -t` fails. P2P swarms, transfer
 interruption/resume, extended Core outages, all codecs, and the complete historic
 MVP suite are not certified by these deployment checks. Transcoding is disabled
 for this direct-play pilot. Core is the single project DNS server; other client
 devices need their own approved DNS/trust installation. The operator Mac's CA
 and backup identities still need a separately protected disaster-recovery copy.
 
-Previously documented ARKSEC limitations remain open. The historic
+See [Security follow-ups](../../docs/security-follow-ups.md) for current
+ARKSEC statuses; this pilot does not change them. The historic
 [MVP validation report](../../docs/mvp-validation-report.md) is not rewritten or
 closed by this live deployment evidence. Do not expose this pilot publicly.

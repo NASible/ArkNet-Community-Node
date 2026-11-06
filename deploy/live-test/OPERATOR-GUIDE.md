@@ -33,7 +33,9 @@ and `https://member-c.nodenet.arknet.media`; management routes answer 404 there.
 Core API: `https://core.nodenet.arknet.media`. It does not ship a separate Core
 administration dashboard. Private tracker: `https://tracker.nodenet.arknet.media`.
 
-Read credentials locally in `secrets/access.txt` (mode 0600). The complete
+Node management HTTPS requires a Node operator login (password plus TOTP;
+operators `operator-a/b/c`). Their credentials and recovery codes are only in
+`secrets/runtime.json`. Read credentials locally in `secrets/access.txt` (mode 0600). The complete
 machine/account credential state is `secrets/runtime.json` (mode 0600).
 Neither file belongs in source archives, chat, or a public issue. Jellyfin
 administrator identities are `owner-a`, `owner-b`, and `owner-c`; ArkNet global
@@ -68,7 +70,9 @@ Jellyfin, and direct-streamed with matching SHA-256 and size checks. See
 Node's final media directory.
 
 Peer Serving remains OFF, DHT/PEX/LSD remain disabled, and no peer port is
-published. Peer-to-peer swarms, interruption/resume, extended Core outages,
+published. Peer payload may only use the private relay on the Core VM
+(`relay.nodenet.arknet.media:7443`, reachable only from the three Node VPN
+addresses); see the README's relay notes. Peer-to-peer swarms, interruption/resume, extended Core outages,
 unsupported playback codecs, and the complete historic MVP acceptance suite are
 not certified by this deployment proof. Jellyfin transcoding is disabled for
 the initial small-VM direct-play pilot.

@@ -1,29 +1,34 @@
 {
-  "source_sha256": "3a52b8396db91953d85ac120590146705a2a2e04ff94ba490bc006d9ab9e87a3",
+  "source_sha256": "020b195d13a834b2ec9ed8e9d629715ff698e46909b5973cb692544451e5a1c2",
   "images": {
     "core": {
-      "tag": "nodenet-core:3a52b8396db9",
-      "id": "sha256:f268ab6d68cd6b56568a971813292ec7519675552ec0c74aa73d8c915a5c5502",
+      "tag": "nodenet-core:020b195d13a8",
+      "id": "sha256:b5f976f75e28476af708a83e423a835451b49a0e1bedcf425a432ee0b904bbeb",
       "host": "nodenet-core"
     },
     "tracker": {
-      "tag": "nodenet-tracker:3a52b8396db9",
-      "id": "sha256:a470fd44d45d2873e092b985a6ddbda4f9d2740b091a26d5b0e103a3dc85cd97",
+      "tag": "nodenet-tracker:020b195d13a8",
+      "id": "sha256:f42bec133c6dc3c1873390020872d1f03e5f2d39946b512f85f34df69ad030dd",
+      "host": "nodenet-core"
+    },
+    "relay": {
+      "tag": "nodenet-relay:020b195d13a8",
+      "id": "sha256:557543e23414e5d8caa46c2f6155f06009dac05b4def646d0e2a333702248786",
       "host": "nodenet-core"
     },
     "agent": {
-      "tag": "nodenet-agent:3a52b8396db9",
-      "id": "sha256:8f63052f9e56138be01dc7ad06e642b9d911ac44e63fac0c6716531044d23e13",
+      "tag": "nodenet-agent:020b195d13a8",
+      "id": "sha256:0a3cf75f17aa96ef4ccf0a13f650580fe3ead4f649b7791a60938eec82ce979c",
       "host": "nodenet-node-a"
     },
     "transfer": {
-      "tag": "nodenet-transfer:3a52b8396db9",
-      "id": "sha256:c4010f748443ce95c72bfce6e4d0d513cf1b731b491be8678a3cbed150eb9c4f",
+      "tag": "nodenet-transfer:020b195d13a8",
+      "id": "sha256:ace883bfa637cb8329aad39d23c920a3d52cf25a5b0e4d3f476b41546b44fd21",
       "host": "nodenet-node-a"
     },
     "ui": {
-      "tag": "nodenet-ui:3a52b8396db9",
-      "id": "sha256:b003ffd744b827dd374688283d3de5856e474d4395398bf6510e662e22efacd8",
+      "tag": "nodenet-ui:020b195d13a8",
+      "id": "sha256:da168fa0ab40ed4ba9449069a01b42c10be7b3e3a630fe03cb789c6dbb28c706",
       "host": "nodenet-node-a"
     }
   }

@@ -1,30 +1,30 @@
 {
   "nodenet-core": {
-    "archive": "20261026T075701Z.tar.age",
+    "archive": "20261106T225839Z.tar.age",
     "off_vm_copy_decrypted": true,
     "postgresql_disposable_restore_passed": true,
-    "public_tables_restored": 10,
+    "public_tables_restored": 17,
     "jellyfin_sqlite_databases_checked": 0
   },
   "nodenet-node-a": {
-    "archive": "20261026T075704Z.tar.age",
+    "archive": "20261106T225841Z.tar.age",
     "off_vm_copy_decrypted": true,
     "postgresql_disposable_restore_passed": true,
-    "public_tables_restored": 13,
+    "public_tables_restored": 23,
     "jellyfin_sqlite_databases_checked": 1
   },
   "nodenet-node-b": {
-    "archive": "20261026T075711Z.tar.age",
+    "archive": "20261106T225845Z.tar.age",
     "off_vm_copy_decrypted": true,
     "postgresql_disposable_restore_passed": true,
-    "public_tables_restored": 13,
+    "public_tables_restored": 23,
     "jellyfin_sqlite_databases_checked": 1
   },
   "nodenet-node-c": {
-    "archive": "20261026T075717Z.tar.age",
+    "archive": "20261106T225849Z.tar.age",
     "off_vm_copy_decrypted": true,
     "postgresql_disposable_restore_passed": true,
-    "public_tables_restored": 13,
+    "public_tables_restored": 23,
     "jellyfin_sqlite_databases_checked": 1
   }
 }

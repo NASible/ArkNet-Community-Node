@@ -6,18 +6,20 @@ import shlex
 import socket
 import subprocess
 from ops import HERE, MACHINES, ssh
-from private_api import request
+from private_api import operator_headers, request
 
 build = json.loads((HERE / 'build-record.json').read_text())
 proof = {'verified_at': datetime.datetime.now(datetime.timezone.utc).isoformat(), 'machines': {}, 'boundaries': {}}
 for host, machine in MACHINES.items():
     raw = ssh(host, 'cd /opt/arknet && sudo docker compose --env-file runtime.env -f compose.json ps --format json')
     rows = [json.loads(line) for line in raw.decode().splitlines() if line.strip()]
-    expected_count = 3 if machine['role'] == 'core' else 5
+    # Core runs postgres, Core, tracker and the operator relay (Prompt 48A, D5).
+    expected_count = 4 if machine['role'] == 'core' else 5
     assert len(rows) == expected_count and all(row['State'] == 'running' and row.get('Health') == 'healthy' for row in rows)
     images = {}
     for row in rows:
-        component = {'arknet-core': 'core', 'arknet-tracker': 'tracker', 'arknet-agent': 'agent', 'arknet-transfer': 'transfer', 'arknet-ui': 'ui'}.get(row['Service'])
+        component = {'arknet-core': 'core', 'arknet-tracker': 'tracker', 'arknet-relay': 'relay', 'arknet-agent': 'agent',
+                     'arknet-transfer': 'transfer', 'arknet-ui': 'ui'}.get(row['Service'])
         if component:
             current = ssh(host, 'sudo docker inspect ' + row['Name'] + ' --format "{{.Image}}"').decode().strip()
             assert current == build['images'][component]['id']
@@ -26,27 +28,42 @@ for host, machine in MACHINES.items():
             if publication.get('PublishedPort'):
                 assert publication['URL'] == '127.0.0.1', 'Container port exposed beyond loopback'
     if machine['role'] == 'node':
-        state = request('https://node-' + host[-1] + '.nodenet.arknet.media/api/v1/status')[1]
+        # Management routes need an operator session since Prompt 45B; an
+        # anonymous request is refused (asserted below), not served.
+        assert request('https://node-' + host[-1] + '.nodenet.arknet.media/api/v1/status', expected=(401,))[0] == 401
+        operator = operator_headers(host)
+        state = request('https://node-' + host[-1] + '.nodenet.arknet.media/api/v1/status', headers=operator)[1]
         assert state['state'] == 'CONNECTED' and state['jellyfin_healthy'] and state['database_healthy']
-        policy = request('https://node-' + host[-1] + '.nodenet.arknet.media/api/v1/settings/peer-serving')[1]
+        policy = request('https://node-' + host[-1] + '.nodenet.arknet.media/api/v1/settings/peer-serving', headers=operator)[1]
         assert policy['enabled'] is False
         proof['machines'][host] = {'all_containers_healthy': True, 'state': state['state'],
+                                  'anonymous_management_refused': True,
                                   'peer_serving_enabled': False, 'release_manifest_available': state.get('release') is not None, 'image_ids': images}
     else:
         assert request('https://core.nodenet.arknet.media/health')[1]['healthy']
+        assert set(images) == {'core', 'tracker', 'relay'}
         proof['machines'][host] = {'all_containers_healthy': True, 'image_ids': images}
     prefs_code = "import subprocess,json; p=json.loads(subprocess.check_output(['tailscale','debug','prefs'])); print(json.dumps({'mode':p['NetfilterMode']}))"
     mode = json.loads(ssh(host, 'sudo python3 -c ' + shlex.quote(prefs_code)))['mode']
     assert mode == 0, 'Tailscale netfilter overrides UFW policy'
     proof['machines'][host]['running_container_count'] = len(rows)
     proof['machines'][host]['ufw_authoritative'] = True
-    for port in ([22, 8083, 6969] if machine['role'] == 'core' else [22, 8082, 8086, 5174, 8096, 8084]):
+    for port in ([22, 8083, 6969, 7443, 7080] if machine['role'] == 'core' else [22, 8082, 8086, 5174, 8096, 8084]):
         try:
             with socket.create_connection((machine['lan_ip'], port), timeout=.5):
                 raise AssertionError(f'{host}: private port {port} reachable on LAN')
         except OSError:
             pass
     proof['boundaries'][host + '_private_ports_blocked_on_lan'] = True
+    if machine['role'] == 'core':
+        # The relay listens on Core's VPN IP for the three Node VPN IPs only;
+        # the operator Mac is not a relay client.
+        try:
+            with socket.create_connection((machine['tailscale_ip'], 7443), timeout=2):
+                raise AssertionError('Relay reachable from the operator Mac')
+        except OSError:
+            pass
+        proof['boundaries']['relay_blocked_on_core_lan_and_from_operator_mac'] = True
     if machine['role'] == 'node':
         domain = 'jellyfin-' + host[-1] + '.nodenet.arknet.media'
         r = subprocess.run(['/usr/bin/curl', '-fsS', '--max-time', '10', '--resolve', domain + ':443:' + machine['lan_ip'],
@@ -76,6 +93,21 @@ for host in ('100.64.0.21','100.64.0.23'):
 print('BLOCKED')
 '''
 assert ssh('nodenet-node-a', 'python3 -c ' + shlex.quote(ssh_probe)).decode().strip() == 'BLOCKED'
+# Nodes authenticate the relay by SPKI pin, not CA (hence CERT_NONE here). Prove
+# the served certificate is the exact file deploy-stack.py derives that pin from.
+relay_probe = '''import socket,ssl,hashlib
+ctx=ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT); ctx.check_hostname=False; ctx.verify_mode=ssl.CERT_NONE
+with socket.create_connection(('100.64.0.21',7443),timeout=5) as raw:
+ with ctx.wrap_socket(raw,server_hostname='relay') as tls: print(tls.version(), hashlib.sha256(tls.getpeercert(True)).hexdigest())
+'''
+pinned_cert = ssh('nodenet-core', 'sudo python3 -c ' + shlex.quote(
+    "import ssl,hashlib; print(hashlib.sha256(ssl.PEM_cert_to_DER_cert(open('/etc/arknet/secrets/relay-tls.crt').read())).hexdigest())")).decode().strip()
+for host in [h for h, m in MACHINES.items() if m['role'] == 'node']:
+    version, served = ssh(host, 'python3 -c ' + shlex.quote(relay_probe), timeout=30).decode().split()
+    assert version == 'TLSv1.3', host + ': relay unreachable'
+    assert served == pinned_cert, host + ': relay serves a certificate other than the pinned file'
+proof['boundaries']['nodes_reach_relay_tls13_over_vpn'] = True
+proof['boundaries']['relay_serves_pinned_certificate'] = True
 proof['boundaries']['node_a_denied_cross_machine_ssh'] = True
 proof['boundaries']['node_a_denied_node_b_management'] = True
 proof['boundaries']['node_a_denied_core_administration'] = True
