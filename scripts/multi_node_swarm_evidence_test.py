@@ -17,6 +17,7 @@ class EvidenceTests(unittest.TestCase):
             "node_a_tx_while_peer_serving_off": 8_192,
             "node_a_tx_after_peer_serving_disabled": 4_096,
             "control_traffic_limit": 131_072,
+            "relay_forwarded_bytes": 4_900_000,
         }
         values.update(changes)
         return Evidence(**values)
@@ -32,6 +33,11 @@ class EvidenceTests(unittest.TestCase):
     def test_rejects_run_without_node_a_payload(self):
         with self.assertRaisesRegex(EvidenceError, "Node A contributed no payload"):
             self.valid(node_a_upload=0).validate()
+
+    def test_rejects_peer_payload_not_forwarded_by_relay(self):
+        # Private relay is the only peer transport: Node A's upload must cross it.
+        with self.assertRaisesRegex(EvidenceError, "relay forwarded no peer payload"):
+            self.valid(relay_forwarded_bytes=0).validate()
 
     def test_rejects_core_egress_not_lower_than_core_only(self):
         with self.assertRaisesRegex(EvidenceError, "Core egress was not reduced"):

@@ -5,6 +5,12 @@ The harness reuses Prompt 25 helpers, creates only randomly prefixed resources,
 measures web-seed payload (not metadata), exercises Node A's real seed
 reconciler and transfer worker, validates hard evidence, and verifies exact
 cleanup. It never reads developer environment files or prints grant URLs.
+
+Peer payload uses the product's only peer transport, the private relay
+(Prompt 48D): Core runs the shipped ``compose.relay.yaml`` overlay, Nodes get
+the signed relay list and ``ARKNET_TRANSFER_RELAY_EGRESS``, and each Node's
+transfer sidecar sits on its own isolated network shared only with Core, the
+tracker, the web-seed meter and the relay. There is no Node-to-Node path.
 """
 from __future__ import annotations
 
@@ -33,6 +39,7 @@ if str(ROOT) not in sys.path:
 from scripts.check_multi_node_result import result_document
 from scripts import e2e_diagnostics
 from scripts import operator_login
+from scripts import relay_acceptance
 
 
 METER_PROXY = r'''
@@ -110,6 +117,115 @@ def write_result(path, value):
     os.replace(temporary, target)
 
 
+RELAY_ID = "acceptance"
+RELAY_EGRESS = "arknet-relay:7443"
+RELAY_CONTROL_URL = "http://arknet-relay:7080"
+# Core's relay config directory is mounted here by compose.relay.yaml.
+CORE_RELAY_MOUNT = "/run/config/arknet-relays"
+CORE_COMPOSE_FILES = tuple(Path("deploy/core") / name for name in (
+    "compose.yaml", "compose.tracker.yaml", "compose.web-seed.yaml", "compose.relay.yaml"))
+
+
+def relay_layout(temporary):
+    """Disposable relay key/cert paths. Core's mounted directory holds only
+    Core-side material (relay list, list signing key, revocation keys); the
+    relay's endpoint-signing and TLS private keys live in a separate directory
+    that only the relay mounts."""
+    core_config, relay_secrets, list_dir = temporary / "relay-core", temporary / "relay-secrets", temporary / "relay-list"
+    return {
+        "core_config": core_config, "relays": core_config / "relays.json",
+        "list_signing": core_config / "relay-list.key",
+        "revocation_dir": core_config / "revocation",
+        "revocation_public": core_config / "revocation" / "tracker-public.key",
+        "list_dir": list_dir, "list_private": list_dir / "tracker-private.key",
+        "list_public": list_dir / "tracker-public.key",
+        "relay_secrets": relay_secrets, "endpoint_dir": relay_secrets / "endpoint",
+        "endpoint_private": relay_secrets / "endpoint" / "tracker-private.key",
+        "endpoint_public": relay_secrets / "endpoint" / "tracker-public.key",
+        "tls_cert": relay_secrets / "cert.pem", "tls_key": relay_secrets / "tls.key",
+    }
+
+
+def relays_document(spki_sha256):
+    return [{"id": RELAY_ID, "address": RELAY_EGRESS, "spki_sha256": spki_sha256,
+             "control_url": RELAY_CONTROL_URL,
+             "revocation_key_file": CORE_RELAY_MOUNT + "/revocation/tracker-private.key"}]
+
+
+def relay_core_env(layout, tracker_public_key, *, relay_port, control_port):
+    """Interpolation for compose.tracker.yaml's relay verify keys and compose.relay.yaml."""
+    return {
+        "ARKNET_TRACKER_RELAY_VERIFY_KEYS_FILE": str(layout["endpoint_public"]),
+        "ARKNET_CORE_RELAY_CONFIG_DIR": str(layout["core_config"]),
+        "ARKNET_RELAY_ID": RELAY_ID,
+        "ARKNET_RELAY_GRANT_VERIFY_KEY_FILE": str(tracker_public_key),
+        "ARKNET_RELAY_REVOCATION_VERIFY_KEY_FILE": str(layout["revocation_public"]),
+        "ARKNET_RELAY_ENDPOINT_SIGNING_KEY_FILE": str(layout["endpoint_private"]),
+        "ARKNET_RELAY_TLS_CERT_FILE": str(layout["tls_cert"]),
+        "ARKNET_RELAY_TLS_KEY_FILE": str(layout["tls_key"]),
+        # Random loopback ports: never collide with a developer relay on 7443/7080.
+        "ARKNET_RELAY_PORT": str(relay_port), "ARKNET_RELAY_CONTROL_PORT": str(control_port),
+    }
+
+
+def relay_node_env(list_verify_key):
+    """The operator settings a Node needs for relayed peers; nothing else."""
+    return {"ARKNET_RELAY_LIST_VERIFY_KEY": list_verify_key, "ARKNET_TRANSFER_RELAY_EGRESS": RELAY_EGRESS}
+
+
+def core_override_document(images):
+    # Core reaches the relay's control URL (revocations) over the relay's own
+    # relay-edge network, never through a Node network or its database network.
+    return {"services": {
+        "arknet-core": {"image": images["core"], "networks": ["core", "relay-edge"]},
+        "arknet-tracker": {"image": images["tracker"]},
+        "arknet-relay": {"image": images["relay"]}}}
+
+
+def node_override_document(images, cfg, isolated_network):
+    """Both Nodes are configured identically. ``!override`` (via
+    relay_acceptance.compose_override) drops compose.transfer.yaml's
+    transfer-egress bridge, so the sidecar's only outside network is this
+    Node's own isolated network."""
+    return {"services": {
+        "arknet-agent": {"image": images["agent"], "networks": ["node", "media-services", "transfer-control", "acceptance"]},
+        "arknet-transfer": {"image": images["transfer"], "networks": ["transfer-control", "acceptance"]},
+        "jellyfin": {"image": "jellyfin/jellyfin:10.10.7", "volumes": [
+            f"{cfg['jelly_config']}:/config", f"{cfg['jelly_cache']}:/cache", "media:/srv/arknet/media:ro"]}},
+        "networks": {"acceptance": {"external": True, "name": isolated_network}}}
+
+
+def assert_disjoint_transfer_networks(node_a_networks, node_b_networks):
+    shared = set(node_a_networks) & set(node_b_networks)
+    if shared:
+        raise AssertionError("direct Node-to-Node network path: transfer sidecars share " + ", ".join(sorted(shared)))
+
+
+def provision_relay(run, key_helper, layout, known_secrets):
+    """Dedicated disposable keys (list, revocation, endpoint) and a pinned TLS cert."""
+    for directory in (layout["core_config"], layout["relay_secrets"], layout["list_dir"],
+                      layout["revocation_dir"], layout["endpoint_dir"]):
+        directory.mkdir(mode=0o755)
+    for directory in (layout["list_dir"], layout["revocation_dir"], layout["endpoint_dir"]):
+        run(["go", "run", str(key_helper), "keygen", str(directory)], timeout=120)
+        private = directory / "tracker-private.key"
+        os.chmod(private, 0o644)  # disposable; Core (UID 10001) / relay (UID 65534) read the bind mount
+        known_secrets.append(private.read_text().strip())
+    shutil.copyfile(layout["list_private"], layout["list_signing"]); os.chmod(layout["list_signing"], 0o644)
+    run(["openssl", "ecparam", "-name", "prime256v1", "-genkey", "-noout", "-out", str(layout["tls_key"])], timeout=60)
+    run(["openssl", "req", "-new", "-x509", "-key", str(layout["tls_key"]), "-days", "2",
+         "-subj", "/CN=arknet-relay", "-out", str(layout["tls_cert"])], timeout=60)
+    os.chmod(layout["tls_key"], 0o644)
+    known_secrets.append(layout["tls_key"].read_text())
+    pub_pem = subprocess.run(["openssl", "x509", "-in", str(layout["tls_cert"]), "-pubkey", "-noout"],
+                             capture_output=True, check=True, timeout=60).stdout
+    pub_der = subprocess.run(["openssl", "pkey", "-pubin", "-outform", "DER"], input=pub_pem,
+                             capture_output=True, check=True, timeout=60).stdout
+    layout["relays"].write_text(json.dumps(relays_document(hashlib.sha256(pub_der).hexdigest())))
+    os.chmod(layout["relays"], 0o644)
+    return layout["list_public"].read_text().strip()
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--results", help="write sanitized proof JSON after product evidence validation passes")
@@ -138,7 +254,8 @@ def main(argv=None):
     core_project, node_a_project, node_b_project = prefix + "-core", prefix + "-node-a", prefix + "-node-b"
     meter_name, helper_image = prefix + "-core-meter", prefix + "-libtorrent"
     images = {"core": prefix + "-core-image", "tracker": prefix + "-tracker-image",
-              "agent": prefix + "-agent-image", "transfer": prefix + "-transfer-image", "helper": helper_image}
+              "agent": prefix + "-agent-image", "transfer": prefix + "-transfer-image", "helper": helper_image,
+              "relay": prefix + "-relay-image"}
     temporary = Path(tempfile.mkdtemp(prefix="." + prefix + "-", dir=ROOT)); os.chmod(temporary, 0o755)
     failure = None; made_network = set(); known_secrets = []
     projects = (core_project, node_a_project, node_b_project)
@@ -159,7 +276,7 @@ def main(argv=None):
         node_configs[label] = {
             "project": project, "agent_port": free_port(), "member_port": free_port(), "jellyfin_port": free_port(),
             "password": password, "token": token, "jelly_password": jelly_password,
-            "override": temporary / ("node-" + label + "-override.json"),
+            "override": temporary / ("node-" + label + "-override.yaml"),
             "jelly_config": temporary / ("jellyfin-" + label + "-config"),
             "jelly_cache": temporary / ("jellyfin-" + label + "-cache"),
         }
@@ -178,13 +295,13 @@ def main(argv=None):
             ARKNET_TRANSFER_DOWNLOAD_RATE_LIMIT=str(512 * 1024), ARKNET_TRANSFER_RECONCILE_INTERVAL="5s",
             JELLYFIN_API_KEY="")
 
-    core_override = temporary / "core-override.json"
+    core_override = temporary / "core-override.yaml"
+    relay_files = relay_layout(temporary)
     source = temporary / "source"; source.mkdir(mode=0o755)
 
     def core_compose(*items, capture=False, check=True, timeout=600):
-        return run(["docker", "compose", "-p", core_project, "-f", str(ROOT / "deploy/core/compose.yaml"),
-                    "-f", str(ROOT / "deploy/core/compose.tracker.yaml"),
-                    "-f", str(ROOT / "deploy/core/compose.web-seed.yaml"), "-f", str(core_override), *items],
+        files = [part for path in CORE_COMPOSE_FILES for part in ("-f", str(ROOT / path))]
+        return run(["docker", "compose", "-p", core_project, *files, "-f", str(core_override), *items],
                    cwd=ROOT / "deploy/core", env=core_env, capture=capture, check=check, timeout=timeout)
 
     def node_compose(label, *items, capture=False, check=True, timeout=600):
@@ -220,6 +337,18 @@ def main(argv=None):
         return int(run(["docker", "exec", transfer_container(label), "python3", "-c", script],
                        capture=True, timeout=20))
 
+    def transfer_networks(label):
+        output = run(["docker", "inspect", "-f", "{{json .NetworkSettings.Networks}}", transfer_container(label)],
+                     capture=True, timeout=20)
+        return set(json.loads(output))
+
+    def relay_tx_bytes():
+        # Summed non-loopback tx counters of the relay container (busybox sh).
+        script = 'for d in /sys/class/net/*; do [ "${d##*/}" = lo ] || cat "$d/statistics/tx_bytes"; done'
+        relay_id = core_compose("ps", "-q", "arknet-relay", capture=True)
+        output = run(["docker", "exec", relay_id, "sh", "-c", script], capture=True, timeout=20)
+        return sum(int(line) for line in output.split())
+
     def meter(method="GET"):
         command = ["docker", "exec", meter_name, "python3", "-c",
                    "import urllib.request; r=urllib.request.Request('http://127.0.0.1:8088/" +
@@ -239,8 +368,14 @@ def main(argv=None):
         run(["go", "run", str(key_helper), "keygen", str(temporary)], timeout=120)
         private_key, public_key = temporary / "tracker-private.key", temporary / "tracker-public.key"
         os.chmod(private_key, 0o644)
+        known_secrets.append(private_key.read_text().strip())
         core_env.update(ARKNET_TRACKER_SIGNING_KEY_FILE=str(private_key), ARKNET_TRACKER_VERIFY_KEY_FILE=str(public_key),
                         ARKNET_CORE_WEB_SEED_SOURCE=str(source))
+        # Private relay is the product's only peer transport (Prompt 48D).
+        list_verify_key = provision_relay(run, key_helper, relay_files, known_secrets)
+        core_env.update(relay_core_env(relay_files, public_key, relay_port=free_port(), control_port=free_port()))
+        for cfg in node_configs.values():
+            cfg["env"].update(relay_node_env(list_verify_key))
 
         object_id = "media_" + secrets.token_hex(32); video = source / object_id
         run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi",
@@ -268,33 +403,25 @@ def main(argv=None):
         for isolated_network in networks:
             run(["docker", "network", "create", isolated_network], capture=True)
             made_network.add(isolated_network)
-        core_override.write_text(json.dumps({"services": {
-            "arknet-core": {"image": images["core"]},
-            "arknet-tracker": {"image": images["tracker"]}}}))
+        core_override.write_text(relay_acceptance.compose_override(core_override_document(images)))
         for label in ("a", "b"):
             cfg = node_configs[label]
             isolated_network = network_a if label == "a" else network_b
-            agent_networks = ["node", "media-services", "transfer-control", "acceptance"]
-            # Node A's transfer joins Node B's network after startup (below), not
-            # through Compose: Compose would register the "arknet-transfer"
-            # service name there too, so Node B's Agent could resolve its sidecar
-            # to Node A's (wrong token -> 401 -> transfer_unavailable).
-            transfer_networks = ["transfer-control"] if label == "a" else ["transfer-control", "acceptance"]
-            network_defs = {"acceptance": {"external": True, "name": isolated_network}}
-            cfg["override"].write_text(json.dumps({"services": {
-                "arknet-agent": {"image": images["agent"], "networks": agent_networks},
-                "arknet-transfer": {"image": images["transfer"], "networks": transfer_networks},
-                "jellyfin": {"image": "jellyfin/jellyfin:10.10.7", "volumes": [f"{cfg['jelly_config']}:/config", f"{cfg['jelly_cache']}:/cache", "media:/srv/arknet/media:ro"]}},
-                "networks": network_defs}))
+            cfg["override"].write_text(relay_acceptance.compose_override(node_override_document(images, cfg, isolated_network)))
             os.chmod(cfg["override"], 0o600)
         os.chmod(core_override, 0o600)
 
         core_compose("up", "--build", "-d", "--wait", "--wait-timeout", "180")
         core_id = core_compose("ps", "-q", "arknet-core", capture=True)
         tracker_id = core_compose("ps", "-q", "arknet-tracker", capture=True)
+        relay_id = core_compose("ps", "-q", "arknet-relay", capture=True)
+        # Gateway services only: each Node network sees Core, tracker, meter and
+        # relay, never the other Node. Attached before the Nodes start because the
+        # transfer sidecar resolves its egress allowlist once at boot.
         for isolated_network in networks:
             run(["docker", "network", "connect", "--alias", "arknet-core-origin", isolated_network, core_id])
             run(["docker", "network", "connect", "--alias", "arknet-tracker", isolated_network, tracker_id])
+            run(["docker", "network", "connect", "--alias", "arknet-relay", isolated_network, relay_id])
         run(["docker", "run", "-d", "--name", meter_name, "--network", network_a,
              "--network-alias", "arknet-core",
              "-e", "UPSTREAM=http://arknet-core-origin:8080", "-e", "RATE_BYTES_PER_SECOND=" + str(96 * 1024),
@@ -305,13 +432,6 @@ def main(argv=None):
         for label in ("a", "b"):
             build = ["--build"] if label == "a" else []
             node_compose(label, "up", *build, "-d", "--wait", "--wait-timeout", "240", "postgres", "jellyfin", "arknet-transfer")
-            if label == "a":
-                # Plain connect: no "arknet-transfer" alias on Node B's network.
-                # Restart so libtorrent opens its listen socket on this network
-                # too; it only binds interfaces present at startup.
-                run(["docker", "network", "connect", network_b, transfer_container("a")], capture=True)
-                run(["docker", "restart", transfer_container("a")], capture=True)
-                node_compose(label, "up", "-d", "--wait", "--wait-timeout", "120", "arknet-transfer")
             cfg = node_configs[label]; jelly_base = f"http://127.0.0.1:{cfg['jellyfin_port']}"
             wait_until(label + " Jellyfin HTTP", lambda base=jelly_base: request(base + "/System/Info/Public")[0] == 200, 180)
             access, key = jellyfin_setup(jelly_base, cfg["jelly_password"]); known_secrets.extend((access, key))
@@ -326,6 +446,10 @@ def main(argv=None):
                                                  member_base=cfg["member_base"])
             known_secrets.extend(signed_in.secrets)
             operator_headers[cfg["base"]] = signed_in.headers
+
+        # Peer bytes can only move through the relay: the sidecars share no network.
+        assert_disjoint_transfer_networks(transfer_networks("a"), transfer_networks("b"))
+        print("SETUP: Core, tracker, relay, meter, Node A and Node B running; no Node-to-Node network path", flush=True)
 
         core_admin = ScopedAdmin(core_compose, "multi-node-swarm", "nodes.decide")
         admin_headers = core_admin.headers()
@@ -391,7 +515,8 @@ def main(argv=None):
             seed["object_id"] == object_id and seed["state"] == "SEEDING" for seed in transfer_seeds("a")), 120)
 
         seed_tx_start = transfer_tx_bytes("a")
-        stopped_progress = stopped_core = node_a_upload = None
+        relay_tx_start = relay_tx_bytes()
+        stopped_progress = stopped_core = node_a_upload = relay_forwarded = None
         deadline = time.monotonic() + 300
         while time.monotonic() < deadline:
             status = transfer_status(base_b, object_id)
@@ -403,11 +528,16 @@ def main(argv=None):
                              {"Content-Type": "application/json"})
                 wait_until("Peer Serving OFF unseeds Node A", lambda: transfer_seeds("a") == [], 30)
                 node_a_upload = transfer_tx_bytes("a") - seed_tx_start
+                relay_forwarded = relay_tx_bytes() - relay_tx_start
                 break
             if status and status["completed_bytes"] >= object_size:
                 raise AssertionError("Node B completed before Peer Serving could be disabled")
             time.sleep(.1)
         if stopped_progress is None: raise AssertionError("Node A supplied no measurable payload before timeout")
+        # Node A's only reachable peer destination is the relay, so its upload
+        # must reappear as relay egress toward Node B.
+        if relay_forwarded < 1024 * 1024:
+            raise AssertionError("relay forwarded less than 1 MiB while Node A seeded; peer payload did not cross the relay")
 
         # Let any already-written socket bytes drain, then prove traffic remains
         # bounded while Node B continues from Core with the seed removed.
@@ -437,7 +567,7 @@ def main(argv=None):
             "node_b_bytes_when_a_stopped": stopped_progress, "core_egress_when_a_stopped": stopped_core,
             "node_a_tx_while_peer_serving_off": node_a_tx_while_off,
             "node_a_tx_after_peer_serving_disabled": node_a_tx_after_disable,
-            "control_traffic_limit": control_traffic_limit}
+            "control_traffic_limit": control_traffic_limit, "relay_forwarded_bytes": relay_forwarded}
         # Measurements are plain byte counts and timings; safe to print on failure.
         print("Measurements: " + json.dumps(evidence_values, sort_keys=True), flush=True)
         result = result_document(run_id=prefix, object_id=object_id, object_sha256=digest,
@@ -456,7 +586,7 @@ def main(argv=None):
 
         collectors = {
             "failure": lambda: e2e_diagnostics.failure_text(error),
-            "core-logs": lambda: logs(core_compose, "arknet-core", "arknet-tracker"),
+            "core-logs": lambda: logs(core_compose, "arknet-core", "arknet-tracker", "arknet-relay"),
             "meter-log": lambda: run(["docker", "logs", "--tail", "400", meter_name], capture=True, check=False, timeout=30),
             "meter-stats": lambda: meter(),
         }

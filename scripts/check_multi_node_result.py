@@ -20,6 +20,7 @@ def result_document(*, run_id, object_id, object_sha256, evidence_values):
             "node_a_enabled_via_local_api": True,
             "core_eligibility_observed": True,
             "node_a_seed_path": "node-agent seed reconciler -> transfer service -> libtorrent worker",
+            "peer_transport": "private relay; no Node-to-Node network path",
             "peer_serving_off_proved": True,
             "peer_serving_disable_stopped_upload": True,
             "core_meter_scope": "successful Core web-seed response-body bytes only; torrent metadata excluded",
