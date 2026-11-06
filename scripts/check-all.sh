@@ -3,7 +3,7 @@
 #
 #   scripts/check-all.sh            component gate (no long-running stacks; uses a
 #                                   throwaway PostgreSQL container for store tests)
-#   scripts/check-all.sh --e2e      + Docker acceptance: MVP E2E, Node upgrade, product swarm
+#   scripts/check-all.sh --e2e      + TLS log redaction, MVP E2E, upgrade, product swarm
 #   scripts/check-all.sh --vm       + fresh-VM install check (needs Lima)
 #   --logs DIR                      keep step logs and diagnostics in DIR (default: a new temp dir)
 #
@@ -157,6 +157,7 @@ step deploy-tests deploy_tests
 step postgres-tests postgres_tests
 step worker-tests worker_tests
 if [ "$RUN_E2E" = 1 ]; then
+    step ingress-redaction python3 -u scripts/check-ingress-redaction.py
     step mvp-e2e e2e
     step node-upgrade python3 -u scripts/check-node-upgrade-stack.py
     step product-swarm swarm

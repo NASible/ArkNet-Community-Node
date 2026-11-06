@@ -12,6 +12,14 @@ stored in the named `postgres-data` volume, normally
 `arknet-core-dev_postgres-data`. The project name, network, and volume are
 separate from the Node development stack.
 
+## Supported TLS ingress
+
+For publishing Core and the tracker, use the
+[supported TLS ingress](../../docs/tls-ingress.md) overlay. It removes direct
+backend port publication and retains useful access metrics without logging
+grant-bearing URLs, request headers or queries. Certificate issuance is
+operator-managed; loopback-only development remains available below.
+
 ## Prerequisites and local configuration
 
 Use Docker Engine and Docker Compose v2+ with support for `--wait`. Host Go or

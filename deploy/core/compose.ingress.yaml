@@ -1,0 +1,64 @@
+# Supported TLS termination with grant-safe access logs (Prompt 49B).
+# Combine LAST with compose.yaml + compose.tracker.yaml (+ web-seed/login/relay).
+# Compose >= 2.24.4 is required for !reset. Only the TLS listeners are published.
+services:
+  arknet-core:
+    ports: !reset []
+  arknet-tracker:
+    ports: !reset []
+
+  arknet-ingress:
+    # Registry-verified multi-platform stable index; version 1.30.6-alpine.
+    image: nginx:stable-alpine@sha256:583b7f2fce1cdb8da5ad5c39ebd3c33b98b87d493190e548bdee1fa8c619c311
+    entrypoint: ["nginx"]
+    command: ["-g", "daemon off;", "-c", "/etc/nginx/nginx.conf"]
+    user: "0:0"
+    read_only: true
+    cap_drop:
+      - ALL
+    # Root master reads a mode-0600 TLS key, then workers drop to nginx.
+    cap_add:
+      - CHOWN
+      - SETUID
+      - SETGID
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=32m,mode=1777
+    volumes:
+      - type: bind
+        source: ./ingress/nginx.conf
+        target: /etc/nginx/nginx.conf
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${ARKNET_INGRESS_TLS_CERT_FILE:?Set the certificate-chain PEM file}
+        target: /etc/arknet/tls/cert.pem
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${ARKNET_INGRESS_TLS_KEY_FILE:?Set the private-key PEM file}
+        target: /etc/arknet/tls/key.pem
+        read_only: true
+        bind:
+          create_host_path: false
+    ports:
+      - "${ARKNET_CORE_HTTPS_BIND:-127.0.0.1:8443}:8443"
+      - "${ARKNET_TRACKER_HTTPS_BIND:-127.0.0.1:8444}:8444"
+    networks:
+      - core
+      - tracker-edge
+    depends_on:
+      arknet-core:
+        condition: service_healthy
+      arknet-tracker:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "nginx", "-t", "-q", "-c", "/etc/nginx/nginx.conf"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    stop_grace_period: 15s

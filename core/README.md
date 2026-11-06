@@ -11,6 +11,12 @@ is capped at 1,000 records with fixed seven-day expiry. See
 [Core abuse controls](../docs/core-abuse-controls.md), including proxy and
 process-local limitations.
 
+## Supported TLS ingress
+
+The [TLS ingress recipe](../docs/tls-ingress.md) terminates verified TLS for
+Core and the tracker while redacting grant-bearing URL paths from access logs.
+It includes an automated five-component log-sentinel check.
+
 ## Recommended local development
 
 Use the [Core development Compose stack](../deploy/core/README.md) to start Core

@@ -477,6 +477,11 @@ redacts grant-bearing path segments from access logs.
 Acceptance criteria: a sentinel grant sent through the supported ingress is
 absent from proxy, Core, tracker, Agent and UI logs (automated check).
 
+Implemented on `phase20/49b-tls-ingress-redaction`; see [49B validation](prompt49b-validation.md)
+and [supported TLS ingress](../tls-ingress.md). Real-container sentinel and
+negative-control checks passed; component gate 13/13. No live deployment or
+frozen-commit release validation is implied.
+
 ---
 
 # PHASE 20G — Validation

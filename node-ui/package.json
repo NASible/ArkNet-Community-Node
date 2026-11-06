@@ -7,9 +7,10 @@
     "node": "^22.22.2 || ^24.15.0 || >=26.0.0"
   },
   "scripts": {
-    "dev": "vite",
+    "dev": "sh ./start-ui.sh node_modules/vite/bin/vite.js",
+    "serve": "sh ./start-ui.sh",
     "build": "tsc --noEmit && vite build",
-    "preview": "vite preview",
+    "preview": "sh ./start-ui.sh node_modules/vite/bin/vite.js preview",
     "test": "vitest run"
   },
   "dependencies": {

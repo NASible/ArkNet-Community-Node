@@ -1,9 +1,29 @@
+import { stripVTControlCharacters } from 'node:util';
 import { loadEnv } from 'vite';
 import { defineConfig } from 'vitest/config';
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '');
   return {
+    plugins: [{
+      name: 'arknet-private-proxy-diagnostics',
+      configResolved(config) {
+        // Vite includes req.url and err.stack/error in proxy failures. Grants
+        // live in URL paths as well as queries, so do not attempt token parsing
+        // or mutate the request: replace only these diagnostic records in full.
+        // Wrap the resolved logger so custom log sinks get the same protection.
+        const error = config.logger.error.bind(config.logger);
+        config.logger.error = (message, options) => {
+          const kind = /^(http proxy error|ws proxy error|ws proxy socket error):/.exec(stripVTControlCharacters(message))?.[1];
+          if (kind) {
+            error(`${kind}: upstream request failed (details redacted)`, { timestamp: true });
+          } else {
+            // Keep normal build/configuration diagnostics and their metadata.
+            error(message, options);
+          }
+        };
+      },
+    }],
     server: {
       host: '127.0.0.1',
       port: 5173,

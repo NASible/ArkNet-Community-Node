@@ -15,9 +15,16 @@ explanation.
   every `scripts/*_test.py` and `deploy/node/*_test.py`, the Core and Agent
   PostgreSQL store tests against a throwaway `postgres:18-alpine` (run from a Go
   container that shares the database's clock), and worker tests inside the
-  transfer image (real libtorrent). `--e2e` adds the MVP E2E, Node upgrade and product swarm
+  transfer image (real libtorrent). `--e2e` adds the TLS ingress log-redaction
+  sentinel check, MVP E2E, Node upgrade and product swarm
   checks; `--vm` adds the fresh-VM install check. Every step runs, step logs
   stay in `DIR`, and the last line is `EXIT <failed steps>`.
+- `python3 scripts/check-ingress-redaction.py`: Prompt 49B's supported TLS
+  ingress acceptance. Uses verified test-CA TLS and real Core/tracker/Agent/UI
+  containers, exercises grant-bearing routes and upstream failures, scans all
+  five raw log streams before printing evidence, and requires a leak-detecting
+  negative control. See [TLS ingress](../docs/tls-ingress.md). It never changes
+  live DNS, trust roots, developer `.env` files or application databases.
 - `python3 scripts/check-mvp-e2e.py [--setup-only] [--results FILE] [--diagnostics-dir DIR]`:
   Core, Node A and Node B acceptance for Prompt 43 items 2–16, 19 and 20.
   Item 11 now exercises the **product Prompt 48D relay connector**, not the

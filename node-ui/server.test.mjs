@@ -73,7 +73,7 @@ it('drops root privileges and clears supplementary groups', () => {
 it('keeps every pre-drop module root-owned and non-writable by node', () => {
   const dockerfile = fs.readFileSync(path.join(import.meta.dirname, 'Dockerfile'), 'utf8');
   expect(dockerfile).toContain('RUN chown -R root:root /app && chmod -R go-w /app');
-  expect(dockerfile.indexOf('RUN chown -R root:root /app')).toBeLessThan(dockerfile.indexOf('CMD ["node", "server.mjs"]'));
+  expect(dockerfile.indexOf('RUN chown -R root:root /app')).toBeLessThan(dockerfile.indexOf('CMD ["sh", "./start-ui.sh"]'));
 });
 
 it('serves no HTTPS listener without a certificate', () => {

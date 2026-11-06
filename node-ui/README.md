@@ -66,12 +66,21 @@ enroll an authenticator and save the displayed recovery codes. After setup,
 use **Sign in** and **Sign out** in the header. The Agent enforces permissions
 independently of the UI; anonymous/member calls to management routes return 401.
 
-The Docker image starts `node server.mjs`: Vite serves port 5173, and the HTTPS
+The Docker image starts the guarded `sh ./start-ui.sh` entrypoint: Vite serves
+port 5173, and the HTTPS
 listener serves 8443 when `/etc/arknet/tls/cert.pem` and `key.pem` exist.
 `install.sh` and upgrades generate that certificate; see
 [Node installation](../docs/node-installation.md). Plain HTTP is published only
 on loopback; HTTPS is published to the LAN. Standalone HTTPS development can use
-`ARKNET_UI_TLS_CERT` and `ARKNET_UI_TLS_KEY` with `node server.mjs`.
+`ARKNET_UI_TLS_CERT` and `ARKNET_UI_TLS_KEY` with `npm run serve`.
+
+Supported `dev`, `serve`, `preview` and image startup paths clear `DEBUG`,
+`NODE_DEBUG` and `NODE_DEBUG_NATIVE` before Node loads any modules: those debug
+channels can dump raw grant-bearing URLs outside Vite's logger. Proxy failures
+retain nonsecret diagnostics, but URLs, stacks and raw error metadata are
+redacted. Do not bypass `start-ui.sh` with direct Node/Vite commands or enable
+separate request/body tracing on a deployed Node. See
+[supported TLS ingress](../docs/tls-ingress.md).
 
 Browser acceptance against a disposable real Agent/Postgres/UI stack:
 
