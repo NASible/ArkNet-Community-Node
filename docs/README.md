@@ -9,9 +9,9 @@ Architecture, development, and operations documentation belongs here.
 - [Phase 21 prompt pack](development/hermes-phase21-prompts.md): production
   readiness — release pipeline, observability, exposure, recovery and capacity.
 - [Repository overview](../README.md): component map and architecture boundaries.
-- [MVP validation report](mvp-validation-report.md): all 20 Prompt 43 results
-  from the 2026-10-27 final-tree run (20 PASS), Phase 19A blockers,
-  ARKSEC-linked limitations, and separate functional and security verdicts.
+- [Validation report](mvp-validation-report.md): Phase 20 results on frozen
+  commit `b232f46` (gate 18/18, ARKSEC status, live-test pilot, verdicts), with
+  the 2026-10-27 Phase 19A report kept as history.
 - [MVP security review](mvp-security-review.md): Prompt 42 requirement matrix,
   fixes, residual risk, and verification gate.
 - [Security follow-ups](security-follow-ups.md): tracked release-blocking and
