@@ -124,6 +124,10 @@ Acceptance criteria:
 - `check-ingress-redaction.py` passes with the UI sink still scanned.
 - `check-node-upgrade-stack.py` passes with the new compose hash.
 
+Done 2026-11-06 (`614a17f`, `519f078`): every criterion passed, and the
+live-test group now runs the shipped image. See
+[Prompt 51 validation](prompt51-validation.md).
+
 ## Prompt 51A — Versioned, Signed Releases From a Registry
 
 Context: compose files reference local `:0.0.1-dev` tags; images are built on
