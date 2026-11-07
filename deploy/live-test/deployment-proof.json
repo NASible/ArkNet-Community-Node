@@ -1,12 +1,12 @@
 {
-  "verified_at": "2026-11-06T23:00:34.402093+00:00",
+  "verified_at": "2026-11-07T04:29:46.215158+00:00",
   "machines": {
     "nodenet-core": {
       "all_containers_healthy": true,
       "image_ids": {
-        "core": "sha256:b5f976f75e28476af708a83e423a835451b49a0e1bedcf425a432ee0b904bbeb",
-        "relay": "sha256:557543e23414e5d8caa46c2f6155f06009dac05b4def646d0e2a333702248786",
-        "tracker": "sha256:f42bec133c6dc3c1873390020872d1f03e5f2d39946b512f85f34df69ad030dd"
+        "core": "sha256:31c4d4737451fcc80620770a39a6b00239cdc8bd45dc89330960e7e4b551e8d1",
+        "relay": "sha256:b3875f6c1f92ebcdc7230a62847e46659ef7040d06f451e4399339f64ca1d2de",
+        "tracker": "sha256:2b90be94488c79bae12224e09de401b4f97597cf6501c59c598c99f907653c03"
       },
       "running_container_count": 4,
       "ufw_authoritative": true
@@ -18,9 +18,9 @@
       "peer_serving_enabled": false,
       "release_manifest_available": true,
       "image_ids": {
-        "agent": "sha256:0a3cf75f17aa96ef4ccf0a13f650580fe3ead4f649b7791a60938eec82ce979c",
-        "transfer": "sha256:ace883bfa637cb8329aad39d23c920a3d52cf25a5b0e4d3f476b41546b44fd21",
-        "ui": "sha256:da168fa0ab40ed4ba9449069a01b42c10be7b3e3a630fe03cb789c6dbb28c706"
+        "agent": "sha256:4a12cf55ca96e1e8420adfe2e0b344df205e7d97728e28632d867b2e5b9d6c43",
+        "transfer": "sha256:37a7002fd121ee96fae9b25bb65ea7206e60ee03961cc908bfe0efb33aa9d705",
+        "ui": "sha256:2ac1efb6e56703ad292f7fd52e751a91d14e042382ca2a92b864344ab48b97e5"
       },
       "running_container_count": 5,
       "ufw_authoritative": true
@@ -32,9 +32,9 @@
       "peer_serving_enabled": false,
       "release_manifest_available": true,
       "image_ids": {
-        "agent": "sha256:0a3cf75f17aa96ef4ccf0a13f650580fe3ead4f649b7791a60938eec82ce979c",
-        "transfer": "sha256:ace883bfa637cb8329aad39d23c920a3d52cf25a5b0e4d3f476b41546b44fd21",
-        "ui": "sha256:da168fa0ab40ed4ba9449069a01b42c10be7b3e3a630fe03cb789c6dbb28c706"
+        "agent": "sha256:4a12cf55ca96e1e8420adfe2e0b344df205e7d97728e28632d867b2e5b9d6c43",
+        "transfer": "sha256:37a7002fd121ee96fae9b25bb65ea7206e60ee03961cc908bfe0efb33aa9d705",
+        "ui": "sha256:2ac1efb6e56703ad292f7fd52e751a91d14e042382ca2a92b864344ab48b97e5"
       },
       "running_container_count": 5,
       "ufw_authoritative": true
@@ -46,9 +46,9 @@
       "peer_serving_enabled": false,
       "release_manifest_available": true,
       "image_ids": {
-        "agent": "sha256:0a3cf75f17aa96ef4ccf0a13f650580fe3ead4f649b7791a60938eec82ce979c",
-        "transfer": "sha256:ace883bfa637cb8329aad39d23c920a3d52cf25a5b0e4d3f476b41546b44fd21",
-        "ui": "sha256:da168fa0ab40ed4ba9449069a01b42c10be7b3e3a630fe03cb789c6dbb28c706"
+        "agent": "sha256:4a12cf55ca96e1e8420adfe2e0b344df205e7d97728e28632d867b2e5b9d6c43",
+        "transfer": "sha256:37a7002fd121ee96fae9b25bb65ea7206e60ee03961cc908bfe0efb33aa9d705",
+        "ui": "sha256:2ac1efb6e56703ad292f7fd52e751a91d14e042382ca2a92b864344ab48b97e5"
       },
       "running_container_count": 5,
       "ufw_authoritative": true
@@ -64,6 +64,7 @@
     "nodenet-node-c_private_ports_blocked_on_lan": true,
     "nodenet-node-c_lan_jellyfin_only": true,
     "nodes_reach_relay_tls13_over_vpn": true,
+    "relay_serves_pinned_certificate": true,
     "node_a_denied_cross_machine_ssh": true,
     "node_a_denied_node_b_management": true,
     "node_a_denied_core_administration": true,

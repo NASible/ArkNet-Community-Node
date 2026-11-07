@@ -1,4 +1,193 @@
-# ArkNet MVP validation report
+# ArkNet validation report
+
+Current report: **Phase 20 (Prompt 50), 2026-11-06 America/Anchorage (AKST)**,
+on frozen commit **`b232f460874141d8e5a02ef3ebfdde1875153cf5`** (`b232f46`).
+Result: every acceptance check passed on that commit. The Phase 19A report
+(2026-10-27) is kept below as history.
+
+## Verdict
+
+- **Is ArkNet functionally complete on the frozen tree? Yes.** The one-command
+  gate passed 18 of 18 steps (`SUMMARY: 18 passed, 0 failed`, `EXIT 0`). It
+  covers component tests, real-PostgreSQL store tests, the TLS ingress
+  sentinel check, MVP E2E items 2–16, 19 and 20 (relay-only peer transport),
+  whole-stack upgrade, the product swarm and a fresh-VM install. The
+  standalone ARKSEC checks for operator HTTPS, scoped Core administration and
+  enrollment abuse controls also passed. The live-test group was updated to
+  the same commit and all three of its verifiers passed.
+- **Is it ready for hostile multi-operator production? No, not yet.**
+  ARKSEC-004 is closed, so the remaining risk is not the private-relay gap.
+  Every code-level acceptance criterion for ARKSEC-001 through ARKSEC-008
+  passes on this commit. What remains:
+  1. **ARKSEC-009 is open.** It needs an operator to confirm that credentials
+     which may have escaped through removed local `.env` files and generated
+     artifacts were rotated or were disposable. That is an operator action, not
+     a test. It is done only for the live-test group's application secrets;
+     the live tracker signing key and other environments are not covered.
+  2. **Residual risks.** These are documented, accepted for the first release,
+     and still apply to hostile operators:
+     - **Grant window.** A malicious Node keeps a bounded authorization window
+       for grants it already holds, up to the 5-minute grant lifetime (see
+       [Node revocation](node-revocation.md#malicious-node-residual-window-arksec-004)).
+     - **Rate limits.** Login and enrollment limits are per Core process and
+       keyed by socket peer, so they reset on restart and are shared by
+       clients behind a proxy.
+     - **Relay.** The first release has a single operator relay. Community
+       relays are not shipped.
+     - **No external audit.** No independent security audit or penetration
+       test has been done.
+  3. **Deployment.** The only deployment is a private, trusted-operator
+     four-VM pilot. Reboot recovery of the new relay listener was not
+     re-verified (see below).
+
+## Evidence rules
+
+- **PASS** means the named check logged PASS in a run on commit `b232f46`, and
+  the run's own exit line (`EXIT 0`, or the gate summary) confirms it. Standalone
+  and live logs start with their `COMMIT`; gate step logs are identified by
+  `gate.out`'s first line, `ArkNet gate: b232f46`. Unit and component tests never promote an item
+  that has an end-to-end check.
+- The tree was clean before and after every run.
+  `~/.hermes/cache/scratch/p50/run-frozen.sh` refuses a dirty tree and
+  re-checks `HEAD` and `git status` after each check. Its record ends with
+  `FROZEN_COMMIT_STILL b232f46…`.
+- Logs are local evidence on the validation host and are not committed:
+  - local runs: `~/.hermes/cache/scratch/p50/frozen-b232f46/`
+  - live-test runs: `~/.hermes/cache/scratch/p50/live-b232f46/`
+- After the freeze, only documentation and the live-test proof JSONs (written
+  by the verifiers) changed.
+
+## Runs on `b232f46`
+
+| ID | Log | Command | Time (AKST) | Outcome |
+| --- | --- | --- | --- | --- |
+| G | `gate.out`, `gate/*.log` | `scripts/check-all.sh --e2e --vm --logs …/gate` | 19:28–20:15 | First line `ArkNet gate: b232f46`. `SUMMARY: 18 passed, 0 failed`, `EXIT 0`. |
+| E | `gate/mvp-e2e.log`, `gate/e2e.json` | gate step `mvp-e2e` (`check-mvp-e2e.py`), run `arknet-p43-test-4a9d8a0e1b59` | in G | All 15 criteria PASS. `PASS: container logs contain 0 known secret values` (line 674). `PASS: exact scoped cleanup` (line 778). |
+| U | `gate/node-upgrade.log` | gate step `node-upgrade` | in G | `ALL PASS` (line 89). |
+| P | `gate/product-swarm.log`, `gate/swarm.json` | gate step `product-swarm`, run `arknet-p43f-test-bc5b0abdcd6b` | in G | `PASS: Prompt 43F product-path evidence validated` (line 460). Cleanup PASS (line 602). |
+| I | `gate/node-install-vm.log` | gate step `node-install-vm` (fresh Lima Ubuntu VM) | in G | `ALL PASS` (line 73). |
+| R | `gate/ingress-redaction.log` | gate step `ingress-redaction` | in G | `PASS: five real sinks, verified TLS, forwarding, forced errors, negative control`. Exact cleanup PASS. |
+| C | `gate/{go-*,node-ui,harness-tests,deploy-tests,postgres-tests,worker-tests}.log` | gate component steps | in G | All PASS. Covers five Go modules, the UI (276 tests), harness tests (122, one opt-in skip that R executes), real-PostgreSQL Core and Agent store tests, and worker tests in the real libtorrent image. |
+| H | `operator-https.log` | `check-operator-https.py` (real Chromium, LAN HTTPS) | 20:15–20:16 | `EXIT 0`. |
+| A | `core-admin-stack.log` | `check-core-admin-stack.py` | 20:16–20:17 | `EXIT 0`. |
+| N | `enrollment-stack.log` | `check-enrollment-stack.py` | 20:17–20:22 | `EXIT 0`. |
+| L | `live-b232f46/*.log` | `run-live.sh` from a clean `b232f46` worktree: build, distribute, deploy (Core, A, B, C), `verify-deployment.py`, `prove-media.py` (freshly generated sample), backups, `pull-backups.py`, `verify-backups.py` | 19:28–19:32 | Every step `EXIT 0`. Results: `DEPLOYMENT_AND_ACCESS_BOUNDARY_PROOF_PASS`, `ALL_THREE_NODE_MEDIA_PROOF_PASS`, `BACKUP_DECRYPT_AND_RESTORE_PASS` for all four VMs. A scan found 0 admin tokens, grant-like strings or private keys in the logs. |
+
+## Prompt 43 items on the frozen tree
+
+E covers items 2–16, 19 and 20. Item 1 comes from I; items 17 and 18 come from U.
+Line numbers refer to `gate/mvp-e2e.log` unless another log is named.
+
+| # | Item | Result | Evidence |
+| --- | --- | --- | --- |
+| 1 | Fresh node installation | **PASS** | I lines 61–73: the installer exited 0 and the fresh VM reached ENROLLMENT_PENDING. Core listed it as pending. Permissions were safe, a rerun was safe, and no secrets appeared in output. |
+| 2 | Enrollment | **PASS** | Lines 566–568: signed outbound self-enrollment, then approval. Both Nodes reached CONNECTED with distinct pinned keys. |
+| 3 | Node restart | **PASS** | Lines 597–598. |
+| 4 | Global user | **PASS** | Lines 569–570. |
+| 5 | Local-only user | **PASS** | Lines 571–572. |
+| 6 | Pairwise node membership | **PASS** | Lines 573–574. |
+| 7 | Jellyfin | **PASS** | Lines 575–576. |
+| 8 | Media selection | **PASS** | Lines 577–578. |
+| 9 | BitTorrent v2 Core → Node transfer | **PASS** | Lines 599, 609, 611: exact SHA-256 and a signed replica report. |
+| 10 | Interrupted transfer/resume | **PASS** | Lines 604, 610, 612. |
+| 11 | Node A → Node B swarm contribution | **PASS** | Lines 637–652. Node A's libtorrent contributed 33,581,357 bytes over the private relay, and B completed the exact SHA-256 with its web seed disconnected. Every outgoing attempt was gateway-classified (no direct path). With all relays down, 0 late peer bytes moved and the transfer did not fall back to direct. P also shows payload forwarded by the relay (4,202,675 bytes). |
+| 12 | Offline Jellyfin playback | **PASS** | Lines 625–626. |
+| 13 | Core-bound global authentication | **PASS** | Lines 613–628. The password was typed only at Core. Replayed and cross-Node assertions were rejected. In the malicious-Node harness, none of 11 captured values was usable at Core or Node B. Offline login stayed within its window and was refused after it. |
+| 14 | Core reconnect | **PASS** | Lines 621–622, 635–636. |
+| 15 | Removed-media retention | **PASS** | Lines 653–655. |
+| 16 | Node revocation | **PASS** | Lines 664–673. Core push closed the live relay session, and relay-only bytes stopped 0.77 s after revocation. B converged to REVOKED/CANCELLED, refused new transfers (409 `node_revoked`) and kept its retained media exact. A stayed CONNECTED. |
+| 17 | Update discovery | **PASS** | U line 5: `UPDATE_AVAILABLE`, current `0.0.2-dev.1`, available `0.0.2-dev.2`, while A kept running. |
+| 18 | Whole-stack upgrade | **PASS** | U lines 43–89: upgrade, no-op rerun, unpullable abort, automatic rollback (exit 3), manual rollback, data preserved, no secrets. |
+| 19 | Operator cannot enumerate global users | **PASS** | Lines 656–657. |
+| 20 | Node A cannot arbitrarily access Node B | **PASS** | Lines 658–663. Node B's management address returned 401 to anonymous callers, Node A's operator session and member bearers. Listener separation held. |
+
+### Product swarm and Peer Serving measurements (P)
+
+Peer transport: `private relay; no Node-to-Node network path`. The swarm
+check also asserts that the two transfer containers share no network.
+
+| Phase | Node A transmitted | Notes |
+| --- | --- | --- |
+| Peer Serving OFF, Node B downloading | 1,228 bytes | Under the 128 KiB control bound. |
+| Peer Serving ON | 4,119,854 bytes | The relay forwarded 4,202,675 bytes in the same window. Core egress fell from 26,732,194 bytes (Core-only download) to 22,495,232. |
+| Peer Serving turned OFF during the session | 0 bytes | Node B completed the exact object, SHA-256 `3e7e42d4…`. |
+
+## ARKSEC status on the frozen tree
+
+| ID | Status | Evidence on `b232f46` |
+| --- | --- | --- |
+| [ARKSEC-001](security-follow-ups.md#arksec-001) | **Closed** | E item 13: one-time Node-bound assertions, replay and cross-Node rejection, and a malicious-Node capture harness. |
+| [ARKSEC-002](security-follow-ups.md#arksec-002) | **Closed** | E item 20 (operator-session denial and listener separation), H (real Chromium LAN HTTPS login and logout), U. Component route/permission matrix and spy tests are in C. |
+| [ARKSEC-003](security-follow-ups.md#arksec-003) | **Fixed** | P: OFF 1,228 bytes, ON 4,119,854 bytes, after OFF 0 bytes, now over the relay. |
+| [ARKSEC-004](security-follow-ups.md#arksec-004) | **Closed** | E item 11 (relay-only payload, no direct attempts, no direct fallback with relays down) and item 16. P measures the relay path with no Node-to-Node network. The malicious-Node residual window is documented. |
+| [ARKSEC-005](security-follow-ups.md#arksec-005) | **Closed** | A (scoped tokens, denial before repositories, audit, revocation, the removed shared bearer refuses to start). C (Core spy and real-PostgreSQL audit tests). E and L mint scoped, short-lived tokens. |
+| [ARKSEC-006](security-follow-ups.md#arksec-006) | **Closed for cooperative Nodes** | E item 16: active transfer cancelled, bytes stop, terminal REVOKED. Malicious-Node enforcement is covered by the relay (ARKSEC-004). |
+| [ARKSEC-007](security-follow-ups.md#arksec-007) | **Closed for the supported recipe** | R: verified TLS, real Core/tracker/Agent/UI, raw-log sentinel scan of five sinks, forced errors, and a leak-detecting negative control. L: live ingress request-error sink set to `/dev/null`, and no request logging. |
+| [ARKSEC-008](security-follow-ups.md#arksec-008) | **Closed for the scoped criteria** | N (signed enrollment, generic receipts, restart idempotency). C (rate limit, quota and expiry tests, real PostgreSQL). E passes under the production limits. |
+| [ARKSEC-009](security-follow-ups.md#arksec-009) | **Open** | Needs operator confirmation, which no test can provide. Live-test application secrets were rotated in Prompt 44B; the live tracker signing key and other environments are not covered. Prompt 49 removed the shared development admin bearer from the product (A proves a configured one stops Core). |
+
+## Live-test group (L)
+
+- Core, tracker, the operator relay and PostgreSQL run on the Core VM; each Node
+  runs Agent, transfer, UI, PostgreSQL and Jellyfin. Every container is healthy
+  and its image ID matches `deploy/live-test/build-record.json`
+  (source SHA-256 `e5961872…`, built from the clean `b232f46` worktree).
+- **Relay exposure.** The relay is reachable only from the three Node VPN
+  addresses, over TLS 1.3, and serves exactly the certificate its SPKI pin is
+  derived from. It is blocked on Core's LAN address and from the operator Mac.
+- **Management access.** Node management refuses anonymous callers (401).
+  Verifiers use per-Node operator sessions and scoped Core admin tokens.
+- **Media proof.** A freshly generated sample was downloaded by all three Nodes
+  through the real private v2 workers, finalized with matching SHA-256 and size,
+  indexed by Jellyfin through the Agent and direct-streamed with matching bytes.
+- **Backups.** Fresh backups were taken after the rollout, pulled off-VM,
+  decrypted and restored into disposable databases on all four VMs.
+- **Not rerun:** `verify-reboots.py`. It reboots all four VMs, so it needs an
+  explicit operator decision. Reboot recovery of the relay socket proxy and the
+  relay container is therefore unverified.
+
+Proof JSONs: [deployment](../deploy/live-test/deployment-proof.json),
+[media](../deploy/live-test/sample-proof.json),
+[backups](../deploy/live-test/backup-proof.json),
+[build](../deploy/live-test/build-record.json).
+
+## Defects fixed during Prompt 50
+
+Every defect below is a harness or tooling defect, not a product defect. Each
+was fixed with a regression test before the final freeze.
+
+- **Product swarm still assumed direct peering.** Since 48C the tracker
+  requires relay keys, and peers have no shared network. The harness now uses
+  the shipped relay overlay, proves the transfer containers share no network,
+  and requires relay-forwarded payload (`c34b664`).
+- **Stale fixture size on the shared folder.** The Colima shared folder showed
+  the torrent helper a stale 1,753,434-byte view of a padded 96 MiB fixture,
+  which failed E item 16 at `74d7a2e`. The worker correctly rejected the
+  mismatched metadata. The helper now waits for the host size (`7e5239d`) and
+  reports payload bytes without v2 pad files (`b232f46`).
+- **Live tooling predated the relay and operator sessions.** It now covers the
+  relay, operator sessions, Node leaf-certificate names and Jellyfin's
+  grouping of sample versions (`74d7a2e`, `7e5239d`).
+
+Earlier frozen attempts (`74d7a2e`: 17/18; `7e5239d`: 17/18) are superseded.
+No PASS above comes from them.
+
+## Completion boundary
+
+Any runtime change after `b232f46` requires rerunning G, H, A, N and L.
+Hostile multi-operator readiness additionally requires:
+
+- ARKSEC-009 to be closed by operator confirmation;
+- an explicit decision on the documented residual windows;
+- multi-relay and production deployment evidence beyond the private pilot.
+
+---
+
+# Historical: Phase 19A final-tree report (2026-10-27)
+
+This section is preserved unchanged except for heading levels. Its ARKSEC
+statuses are a dated snapshot; the table above and
+[Security follow-ups](security-follow-ups.md) are current.
 
 Run date: **2026-10-27 (America/Anchorage, AKDT)**. All 20 Prompt 43 items were
 run on one frozen source tree. Result: **20 PASS, 0 FAIL**.
@@ -9,7 +198,7 @@ See [Prompt 45B validation](development/prompt45b-validation.md). The dated Phas
 19A findings below remain a historical snapshot; use
 [Security follow-ups](security-follow-ups.md) for current statuses.
 
-## Verdict
+### Verdict
 
 - **Is the MVP functionally complete? Yes.** Every Prompt 43 item passes in an
   end-to-end run on the final tree. Fresh install, update discovery and
@@ -22,7 +211,7 @@ See [Prompt 45B validation](development/prompt45b-validation.md). The dated Phas
   Private relay was not the default (ARKSEC-004). Revocation did not terminate
   active transfers (ARKSEC-006). The remaining medium items were also open.
 
-## Evidence rules
+### Evidence rules
 
 - **PASS** means a step logged `PASS` in a run on the final tree (defined
   below), and that run's log ends with `EXIT 0`. Unit and component tests
@@ -33,7 +222,7 @@ See [Prompt 45B validation](development/prompt45b-validation.md). The dated Phas
   `~/.hermes/cache/scratch/mvp-e2e/final2-2026-10-27/`. They are not
   committed.
 
-### Final tree
+#### Final tree
 
 The checkout has no `.git` metadata, so the tree is identified by a hash
 manifest. `tree-hash.sh` hashes every file under `core/`, `node-agent/`,
@@ -51,7 +240,7 @@ modified after that time; only regenerated `node-ui/dist` build output, which
 is excluded, changed. All earlier runs (2026-10-25 and the first 2026-10-27
 pass) predate the fixes below and are not used here.
 
-### Runs
+#### Runs
 
 | ID | Log (in `final2-2026-10-27/`) | Command | Time (AKDT) | Outcome |
 | --- | --- | --- | --- | --- |
@@ -63,7 +252,7 @@ pass) predate the fixes below and are not used here.
 | T | `harness-tests.log` | `python3 -m unittest scripts.mvp_e2e_test scripts.multi_node_swarm_evidence_test scripts.check_multi_node_swarm_stack_test scripts.check_security_hygiene_test` | 18:11 | 23 tests, `OK`, `EXIT 0`. Component evidence only. |
 | G | `go-tests.log`, `hygiene.log` | `go test ./... && go vet ./...` for `core`, `node-agent`, `tracker` and `transfer`; `scripts/check-security-hygiene.py` | 18:11–18:16 | All four modules `EXIT 0`. Hygiene check passed, `EXIT 0`. Component evidence only. |
 
-## Prompt 43: all 20 items
+### Prompt 43: all 20 items
 
 Every row is from the final tree on 2026-10-27. `check-mvp-e2e.py` covers
 items 2–16, 19 and 20. Item 1 comes from I, items 17 and 18 from U. Line
@@ -92,7 +281,7 @@ numbers refer to the named log.
 | 19 | Operator cannot enumerate global users | **PASS** | `check-mvp-e2e.py`: `enumeration()` | 2026-10-27 | E lines 539–540: the listing routes return 404 and Core has no user listing. Operator APIs and the UI bundle carry no global username or ID. Line 549: container logs contain 0 known secret values. |
 | 20 | Node A cannot arbitrarily access Node B | **PASS** | `check-mvp-e2e.py`: `isolation()` | 2026-10-27 | E lines 541–544: from A's containers, B's Agent, UI, PostgreSQL and Jellyfin are unreachable. B's peer control API returns 401. A's credential is rejected (401) on B's Core route. This does **not** resolve ARKSEC-002. |
 
-### Peer Serving measurement (P, line 413)
+#### Peer Serving measurement (P, line 413)
 
 These are byte counts on Node A's transfer container interfaces, from run P.
 
@@ -102,7 +291,7 @@ These are byte counts on Node A's transfer container interfaces, from run P.
 | Peer Serving ON | 3,725,555 bytes | Served only after Core source eligibility and a fresh seed grant. The worker hash-checked the file and reached `SEEDING`. |
 | Peer Serving turned OFF during an active session | 0 bytes | The seed was removed within one interval. Node B continued from Core and completed the exact object. |
 
-## Phase 19A blockers fixed
+### Phase 19A blockers fixed
 
 "Implemented" and "proven live" are different claims, and each entry says
 which one applies. "Proven" here means proven in the final-tree runs above.
@@ -165,7 +354,7 @@ which one applies. "Proven" here means proven in the final-tree runs above.
   documented. The check now calls `transfer/start`, as Node A and the E2E
   already did. **Proven:** P.
 
-## Known limitations
+### Known limitations
 
 The acceptance criteria for each ID are tracked in
 [Security follow-ups](security-follow-ups.md).
@@ -194,7 +383,7 @@ Other limitations, not security items:
   responses correctly report `mock:false`, and the harnesses check those.
   The log field is wrong.
 
-## Completion boundary
+### Completion boundary
 
 The MVP is functionally complete on the tree above. Any runtime change after
 it requires rerunning E, I, U and P. Hostile multi-operator readiness requires

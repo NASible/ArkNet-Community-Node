@@ -504,3 +504,9 @@ Acceptance criteria:
 - Every PASS cites a log from the frozen tree, identified by commit hash.
 - Every ARKSEC item is either closed with cited evidence or explicitly open
   with a reason.
+
+Done on frozen commit `b232f46` (2026-11-06): gate 18/18, standalone ARKSEC
+checks, and live-test verifiers all passed. Verdict: functionally complete;
+**not yet** ready for hostile multi-operator production (ARKSEC-009 open,
+documented residual windows, private pilot only). See the
+[validation report](../mvp-validation-report.md).
