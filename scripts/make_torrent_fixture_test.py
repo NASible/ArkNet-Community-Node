@@ -24,7 +24,10 @@ class MakeTorrentFixtureTest(unittest.TestCase):
     def test_reported_size_comes_from_the_generated_torrent(self):
         # A second stat() can disagree with the size that was hashed.
         self.assertNotIn('"size": source.stat().st_size', self.source)
-        self.assertIn("info.files().total_size()", self.source)
+        # total_size() counts v2 tail pad files, which made the frozen-tree swarm
+        # fixture (not a piece multiple) fail; count payload files only.
+        self.assertNotIn("total_size()", self.source)
+        self.assertIn("flag_pad_file", self.source)
 
     def test_helper_waits_for_the_expected_host_size_before_hashing(self):
         self.assertIn("sys.argv[3]", self.source)

@@ -92,7 +92,9 @@ encoded = lt.bencode(creator.generate())
 (root / "object.torrent").write_bytes(encoded)
 info = lt.torrent_info(encoded); hashes = info.info_hashes()
 assert info.priv() and hashes.has_v2() and not hashes.has_v1()
-print(json.dumps({"info_hash_v2": str(hashes.v2).lower(), "size": info.files().total_size(),
+fs = info.files()  # report the hashed payload, excluding v2 tail pad files
+payload = sum(fs.file_size(i) for i in range(fs.num_files()) if not fs.file_flags(i) & lt.file_storage.flag_pad_file)
+print(json.dumps({"info_hash_v2": str(hashes.v2).lower(), "size": payload,
                   "pieces": info.num_pieces()}))
 '''
 
