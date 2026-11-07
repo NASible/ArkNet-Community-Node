@@ -345,7 +345,8 @@ def main(argv=None):
         run(["ffprobe", "-v", "error", "-show_entries", "stream=codec_type", "-of", "json", str(path)], capture=True)
         make_torrent = temporary / "make-torrent.py"
         torrent = json.loads(run(["docker", "run", "--rm", "-v", f"{temporary}:/work", "-v", f"{make_torrent}:/make-torrent.py:ro",
-                                  images["helper"], "/make-torrent.py", "/work", name], capture=True, timeout=180))
+                                  images["helper"], "/make-torrent.py", "/work", name, str(path.stat().st_size)],
+                                 capture=True, timeout=180))
         if torrent["size"] != path.stat().st_size or torrent["pieces"] <= 1:
             raise AssertionError("invalid private v2 test torrent")
         shutil.copyfile(temporary / "object.torrent", source / (name + ".torrent"))

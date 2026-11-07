@@ -73,10 +73,18 @@ MAKE_TORRENT = r'''
 import json
 from pathlib import Path
 import sys
+import time
 import libtorrent as lt
 root, object_id = Path(sys.argv[1]), sys.argv[2]
 source = root / "source" / object_id
-files = lt.file_storage(); files.add_file(object_id, source.stat().st_size)
+# Shared folders can briefly show a stale size after the host appends: wait
+# for the host's size (optional argv[3]) and hash exactly one observed size.
+expected = int(sys.argv[3]) if len(sys.argv) > 3 else None
+deadline = time.monotonic() + 30
+size = source.stat().st_size
+while expected is not None and size != expected and time.monotonic() < deadline:
+    time.sleep(0.5); size = source.stat().st_size
+files = lt.file_storage(); files.add_file(object_id, size)
 creator = lt.create_torrent(files, 256 * 1024, lt.create_torrent.v2_only)
 creator.set_priv(True); creator.add_tracker("http://arknet-tracker:6969/announce")
 lt.set_piece_hashes(creator, str(source.parent))
@@ -84,7 +92,7 @@ encoded = lt.bencode(creator.generate())
 (root / "object.torrent").write_bytes(encoded)
 info = lt.torrent_info(encoded); hashes = info.info_hashes()
 assert info.priv() and hashes.has_v2() and not hashes.has_v1()
-print(json.dumps({"info_hash_v2": str(hashes.v2).lower(), "size": source.stat().st_size,
+print(json.dumps({"info_hash_v2": str(hashes.v2).lower(), "size": info.files().total_size(),
                   "pieces": info.num_pieces()}))
 '''
 
@@ -362,7 +370,7 @@ def main():
         run(["docker", "build", "-t", helper_image, "-"], input_text=LIBTORRENT_DOCKERFILE, timeout=600)
         torrent = json.loads(run(["docker", "run", "--rm", "-v", f"{temporary}:/work",
                                   "-v", f"{make_torrent}:/make-torrent.py:ro", helper_image,
-                                  "/make-torrent.py", "/work", object_id], capture=True, timeout=180))
+                                  "/make-torrent.py", "/work", object_id, str(video_size)], capture=True, timeout=180))
         if not (torrent["size"] == video_size and torrent["pieces"] > 1 and len(torrent["info_hash_v2"]) == 64):
             raise AssertionError(f"invalid torrent metadata: size={torrent.get('size')} expected={video_size} pieces={torrent.get('pieces')} hash_length={len(torrent.get('info_hash_v2', ''))}")
         info_hash = torrent["info_hash_v2"]

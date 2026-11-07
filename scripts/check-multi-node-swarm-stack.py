@@ -394,7 +394,7 @@ def main(argv=None):
         run(["docker", "build", "-t", helper_image, "-"], input_text=p25["LIBTORRENT_DOCKERFILE"], timeout=600)
         torrent = json.loads(run(["docker", "run", "--rm", "-v", f"{temporary}:/work",
                                   "-v", f"{make_torrent}:/make-torrent.py:ro", helper_image,
-                                  "/make-torrent.py", "/work", object_id], capture=True, timeout=180))
+                                  "/make-torrent.py", "/work", object_id, str(object_size)], capture=True, timeout=180))
         if torrent["size"] != object_size or torrent["pieces"] <= 1 or len(torrent["info_hash_v2"]) != 64:
             raise AssertionError("torrent is not private v2-only multi-piece metadata")
         info_hash = torrent["info_hash_v2"]

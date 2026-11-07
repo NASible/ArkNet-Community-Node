@@ -74,11 +74,16 @@ for host, machine in MACHINES.items():
     token = secrets_state['machines'][host]['jellyfin_access_token']
     auth = {'Authorization': 'MediaBrowser Token="' + token + '"'}
     # Indexing must be triggered by the product finalizer; don't manually refresh.
+    # Jellyfin groups the generated samples (same "media_<hex>" naming) into one
+    # Movie with several versions, so match the exact file among its media
+    # sources and stream that source, not whichever version is the primary.
     def indexed():
-        items = request(jelly + '/Items?Recursive=true&IncludeItemTypes=Movie&Fields=Path', headers=auth)[1]['Items']
-        return next((item for item in items if sample['object_id'] in item.get('Path', '')), None)
-    movie = wait(host + ' Agent-triggered Jellyfin indexing', indexed, 120)
-    stream_url = jelly + '/Videos/' + movie['Id'] + '/stream.mp4?Static=true'
+        items = request(jelly + '/Items?Recursive=true&IncludeItemTypes=Movie&Fields=Path,MediaSources', headers=auth)[1]['Items']
+        return next(((item, source) for item in items for source in item.get('MediaSources') or []
+                     if source.get('Path', '').endswith('/' + sample['object_id'] + '.mp4')), None)
+    movie, media_source = wait(host + ' Agent-triggered Jellyfin indexing', indexed, 120)
+    stream_url = (jelly + '/Videos/' + movie['Id'] + '/stream.mp4?Static=true&MediaSourceId=' +
+                  urllib.parse.quote(media_source['Id']))
     with urllib.request.urlopen(urllib.request.Request(stream_url, headers=auth), context=TLS, timeout=60) as response:
         delivered = response.read()
         assert response.status == 200
