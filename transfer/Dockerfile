@@ -1,10 +1,12 @@
-FROM golang:1.25-alpine AS build
+# Cross-compile natively for the target platform: no QEMU emulation of the Go toolchain.
+FROM --platform=$BUILDPLATFORM golang:1.25-alpine AS build
+ARG TARGETOS TARGETARCH
 WORKDIR /src
 COPY go.mod ./
 COPY *.go ./
 COPY backend ./backend
 COPY engine ./engine
-RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /arknet-transfer .
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags="-s -w" -o /arknet-transfer .
 
 FROM ubuntu:24.04
 ENV DEBIAN_FRONTEND=noninteractive \

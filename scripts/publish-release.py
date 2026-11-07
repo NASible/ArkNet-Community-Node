@@ -111,13 +111,16 @@ def create_builder(insecure: list[str], work: Path) -> str:
 def build_and_push(builder: str, source: Path, component: str, context: str, ref: str, version: str, commit: str,
                    platforms: str, work: Path) -> str:
     metadata = work / f"{component}.metadata.json"
-    run("docker", "buildx", "build", "--builder", builder, "--platform", platforms, "--push",
+    result = run("docker", "buildx", "build", "--builder", builder, "--platform", platforms, "--push",
         "--provenance=false", "--sbom=false", "--metadata-file", str(metadata),
         "--build-arg", f"ARKNET_VERSION={version}",
         "--label", f"org.opencontainers.image.source={SOURCE_URL}",
         "--label", f"org.opencontainers.image.version={version}",
         "--label", f"org.opencontainers.image.revision={commit}",
-        "-t", ref, str(source / context), timeout=7200)
+        "-t", ref, str(source / context), timeout=7200, check=False)
+    if result.returncode != 0:
+        tail = "\n".join((result.stdout + result.stderr).strip().splitlines()[-25:])
+        raise SystemExit(f"building {component} failed:\n{tail}")
     digest = json.loads(metadata.read_text()).get("containerimage.digest", "")
     if not re.match(r"^sha256:[0-9a-f]{64}$", digest):
         raise SystemExit(f"no pushed digest recorded for {component}")

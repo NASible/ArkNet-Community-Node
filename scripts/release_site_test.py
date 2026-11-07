@@ -126,6 +126,20 @@ class GeneratorTests(unittest.TestCase):
         self.assertRaises(ValueError, release_site.check_private_key, Path(self.tmp.name) / "missing.pem")
 
 
+class DockerfileTests(unittest.TestCase):
+    """Multi-arch releases cross-compile natively (Go crashes under QEMU emulation)."""
+
+    def test_build_stages_run_on_the_build_platform(self):
+        for component, context in release_site.COMPONENTS.items():
+            text = (ROOT / context / "Dockerfile").read_text()
+            first = re.search(r"(?m)^FROM .*$", text).group(0)
+            with self.subTest(component=component):
+                self.assertIn("--platform=$BUILDPLATFORM", first)
+                if "golang:" in first:
+                    self.assertIn("GOOS=$TARGETOS GOARCH=$TARGETARCH go build", text)
+                    self.assertRegex(text, r"(?m)^ARG TARGETOS TARGETARCH$")
+
+
 class ComposePinningTests(unittest.TestCase):
     """No Compose file references an unpinned image (Prompt 51A).
 

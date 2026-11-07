@@ -1,8 +1,10 @@
-FROM golang:1.26-alpine AS build
+# Cross-compile natively for the target platform: no QEMU emulation of the Go toolchain.
+FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS build
+ARG TARGETOS TARGETARCH
 WORKDIR /src
 COPY go.mod ./
 COPY . .
-RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/arknet-relay .
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags="-s -w" -o /out/arknet-relay .
 
 FROM alpine:3.23
 COPY --from=build /out/arknet-relay /usr/local/bin/arknet-relay

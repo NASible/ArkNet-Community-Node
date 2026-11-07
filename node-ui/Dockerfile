@@ -1,5 +1,6 @@
-# Build stage: development dependencies and sources stay here.
-FROM node:26-alpine AS build
+# Build stage: development dependencies and sources stay here. The static
+# output is platform-independent, so it always builds natively.
+FROM --platform=$BUILDPLATFORM node:26-alpine AS build
 WORKDIR /app
 RUN chown node:node /app
 USER node
