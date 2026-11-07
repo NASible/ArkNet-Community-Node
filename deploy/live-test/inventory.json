@@ -9,5 +9,9 @@
     {"vmid":109,"hostname":"nodenet-node-a","role":"node","owner":"user-a","lan_ip":"192.168.0.86","tailscale_ip":"100.64.0.22","cpu":2,"memory_mib":4096,"system_disk_gib":32,"media_disk_gib":20},
     {"vmid":110,"hostname":"nodenet-node-b","role":"node","owner":"user-b","lan_ip":"192.168.0.113","tailscale_ip":"100.64.0.23","cpu":2,"memory_mib":4096,"system_disk_gib":32,"media_disk_gib":20},
     {"vmid":111,"hostname":"nodenet-node-c","role":"node","owner":"user-c","lan_ip":"192.168.0.212","tailscale_ip":"100.64.0.24","cpu":2,"memory_mib":4096,"system_disk_gib":32,"media_disk_gib":20}
+  ],
+  "release_test_machines": [
+    {"vmid":112,"hostname":"nodenet-node-d","role":"release-test","proxmox_node":"pve","lan_ip":"192.168.0.152","cpu":2,"memory_mib":4096,"system_disk_gib":32,
+     "note":"Fresh Ubuntu 24.04 installed only through install.sh/arknet-node from signed releases; not part of the pilot stack, so pilot tools ignore it."}
   ]
 }

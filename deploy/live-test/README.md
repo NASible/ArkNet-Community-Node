@@ -17,6 +17,12 @@ owner-readable `secrets/access.txt` and `secrets/runtime.json` files.
 | 110 | Node B / User B | 100.64.0.23 | 192.168.0.113 | https://node-b.nodenet.arknet.media |
 | 111 | Node C / User C | 100.64.0.24 | 192.168.0.212 | https://node-c.nodenet.arknet.media |
 
+VMID 112 `nodenet-node-d` (host `pve`, LAN 192.168.0.152, no VPN address) is a
+release-test machine listed under `release_test_machines`. It is installed only
+with `install.sh` and `arknet-node` from signed releases, so the pilot scripts
+(which read `machines`) never touch it. SSH uses the same key, as
+`arknet@192.168.0.152`.
+
 Member APIs (health and member/operator login; Agent loopback port 8086) are
 `https://member-a.nodenet.arknet.media`, `https://member-b.nodenet.arknet.media`
 and `https://member-c.nodenet.arknet.media`; management routes answer 404 there.
