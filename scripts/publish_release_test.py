@@ -33,6 +33,33 @@ def run(*args, **kw):
     return subprocess.run(list(args), check=kw.pop("check", True), capture_output=True, text=True, **kw)
 
 
+def load_publish():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("publish_release", ROOT / "scripts" / "publish-release.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+class AnonymousPullTests(unittest.TestCase):
+    """GHCR answers a private package's anonymous token request with 401."""
+
+    def test_private_package_is_reported_not_raised(self):
+        import email.message
+        import urllib.error
+        from unittest import mock
+        publish = load_publish()
+        challenge = email.message.Message()
+        challenge["WWW-Authenticate"] = 'Bearer realm="https://ghcr.io/token",service="ghcr.io",scope="repository:nasible/arknet-core:pull"'
+
+        def urlopen(request, timeout=0):
+            url = request if isinstance(request, str) else request.full_url
+            raise urllib.error.HTTPError(url, 401, "Unauthorized", challenge, None)
+
+        with mock.patch.object(publish.urllib.request, "urlopen", urlopen):
+            self.assertFalse(publish.anonymous_pull_ok("ghcr.io/nasible/arknet-core", "sha256:" + "0" * 64))
+
+
 @unittest.skipUnless(ENABLED, "set ARKNET_TEST_RELEASE_PUBLISH=1 to build and publish a throwaway release")
 class PublishReleaseTest(unittest.TestCase):
     def test_publish_builds_pushes_signs_and_verifies(self):

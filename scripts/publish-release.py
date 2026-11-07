@@ -28,6 +28,7 @@ import secrets
 import subprocess
 import sys
 import tempfile
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -90,8 +91,11 @@ def anonymous_pull_ok(repository: str, digest: str) -> bool:
                 return False
             fields = dict(re.findall(r'(\w+)="([^"]*)"', challenge))
             query = urllib.parse.urlencode({k: v for k, v in fields.items() if k in ("service", "scope")})
-            with urllib.request.urlopen(f"{fields['realm']}?{query}", timeout=30) as response:
-                token = json.loads(response.read()).get("token") or ""
+            try:
+                with urllib.request.urlopen(f"{fields['realm']}?{query}", timeout=30) as response:
+                    token = json.loads(response.read()).get("token") or ""
+            except urllib.error.HTTPError:
+                return False  # GHCR refuses anonymous tokens for private packages
             headers["Authorization"] = f"Bearer {token}"
     return False
 
@@ -167,10 +171,18 @@ def publish(args) -> int:
         finally:
             run("docker", "buildx", "rm", "--force", builder, check=False, timeout=120)
         say("[3/5] Checking every image can be pulled anonymously")
-        private = [ref for ref in images.values() if not anonymous_pull_ok(ref.split(":" + version + "@")[0], ref.split("@")[1])]
+        deadline = time.monotonic() + args.wait_public
+        while True:
+            private = [ref for ref in images.values()
+                       if not anonymous_pull_ok(ref.split(":" + version + "@")[0], ref.split("@")[1])]
+            if not private or time.monotonic() >= deadline:
+                break
+            say(f"      waiting for {len(private)} package(s) to become public: "
+                + ", ".join(ref.split(":" + version)[0] for ref in private))
+            time.sleep(15)
         if private:
-            raise SystemExit("not anonymously pullable (make the GitHub packages public, then re-run with a new tag "
-                             f"or publish the site from the recorded digests): {private}")
+            raise SystemExit("not anonymously pullable; make the packages public (GitHub: package settings -> "
+                             f"Change visibility) and re-run with the same tag: {private}")
         say("[4/5] Writing and signing the digest-pinned Node release")
         node_dir = source / "deploy" / "node"
         files = release_site.node_release(version, images, args.project, started.strftime("%Y-%m-%dT%H:%M:%SZ"), node_dir)
@@ -200,6 +212,8 @@ def main(argv=None) -> int:
     rel.add_argument("--out", type=Path, required=True, help="release site directory (created or updated)")
     rel.add_argument("--registry", default=DEFAULT_REGISTRY)
     rel.add_argument("--platforms", default=DEFAULT_PLATFORMS)
+    rel.add_argument("--wait-public", type=int, default=0, metavar="SECONDS",
+                     help="keep re-checking anonymous pulls this long (new GHCR packages start private)")
     rel.add_argument("--project", default="arknet-node", help="Compose project name of installed Nodes")
     rel.add_argument("--repo", type=Path, default=release_site.ROOT)
     rel.add_argument("--insecure-registry", action="append", default=[], help=argparse.SUPPRESS)  # test registries
