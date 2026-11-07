@@ -75,8 +75,8 @@ must stop and ask, not assume.
 
 | ID | Decision | Recommended default | Needed by |
 | --- | --- | --- | --- |
-| D11 | Image registry and naming | A self-hosted OCI registry you already operate (or GHCR if public reuse is intended), `<registry>/arknet/<component>:<version>`, always deployed by digest. | 51A |
-| D12 | Release signing | Sign the release manifest and image digests with a dedicated offline Ed25519 key (minisign or cosign key mode); the Agent verifies the manifest before upgrade. No keyless/transparency-log dependency. | 51A |
+| D11 | Image registry and naming | **Confirmed 2026-11-07:** public GitHub Container Registry `ghcr.io/nasible`, anonymous pulls, `ghcr.io/nasible/arknet-<component>:<version>@sha256:<digest>`. | 51A |
+| D12 | Release signing | **Confirmed 2026-11-07:** one offline Ed25519 key signs `release.json` (detached `.sig`); the Agent (Go) and `arknet-node` (OpenSSL 3) verify against the key shipped in `install.sh`. No cosign/minisign. | 51A |
 | D13 | CI runner | A self-hosted runner on infrastructure you own that can run Docker and Lima; runs `check-all.sh` on every branch and `--e2e --vm` nightly and before tags. | 51B |
 | D14 | Monitoring stack | Prometheus-format metrics scraped by your existing self-hosted monitoring; alerts to Gotify or Discord; 14-day log retention on hosts. No hosted SaaS. | 52 |
 | D15 | Public exposure model | Core, tracker and relay behind your owned ingress (Traefik/Cloudflare Tunnel) with publicly trusted certificates; relay needs a raw TLS/TCP path, so decide whether it bypasses the tunnel. | 53 |
