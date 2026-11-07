@@ -158,6 +158,12 @@ Acceptance criteria:
 - `check-node-install-vm.py` installs from the registry on a fresh VM.
 - No compose file references an unpinned image (enforced by a test).
 
+Done 2026-11-07: D11 = public GHCR (`ghcr.io/nasible`), D12 = offline Ed25519
+key verified by the Agent and `arknet-node`. Every criterion passed; the first
+real release needs the operator steps in the
+[release process](../release-process.md). See
+[Prompt 51A validation](prompt51a-validation.md).
+
 ## Prompt 51B — Continuous Integration Runner
 
 Context: the gate runs only on the operator Mac. Depends on D13.

@@ -5,6 +5,7 @@ Builds two version-stamped Agent images, publishes development releases to a
 throwaway local registry and loopback release host, installs release A, then
 uses only `deploy/node/arknet-node` to:
 
+  0. refuse a tampered or unsigned B, and keep the Agent from reporting it (nothing changed);
   1. upgrade A -> B (acceptance: data and volumes preserved, Agent + Jellyfin validated);
   2. refuse a release whose images cannot be pulled (nothing changed);
   3. roll back automatically from a release that fails after apply;
@@ -14,7 +15,11 @@ Management routes need an operator (Prompt 45B). The check signs in at A,
 disables that operator, and expects `arknet-node upgrade` to print a one-time
 setup code plus the HTTPS certificate fingerprint, which it then uses.
 
-Everything created is removed at the end. Requires Docker with Compose v2.
+Releases are produced by the real release-site generator (scripts/release_site.py):
+digest-pinned images and Ed25519-signed manifests, with a throwaway signing key
+generated for this run (Prompt 51A).
+
+Everything created is removed at the end. Requires Docker with Compose v2 and OpenSSL 3.
 """
 import functools
 import hashlib
@@ -35,7 +40,7 @@ import urllib.request
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from scripts import operator_login  # noqa: E402
+from scripts import operator_login, release_site  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 NODE_DIR = ROOT / "deploy" / "node"
@@ -94,27 +99,36 @@ def image(name, version):
     return f"{REGISTRY}/arknet/{name}:{version}"
 
 
+digests = {}  # tag reference -> pushed registry digest
+
+
+def pinned(name, version):
+    """The digest-pinned reference a published release uses."""
+    ref = image(name, version)
+    return f"{ref}@{digests[ref]}"
+
+
+def pushed_digest(ref):
+    repo = ref.rsplit(":", 1)[0]
+    for entry in json.loads(sh("docker", "image", "inspect", "--format", "{{json .RepoDigests}}", ref).stdout):
+        if entry.startswith(repo + "@sha256:"):
+            return entry.split("@", 1)[1]
+    raise RuntimeError(f"no registry digest for {ref}")
+
+
 def release_files(version, broken=False):
-    """Release Compose files: registry images, no build sections, fixed project."""
-    out = {}
-    for name in ("compose.yaml", "compose.transfer.yaml"):
-        text = (NODE_DIR / name).read_text()
-        text = re.sub(r"(?m)^name: .*$", f"name: {PROJECT}", text)
-        text = re.sub(r"(?m)^    build:\n      context: .*\n", "", text)
-        for component in ("arknet-agent", "arknet-ui", "arknet-transfer"):
-            text = text.replace(f"image: {component}:0.0.1-dev", f"image: {image(component, version)}")
-        if broken and name == "compose.yaml":  # an invalid Agent setting: the container exits and never becomes healthy
-            text = text.replace("ARKNET_HEARTBEAT_INTERVAL: ${ARKNET_HEARTBEAT_INTERVAL:-30s}", "ARKNET_HEARTBEAT_INTERVAL: 1s")
-            assert "ARKNET_HEARTBEAT_INTERVAL: 1s" in text
-        out[name] = text.encode()
-    manifest = json.loads((NODE_DIR / "release.json").read_text())
-    manifest["version"] = version
-    manifest["published_at"] = "2026-10-25T00:00:00Z"
-    for component in ("arknet-agent", "arknet-ui", "arknet-transfer"):
-        manifest["components"][component] = {"version": version, "image": image(component, version), "bundled": True}
-    manifest["compose"] = {"project": PROJECT, "files": [
-        {"path": n, "sha256": hashlib.sha256(c).hexdigest()} for n, c in out.items()]}
-    out["release.json"] = (json.dumps(manifest, indent=2) + "\n").encode()
+    """A signed-release payload from the real generator: digest-pinned images, fixed project."""
+    images = {c: pinned(c, version) for c in release_site.NODE_COMPONENTS}
+    out = release_site.node_release(version, images, PROJECT, "2026-10-25T00:00:00Z", NODE_DIR)
+    if broken:  # an invalid Agent setting: the container exits and never becomes healthy
+        text = out["compose.yaml"].decode()
+        text = text.replace("ARKNET_HEARTBEAT_INTERVAL: ${ARKNET_HEARTBEAT_INTERVAL:-30s}", "ARKNET_HEARTBEAT_INTERVAL: 1s")
+        assert "ARKNET_HEARTBEAT_INTERVAL: 1s" in text
+        out["compose.yaml"] = text.encode()
+        manifest = json.loads(out["release.json"])
+        for item in manifest["compose"]["files"]:
+            item["sha256"] = hashlib.sha256(out[item["path"]]).hexdigest()
+        out["release.json"] = (json.dumps(manifest, indent=2) + "\n").encode()
     return out
 
 
@@ -131,7 +145,13 @@ def main():
     server = None
     env_file = home / ".env"
     pushed = []
+    openssl = release_site.openssl3()
+    signing_key = work / "release-signing.pem"  # throwaway, removed with the work directory
     try:
+        sh(openssl, "genpkey", "-algorithm", "ed25519", "-out", str(signing_key))
+        signing_key.chmod(0o600)
+        verify_key = release_site.public_key(signing_key, openssl)
+        domain = release_site.load_arknet_node(NODE_DIR).SIGNATURE_DOMAIN
         # Registry and images.
         sh("docker", "run", "-d", "--name", REGISTRY_NAME, "-p", f"127.0.0.1:{REGISTRY.split(':')[1]}:5000", "registry:latest")
         # The UI image under test (HTTPS listener) is built from this checkout.
@@ -153,6 +173,10 @@ def main():
                 else:
                     raise RuntimeError(f"push failed: {ref}")
                 pushed.append(ref)
+                digests[ref] = pushed_digest(ref)
+        # A release whose images were never pushed.
+        for component in release_site.NODE_COMPONENTS:
+            digests[image(component, UNPULLABLE)] = "sha256:" + hashlib.sha256(component.encode()).hexdigest()
         # Only registry copies remain, so every install/upgrade really pulls.
         for ref in pushed:
             sh("docker", "rmi", ref)
@@ -163,6 +187,8 @@ def main():
             directory.mkdir(parents=True)
             for name, content in release_files(version, broken).items():
                 (directory / name).write_bytes(content)
+            data = (directory / "release.json").read_bytes()
+            (directory / "release.json.sig").write_bytes(release_site.sign(data, signing_key, domain, openssl))
         class Quiet(http.server.SimpleHTTPRequestHandler):
             def log_message(self, *args):
                 pass
@@ -184,7 +210,8 @@ def main():
         env_file.write_text(f"POSTGRES_PASSWORD={secrets.token_hex(24)}\nARKNET_AGENT_PORT={AGENT_PORT}\n"
                             f"ARKNET_MEMBER_PORT={MEMBER_PORT}\nARKNET_UI_PORT={UI_PORT}\nJELLYFIN_BIND=127.0.0.1:{JELLYFIN_PORT}\n"
                             f"ARKNET_UI_HTTPS_BIND=127.0.0.1:{HTTPS_PORT}\n"
-                            f"ARKNET_RELEASE_INDEX_URL={agent_index_url}\nARKNET_RELEASE_INDEX_ALLOW_HTTP=true\n")
+                            f"ARKNET_RELEASE_INDEX_URL={agent_index_url}\nARKNET_RELEASE_INDEX_ALLOW_HTTP=true\n"
+                            f"ARKNET_RELEASE_VERIFY_KEY={verify_key}\n")
         os.umask(old)
         shutil.copytree(site / "releases" / A, home / "releases" / A)
         probe = subprocess.run(["docker", "run", "--rm", "--network", "none", "--entrypoint", "sh", "-v",
@@ -195,7 +222,7 @@ def main():
         (home / "state.json").write_text(json.dumps({"schema": "arknet.node-install/v1", "release": A, "previous": None,
                                                     "project": PROJECT, "compose_files": ["compose.yaml"]}))
         for component in ("arknet-agent", "arknet-ui"):
-            sh("docker", "pull", "-q", image(component, A))
+            sh("docker", "pull", "-q", pinned(component, A))
         sh("docker", "compose", "-p", PROJECT, "--env-file", str(env_file), "-f", str(home / "releases" / A / "compose.yaml"),
            "up", "-d", "--wait", "--wait-timeout", "300")
         compose_a = ["docker", "compose", "-p", PROJECT, "--env-file", str(env_file), "-f", str(home / "releases" / A / "compose.yaml")]
@@ -224,7 +251,8 @@ def main():
 
         def tool(*args):
             started = time.monotonic()
-            result = sh(sys.executable, "-I", str(TOOL), "--home", str(home), *args, check=False)
+            result = sh(sys.executable, "-I", str(TOOL), "--home", str(home), *args, check=False,
+                        env=release_site.with_openssl_on_path(openssl))
             # Setup codes are secrets shown once: never echo them into the check's own output.
             print("\n".join("    | " + l for l in operator_login.redact_codes(result.stdout).splitlines()), flush=True)
             return result.returncode, result.stdout, time.monotonic() - started
@@ -237,6 +265,34 @@ def main():
             return (status["node_id"] == node_id and agent("/api/v1/settings/automatic-updates") == {"enabled": False}
                     and agent("/api/v1/settings/media-miss-policy") == {"policy": "MANUAL"} and marker == "kept"
                     and volumes() == volumes_before and status["jellyfin_healthy"] is True)
+
+        # 0. Signed releases (Prompt 51A): a tampered or unsigned B is refused with no change.
+        genuine = {name: (site / "releases" / B / name).read_bytes() for name in ("release.json", "release.json.sig")}
+        manifest_b = json.loads(genuine["release.json"])
+        manifest_b["components"]["arknet-agent"]["image"] = f"{REGISTRY}/evil/arknet-agent:{B}@sha256:" + "e" * 64
+        (site / "releases" / B / "release.json").write_bytes((json.dumps(manifest_b, indent=2) + "\n").encode())
+        publish(B)  # the attacker controls the release host: the index digest matches the tampered manifest
+        first_check = time.monotonic()
+        discovered = agent("/api/v1/updates/check", "POST", {})
+        check("Agent update discovery refuses a tampered B",
+              discovered["discovery"]["state"] == "CHECK_FAILED" and discovered["available"] is None,
+              f"state {discovered['discovery']['state']}")
+
+        def refused(label):
+            code, out, _ = tool("upgrade", "--index", index_url)
+            check(f"{label} B is refused with no change",
+                  code == 2 and "FAILED at download" in out and "signature" in out and "not changed" in out
+                  and not (home / "releases" / B).exists() and agent_version() == A
+                  and sh("docker", "image", "inspect", pinned("arknet-agent", B), check=False).returncode != 0,
+                  f"exit {code}")
+        agent_version = lambda: json.loads(sh(*compose_a, "exec", "-T", "arknet-agent", "arknet-agent", "status", "--json").stdout)["release"]["version"]
+        refused("tampered")
+        (site / "releases" / B / "release.json").write_bytes(genuine["release.json"])
+        (site / "releases" / B / "release.json.sig").unlink()
+        publish(B)
+        refused("unsigned")
+        (site / "releases" / B / "release.json.sig").write_bytes(genuine["release.json.sig"])
+        time.sleep(max(0.0, 11 - (time.monotonic() - first_check)))  # manual checks coalesce for 10 s
 
         # 1. Update discovery (Prompt 38): the running Agent finds B but installs nothing.
         publish(B)
@@ -255,7 +311,7 @@ def main():
               raw_request(f"http://127.0.0.1:{AGENT_PORT}/api/v1/status", headers=first.headers)[0] == 401)
 
         # 2. Acceptance: A -> B with only arknet-node.
-        absent = sh("docker", "image", "inspect", image("arknet-agent", B), check=False).returncode != 0
+        absent = sh("docker", "image", "inspect", pinned("arknet-agent", B), check=False).returncode != 0
         code, out, seconds = tool("upgrade", "--index", index_url)
         printed = re.search(r"Certificate SHA-256 fingerprint: ([0-9A-F:]{95})", out)
         check("upgrade printed the management HTTPS address and certificate fingerprint",
@@ -269,8 +325,10 @@ def main():
         status = agent("/api/v1/status")
         check("ACCEPTANCE upgrade A -> B succeeded via arknet-node", code == 0 and "UPGRADED" in out and status["release"]["version"] == B,
               f"exit {code}, {seconds:.0f}s, Agent reports {status['release']}")
-        check("required images were pulled from the registry",
-              absent and sh("docker", "image", "inspect", image("arknet-agent", B), check=False).returncode == 0)
+        check("required images were pulled from the registry by digest",
+              absent and sh("docker", "image", "inspect", pinned("arknet-agent", B), check=False).returncode == 0)
+        check("B was installed only after its signature verified",
+              "signature verified (release key SHA256:" in out and (home / "releases" / B / "release.json.sig").exists())
         check("identity, settings, Jellyfin data and volumes preserved", preserved(B))
         state = json.loads((home / "state.json").read_text())
         backups = list((home / "backups").iterdir())
@@ -322,9 +380,19 @@ def main():
             server.server_close()
         sh("docker", "rm", "-f", "-v", REGISTRY_NAME, check=False)
         sh("docker", "rmi", UI_SOURCE_IMAGE, check=False)
-        for version in (A, B, BROKEN):
-            for component in ("arknet-agent", "arknet-ui", "arknet-transfer"):
-                sh("docker", "rmi", image(component, version), check=False)
+        # Tagged and digest-pulled copies alike. Remove references, never image
+        # IDs: an ID would also delete shared tags such as arknet-transfer:0.0.1-dev.
+        listing = sh("docker", "image", "ls", "--digests", "--format", "{{.Repository}} {{.Tag}} {{.Digest}}",
+                     "--filter", f"reference={REGISTRY}/arknet/*", check=False).stdout.splitlines()
+        refs = set()
+        for line in listing:
+            repo, tag, digest = (line.split() + ["", "", ""])[:3]
+            if tag and tag != "<none>":
+                refs.add(f"{repo}:{tag}")
+            if digest.startswith("sha256:"):
+                refs.add(f"{repo}@{digest}")
+        if refs:
+            sh("docker", "rmi", *sorted(refs), check=False)
         shutil.rmtree(work, ignore_errors=True)
     print("ALL PASS" if results and all(results.values()) else "INCOMPLETE")
     return 0 if results and all(results.values()) else 1

@@ -41,7 +41,7 @@ The [installer](node-installation.md) creates this layout through
 |---|---|---|
 | 1. Prerequisites | Docker running; Compose ≥ 2.20; ≥ 2 GiB free; `.env` present and not readable by others; `state.json` valid; installed release files unmodified (SHA-256 against their manifest) | Abort, nothing changed |
 | 2. Target | Reads the channel index (`--index` or `ARKNET_RELEASE_INDEX_URL` in `.env`). Uses only this Node's channel and only strictly newer versions. "Nothing to do" when up to date. | Abort |
-| 3. Download | The manifest must match the published SHA-256 and pass the strict v1 rules (the same as the Agent's parser). It must be on the same channel, newer, the **same Compose project** (otherwise volumes would be orphaned), and still provide every Compose file this Node uses. Each Compose file must match its manifest digest. HTTPS only (HTTP for loopback or `ARKNET_RELEASE_INDEX_ALLOW_HTTP=true`); no redirects. | Abort |
+| 3. Download | `ARKNET_RELEASE_VERIFY_KEY` must be set in `.env`. The manifest must match the published SHA-256, carry a valid Ed25519 signature (`release.json.sig`, verified with OpenSSL 3) from that key, pin every bundled image by digest, and pass the strict v1 rules (the same as the Agent's parser). It must be on the same channel, newer, the **same Compose project** (otherwise volumes would be orphaned), and still provide every Compose file this Node uses. Each Compose file must match its manifest digest. HTTPS only (HTTP for loopback or `ARKNET_RELEASE_INDEX_ALLOW_HTTP=true`); no redirects. | Abort |
 | 4. Images | Pulls every bundled image the manifest pins that is not already present. | Abort |
 | 5. Compose | `docker compose config` on the new files with this Node's `.env`, e.g. to catch new required settings. | Abort |
 | 6. Backup | `pg_dump -Fc` of the Node database, and a record of every project volume and its creation time. | Abort |
@@ -119,29 +119,35 @@ Node's data.
 
 ## Publishing a release
 
-A published release is a directory containing `release.json` and every
-Compose file it lists, plus the channel index pointing at it (see [update
-discovery](update-discovery.md)). Release Compose files must:
+A published release is a directory containing `release.json`, its signature
+`release.json.sig` and every Compose file it lists, plus the channel index
+pointing at it (see [update discovery](update-discovery.md)). Publish releases
+only with `scripts/publish-release.py` ([release process](release-process.md)).
+The signed message is `arknet.node-release-signature/v1\n` followed by the
+exact `release.json` bytes; the `.sig` file is the base64 Ed25519 signature.
+Release Compose files must:
 
-- use registry image references matching the manifest;
+- use digest-pinned registry image references matching the manifest;
 - contain no `build:` sections;
 - keep the same `name:` / project as earlier releases;
 - add new settings with defaults, so existing `.env` files still validate.
 
-`scripts/check-node-upgrade-stack.py` shows the transformation from the
-development Compose files.
+`scripts/release_site.py` performs the transformation from the development
+Compose files; `scripts/check-node-upgrade-stack.py` uses it.
 
-Image tags are treated as immutable per release: a tag that is already present
-locally is not pulled again. Pin third-party images by digest, as Jellyfin
-already is. The Agent build version can be stamped with
+Images are referenced as `<repository>:<version>@sha256:<digest>`, so an image
+already present locally is the exact pushed image. Third-party images
+(PostgreSQL, Jellyfin) are pinned by digest in the checked-in Compose files. The Agent build version can be stamped with
 `docker build --build-arg ARKNET_VERSION=<release>`; the default remains
 `VERSION`.
 
 ## Limits
 
-- **No signing yet:** index and manifests are not signed. The tool verifies
-  digests from the index over HTTPS. Signing should exist before upgrades are
-  triggered automatically or the default index is public.
+- **One signing key, no rotation yet:** manifests are signed by a single
+  Ed25519 key. Replacing it means shipping a new `install.sh` and editing
+  `ARKNET_RELEASE_VERIFY_KEY` on each Node. The index is not signed, so a
+  hostile release site can withhold updates (freeze) but cannot make a Node
+  install an unsigned, modified or older release.
 - **Operator-triggered only:** the Agent's "automatic updates" setting is
   recorded but not acted on yet.
 - **The tool doesn't upgrade itself:** `arknet-node` is not updated by the
@@ -166,7 +172,15 @@ already is. The Agent build version can be stamped with
   - validator parity with the Agent and SemVer precedence;
   - an Agent still reporting the old release;
   - same-version reinstall;
-  - an unreadable mounted manifest.
+  - an unreadable mounted manifest;
+  - signed releases (Prompt 51A): unsigned, wrongly signed, tampered (with a
+    matching index digest) and malformed signatures, a missing or invalid
+    verification key and an unpinned image are all refused before any image
+    is pulled or release file kept; the OpenSSL test vectors shared with the
+    Agent verify.
+- `scripts/check-node-upgrade-stack.py` additionally proves on a real stack that
+  a tampered and an unsigned release B are refused with no change, and that the
+  Agent's update discovery reports a tampered B as `CHECK_FAILED`.
 - Ten mutations of the tool were each caught by the unit tests: skipped
   manifest or Compose digest, skipped running-release validation, skipped
   volume check, no automatic rollback, pulling during apply, same-version

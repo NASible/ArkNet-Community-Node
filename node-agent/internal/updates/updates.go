@@ -2,13 +2,16 @@
 // It is read-only: it never downloads images or changes the running stack.
 //
 // A release is reported available only after its manifest has been fetched,
-// matched against the SHA-256 published in the channel index, and accepted by
-// the same strict parser that validates the running release.
+// matched against the SHA-256 published in the channel index, verified against
+// its detached Ed25519 signature (manifest URL + ".sig") with the pinned
+// release key, accepted by the same strict parser that validates the running
+// release, and found to pin every bundled image by digest.
 package updates
 
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -49,10 +52,11 @@ const (
 )
 
 var (
-	ErrIndex    = errors.New("invalid release index")
-	ErrManifest = errors.New("published release manifest rejected")
-	ErrFetch    = errors.New("release index unavailable")
-	sha256Hex   = regexp.MustCompile(`^[0-9a-f]{64}$`)
+	ErrIndex     = errors.New("invalid release index")
+	ErrManifest  = errors.New("published release manifest rejected")
+	ErrFetch     = errors.New("release index unavailable")
+	ErrSignature = release.ErrSignature
+	sha256Hex    = regexp.MustCompile(`^[0-9a-f]{64}$`)
 )
 
 type Entry struct {
@@ -122,6 +126,9 @@ type Checker struct {
 	IndexURL  *url.URL
 	AllowHTTP bool
 	Client    *http.Client
+	// VerifyKey is the pinned release-signing key. Without it Check fails;
+	// verification is never skipped.
+	VerifyKey ed25519.PublicKey
 }
 
 func (c Checker) client() *http.Client {
@@ -133,6 +140,10 @@ func (c Checker) client() *http.Client {
 }
 
 func (c Checker) get(ctx context.Context, u *url.URL) ([]byte, error) {
+	return c.getLimited(ctx, u, MaxIndexBytes)
+}
+
+func (c Checker) getLimited(ctx context.Context, u *url.URL, limit int64) ([]byte, error) {
 	if err := ValidateURL(u, c.AllowHTTP); err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrFetch, err)
 	}
@@ -153,8 +164,8 @@ func (c Checker) get(ctx context.Context, u *url.URL) ([]byte, error) {
 	if response.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("%w: HTTP %d", ErrFetch, response.StatusCode)
 	}
-	data, err := io.ReadAll(io.LimitReader(response.Body, MaxIndexBytes+1))
-	if err != nil || len(data) > MaxIndexBytes {
+	data, err := io.ReadAll(io.LimitReader(response.Body, limit+1))
+	if err != nil || int64(len(data)) > limit {
 		return nil, fmt.Errorf("%w: response too large or truncated", ErrFetch)
 	}
 	return data, nil
@@ -163,6 +174,9 @@ func (c Checker) get(ctx context.Context, u *url.URL) ([]byte, error) {
 // Check compares the published release on the running release's channel with
 // the running release. Only strictly newer versions are reported.
 func (c Checker) Check(ctx context.Context, current release.Manifest) (Status, error) {
+	if len(c.VerifyKey) != ed25519.PublicKeySize {
+		return Status{State: CheckFailed}, fmt.Errorf("%w: no release verify key", ErrSignature)
+	}
 	data, err := c.get(ctx, c.IndexURL)
 	if err != nil {
 		return Status{State: CheckFailed}, err
@@ -194,7 +208,22 @@ func (c Checker) Check(ctx context.Context, current release.Manifest) (Status, e
 	if hex.EncodeToString(sum[:]) != entry.ManifestSHA256 {
 		return Status{State: CheckFailed}, fmt.Errorf("%w: digest mismatch", ErrManifest)
 	}
+	// Verify the publisher's signature over the exact bytes before parsing.
+	sigURL, err := manifestURL.Parse(manifestURL.EscapedPath() + ".sig")
+	if err != nil {
+		return Status{State: CheckFailed}, fmt.Errorf("%w: signature URL", ErrSignature)
+	}
+	sigFile, err := c.getLimited(ctx, sigURL, release.MaxSignatureBytes)
+	if err != nil {
+		return Status{State: CheckFailed}, fmt.Errorf("%w: signature unavailable (%v)", ErrSignature, err)
+	}
+	if err := release.VerifySignature(c.VerifyKey, data, sigFile); err != nil {
+		return Status{State: CheckFailed}, err
+	}
 	manifest, err := release.Parse(data)
+	if err == nil {
+		err = release.RequirePinnedImages(manifest)
+	}
 	if err != nil || manifest.Version != entry.Version || manifest.Channel != current.Channel {
 		return Status{State: CheckFailed}, fmt.Errorf("%w: does not match index entry", ErrManifest)
 	}

@@ -2,7 +2,8 @@ name: arknet-core-dev
 
 services:
   postgres:
-    image: postgres:18-alpine
+    # Pinned by digest (multi-arch index); update deliberately with the release.
+    image: postgres:18-alpine@sha256:123b17998ccaf47e53b502e8c6a1e79afd8f579c6f3eec83c563da026f957395
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-arknet_core}
       POSTGRES_USER: ${POSTGRES_USER:-arknet}

@@ -37,6 +37,7 @@ Architecture, development, and operations documentation belongs here.
 - [Node upgrade](node-upgrade.md): `arknet-node upgrade`/`rollback` — verified download, image pull, backup, Compose apply, validation, automatic rollback.
 - [Update discovery](update-discovery.md): read-only channel-index discovery, verified newer releases, automatic-updates setting (default ON).
 - [Release manifest](release-manifest.md): versioned whole-stack Node release, stable/development channels, pinned components.
+- [Release process](release-process.md): tagged builds pushed to `ghcr.io/nasible`, Ed25519-signed digest-pinned Node releases, release site.
 - [Removed media](removed-media.md): Core tombstones, retained Node copies, peer eligibility, manual deletion, and Jellyfin behavior.
 
 The prompt pack describes future tasks; it does not imply those features are

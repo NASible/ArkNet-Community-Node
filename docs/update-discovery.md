@@ -39,7 +39,11 @@ channel:
    newer by SemVer 2.0 precedence, the result is `UP_TO_DATE`.
 4. Otherwise it fetches the manifest and accepts it only if all of these hold:
    - its SHA-256 equals `manifest_sha256`;
-   - the strict manifest parser accepts it;
+   - `<manifest URL>.sig` holds a valid Ed25519 signature over the exact
+     manifest bytes from the key in `ARKNET_RELEASE_VERIFY_KEY` (see the
+     [release process](release-process.md#signature-format));
+   - the strict manifest parser accepts it, and every bundled image is pinned
+     by `@sha256:` digest;
    - its version and channel match the index entry.
 
    Only then does the state become `UPDATE_AVAILABLE`. Anything else is
@@ -52,23 +56,23 @@ failure keeps showing a release that was already verified, with state
 
 | State | Meaning |
 |---|---|
-| `NOT_CONFIGURED` | `ARKNET_RELEASE_INDEX_URL` is unset. Nothing is fetched. |
+| `NOT_CONFIGURED` | `ARKNET_RELEASE_INDEX_URL` or `ARKNET_RELEASE_VERIFY_KEY` is unset (the second logs `release_discovery_disabled`). Nothing is fetched. An invalid key stops the Agent at startup. |
 | `NO_CURRENT_RELEASE` | There is no valid manifest for this Agent build, so there is nothing to compare. Nothing is fetched. |
 | `NOT_CHECKED` | Configured, but no check has finished yet. |
 | `UP_TO_DATE` | Nothing newer is published on this channel. |
 | `UPDATE_AVAILABLE` | A newer, verified release exists. |
-| `CHECK_FAILED` | The index was unreachable or invalid, or the manifest was rejected. |
+| `CHECK_FAILED` | The index was unreachable or invalid, or the manifest or its signature was rejected. |
 
 **Privacy:** requests carry no Node ID, credentials, cookies, or query
 parameters. The User-Agent is the fixed string `arknet-agent`. The index host
 still sees the Node's IP address. Failures are logged as fixed categories
-(`index_unavailable`, `index_invalid`, `manifest_rejected`); URLs and response
+(`index_unavailable`, `index_invalid`, `manifest_rejected`, `signature_rejected`); URLs and response
 content are never logged.
 
-**Limitation:** the index and manifests are not signed yet. A digest in the
-index proves only that the manifest matches the index; HTTPS protects the
-index itself. Signing is required before Prompt 39 installs anything
-automatically.
+**Limitation:** manifests are signed (Prompt 51A); the index is not. A hostile
+index can withhold a release or point at an older signed one, but it cannot
+make the Agent report an unsigned or modified release, or one older than the
+running release.
 
 ## Automatic updates setting
 

@@ -103,14 +103,19 @@ digest:
 cd deploy/node && shasum -a 256 compose.yaml compose.transfer.yaml
 ```
 
-## Not yet implemented
+## Published releases
 
 [Update discovery](update-discovery.md) reads a channel index of published
-manifests, and [`arknet-node upgrade`](node-upgrade.md) applies them. Signing
-indexes and manifests is still to come.
+manifests, and [`arknet-node upgrade`](node-upgrade.md) applies them. Since
+Prompt 51A a published manifest must be Ed25519-signed (`release.json.sig`) and
+must pin every bundled image by digest, for example
+`ghcr.io/nasible/arknet-agent:0.1.0@sha256:…`; both consumers refuse anything
+else. See the [release process](release-process.md).
 
-The ArkNet images are still built locally, so their references have no
-registry or digest yet. Add both once images are published.
+The checked-in `deploy/node/release.json` is the development manifest: its
+ArkNet images are local `:<version>-dev` tags built from this checkout and it
+is never published. PostgreSQL and Jellyfin are pinned by digest in it too.
+The index itself is not signed yet.
 
 ## Verification (2026-10-25)
 

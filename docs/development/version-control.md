@@ -39,9 +39,26 @@ All tags are annotated and are never moved or deleted once pushed.
 | Milestone | `v<major>.<minor>.<patch>-<label>`, e.g. `v0.1.0-mvp` | A validated development milestone. The message names the validation report and its evidence digest. A milestone tag is not a release. |
 | Release | `v<version>`, matching `VERSION` and `deploy/node/release.json` | A published whole-stack release. Created only by the release process, after the release's own validation. |
 
-`VERSION` currently reads `0.0.1-dev`. `v0.1.0-mvp` marks the MVP milestone; it
-does not change the shipped stack version. Bump `VERSION` and the release
-manifest in their own commit when cutting a real release.
+`v0.1.0-mvp` marks the MVP milestone; it does not change the shipped stack
+version.
+
+## Version scheme
+
+- Untagged development trees carry a `-dev` version in `VERSION` (currently
+  `0.0.1-dev`). Development Compose files build `arknet-*:<version>` images
+  from this checkout and are never published.
+- A release drops `-dev`. Bump `VERSION` to exactly the release version in its
+  own commit, then tag that commit `v<VERSION>`:
+  - `v1.2.3` (no pre-release suffix) publishes to the **stable** channel;
+  - `v1.2.3-rc.1`, `v1.2.3-beta.2` and similar publish to the
+    **development** channel.
+- `scripts/publish-release.py` refuses a tag whose `VERSION` differs. It stamps
+  the same version into every image, the image labels and the signed manifest.
+  Published images are `ghcr.io/nasible/arknet-<component>:<version>` and are
+  always referenced by digest.
+- After tagging, set `VERSION` to the next `-dev` version.
+
+See the [release process](../release-process.md).
 
 ## Validation evidence and commits
 
@@ -63,6 +80,10 @@ git archive v0.1.0-mvp | tar -x -C /path/to/empty-dir
 
 ## Remotes
 
-No remote is configured. Before pushing anywhere, confirm the target is
-private. `deploy/live-test` contains private VPN and LAN addresses, which must
-be removed before any public publication.
+`origin` is the public GitHub repository `NASible/ArkNet-Community-Node`.
+Release images are published to the GitHub Container Registry under
+`ghcr.io/nasible`. Pushing stays an explicit operator action.
+
+Open item: `deploy/live-test` contains the pilot's private VPN and LAN
+addresses. They reveal topology, not credentials; decide whether to move the
+pilot inventory out of the public repository.

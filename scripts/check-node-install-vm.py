@@ -5,7 +5,9 @@ following docs/node-installation.md.
 Host side (this machine, Docker + Lima + Go required):
   * ArkNet Core (built from core/) with a disposable PostgreSQL, on loopback;
   * a throwaway image registry holding version-stamped ArkNet 0.1.0 images;
-  * a release site: install.sh, arknet-node, index.json, releases/0.1.0/.
+  * a release site written by the real generator (scripts/release_site.py):
+    install.sh with the signing key, arknet-node, index.json and a
+    digest-pinned, Ed25519-signed releases/0.1.0/ (throwaway key, Prompt 51A).
 
 VM side: a brand-new Lima Ubuntu 24.04 VM with no Docker and no host mounts.
 Only the documented commands are run in it. The VM reaches the host through
@@ -31,6 +33,9 @@ import urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+from scripts import release_site  # noqa: E402
+
 NODE_DIR = ROOT / "deploy" / "node"
 VM = "arknet-install-test"
 GATEWAY = "192.168.5.2"
@@ -94,32 +99,27 @@ def image(component):
     return f"{REGISTRY}/arknet/{component}:{VERSION}"
 
 
-def publish_site(site: Path):
-    """What an ArkNet release publisher produces."""
-    release = site / "releases" / VERSION
-    release.mkdir(parents=True)
-    files = {}
-    for name in ("compose.yaml", "compose.transfer.yaml"):
-        text = (NODE_DIR / name).read_text()
-        text = re.sub(r"(?m)^name: .*$", "name: arknet-node", text)
-        text = re.sub(r"(?m)^    build:\n      context: .*\n", "", text)
-        for component in ("arknet-agent", "arknet-ui", "arknet-transfer"):
-            text = text.replace(f"image: {component}:0.0.1-dev", f"image: {image(component)}")
-        files[name] = text.encode()
-        (release / name).write_bytes(files[name])
-    manifest = json.loads((NODE_DIR / "release.json").read_text())
-    manifest.update(version=VERSION, channel="stable", published_at="2026-10-25T00:00:00Z")
-    for component in ("arknet-agent", "arknet-ui", "arknet-transfer"):
-        manifest["components"][component] = {"version": VERSION, "image": image(component), "bundled": True}
-    manifest["compose"] = {"project": "arknet-node",
-                           "files": [{"path": n, "sha256": hashlib.sha256(c).hexdigest()} for n, c in files.items()]}
-    data = (json.dumps(manifest, indent=2) + "\n").encode()
-    (release / "release.json").write_bytes(data)
-    (site / "index.json").write_text(json.dumps({"schema": "arknet.node-release-index/v1", "channels": {"stable": {
-        "version": VERSION, "manifest_url": f"releases/{VERSION}/release.json", "manifest_sha256": hashlib.sha256(data).hexdigest()}}}))
-    shutil.copy(NODE_DIR / "arknet-node", site / "arknet-node")
-    installer = (NODE_DIR / "install.sh").read_text().replace("__ARKNET_RELEASE_URL__", f"http://{GATEWAY}:{SITE_PORT}")
-    (site / "install.sh").write_text(installer)
+def pushed_digest(ref):
+    repo = ref.rsplit(":", 1)[0]
+    for entry in json.loads(sh("docker", "image", "inspect", "--format", "{{json .RepoDigests}}", ref).stdout):
+        if entry.startswith(repo + "@sha256:"):
+            return entry.split("@", 1)[1]
+    raise RuntimeError(f"no registry digest for {ref}")
+
+
+def publish_site(site: Path, work: Path, images: dict) -> str:
+    """What scripts/publish-release.py produces, with a throwaway signing key."""
+    openssl = release_site.openssl3()
+    key = work / "release-signing.pem"
+    sh(openssl, "genpkey", "-algorithm", "ed25519", "-out", str(key))
+    key.chmod(0o600)
+    verify_key = release_site.public_key(key, openssl)
+    files = release_site.node_release(VERSION, images, "arknet-node", "2026-10-25T00:00:00Z", NODE_DIR)
+    signature = release_site.sign(files["release.json"], key, release_site.load_arknet_node(NODE_DIR).SIGNATURE_DOMAIN, openssl)
+    release_site.write_site(site, VERSION, files, signature, verify_key, f"http://{GATEWAY}:{SITE_PORT}", NODE_DIR)
+    release_site.verify_site_release(site, VERSION, verify_key, NODE_DIR)
+    key.unlink()
+    return verify_key
 
 
 def main():
@@ -167,6 +167,7 @@ def main():
         sh("docker", "build", "-q", "--build-arg", f"ARKNET_VERSION={VERSION}", "-t", image("arknet-agent"), str(ROOT / "node-agent"))
         sh("docker", "build", "-q", "-t", image("arknet-ui"), str(ROOT / "node-ui"))
         sh("docker", "tag", "arknet-transfer:0.0.1-dev", image("arknet-transfer"))
+        images = {}
         for component in ("arknet-agent", "arknet-ui", "arknet-transfer"):
             for _ in range(10):
                 if sh("docker", "push", "-q", image(component), check=False).returncode == 0:
@@ -174,9 +175,10 @@ def main():
                 time.sleep(1)
             else:
                 raise RuntimeError("registry push failed")
+            images[component] = f"{image(component)}@{pushed_digest(image(component))}"
 
         # ---- Release site
-        publish_site(site)
+        verify_key = publish_site(site, work, images)
 
         class Quiet(http.server.SimpleHTTPRequestHandler):
             def log_message(self, *args):
@@ -228,6 +230,16 @@ def main():
         check("installation directories and secrets have safe permissions",
               "755 /opt/arknet\n" in perms and "600 /opt/arknet/.env" in perms and "700 /opt/arknet/backups" in perms and "644 " in perms, perms.strip())
         check("operator tool installed", "ArkNet 0.1.0 (stable channel)" in vm("sudo arknet-node status").stdout)
+        fingerprint = "SHA256:" + hashlib.sha256(__import__("base64").b64decode(verify_key)).hexdigest()[:16]
+        check("installer verified the release signature with the shipped key",
+              f"signature verified (release key {fingerprint})" in out.stdout
+              and vm("sudo sed -n 's/^ARKNET_RELEASE_VERIFY_KEY=//p' /opt/arknet/.env").stdout.strip() == verify_key
+              and vm(f"sudo test -s /opt/arknet/releases/{VERSION}/release.json.sig && echo ok").stdout.strip() == "ok")
+        installed = json.loads(vm(f"sudo cat /opt/arknet/releases/{VERSION}/release.json", check=True).stdout)
+        running = vm("sudo docker inspect --format '{{.Config.Image}}' $(sudo docker ps -q --filter label=com.docker.compose.project=arknet-node)").stdout.split()
+        check("every bundled image is digest-pinned and running from the registry",
+              all("@sha256:" in installed["components"][c]["image"] for c in ("arknet-agent", "arknet-ui", "arknet-transfer", "postgresql", "jellyfin"))
+              and images["arknet-agent"] in running and images["arknet-ui"] in running, ", ".join(sorted(set(running))))
         env_hash = vm("sudo sha256sum /opt/arknet/.env").stdout
 
         # ---- Re-run safety

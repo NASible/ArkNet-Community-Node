@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"crypto/ed25519"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -39,14 +41,32 @@ func (m *memoryUpdateSettings) SetAutomaticUpdates(_ context.Context, enabled bo
 	return nil
 }
 
-// newerRelease publishes a valid newer manifest derived from the shipped one.
+// Test-only release signing key.
+var releaseTestPublic, releaseTestPrivate, _ = ed25519.GenerateKey(nil)
+
+// newerRelease publishes a valid newer manifest derived from the shipped one,
+// digest-pinned and signed by releaseTestPrivate.
 func newerRelease(t *testing.T, newVersion string) (*httptest.Server, *int) {
 	t.Helper()
 	shipped, err := os.ReadFile(shippedManifest)
 	if err != nil {
 		t.Fatal(err)
 	}
-	manifest := []byte(strings.ReplaceAll(string(shipped), version, newVersion))
+	m, err := release.Parse([]byte(strings.ReplaceAll(string(shipped), version, newVersion)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, c := range m.Components {
+		if c.Bundled && !strings.Contains(c.Image, "@sha256:") {
+			c.Image += "@sha256:" + strings.Repeat("c", 64)
+			m.Components[name] = c
+		}
+	}
+	manifest, err := json.Marshal(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	signature := base64.StdEncoding.EncodeToString(ed25519.Sign(releaseTestPrivate, append([]byte(release.SignatureDomain), manifest...))) + "\n"
 	sum := sha256.Sum256(manifest)
 	hits := new(int)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -57,6 +77,8 @@ func newerRelease(t *testing.T, newVersion string) (*httptest.Server, *int) {
 				`","manifest_url":"release-` + newVersion + `.json","manifest_sha256":"` + hex.EncodeToString(sum[:]) + `"}}}`))
 		case "/release-" + newVersion + ".json":
 			_, _ = w.Write(manifest)
+		case "/release-" + newVersion + ".json.sig":
+			_, _ = w.Write([]byte(signature))
 		default:
 			http.NotFound(w, r)
 		}
@@ -74,7 +96,7 @@ func updatesHandler(t *testing.T, indexURL string, settings *memoryUpdateSetting
 	var checker *updates.Checker
 	if indexURL != "" {
 		u, _ := url.Parse(indexURL)
-		checker = &updates.Checker{IndexURL: u}
+		checker = &updates.Checker{IndexURL: u, VerifyKey: releaseTestPublic}
 	}
 	return newRoutes(testRepository{}, releaseOpt{&current}, updatesOpt{monitor: updates.NewMonitor(checker, &current), settings: settings})
 }
@@ -165,7 +187,7 @@ func TestAutomaticUpdatesDefaultOnAndOperatorCanDisable(t *testing.T) {
 func TestUpdatesWithoutCurrentReleaseNeverFetch(t *testing.T) {
 	server, hits := newerRelease(t, "0.0.2-dev")
 	u, _ := url.Parse(server.URL + "/index.json")
-	h := newRoutes(testRepository{}, updatesOpt{monitor: updates.NewMonitor(&updates.Checker{IndexURL: u}, nil), settings: &memoryUpdateSettings{}})
+	h := newRoutes(testRepository{}, updatesOpt{monitor: updates.NewMonitor(&updates.Checker{IndexURL: u, VerifyKey: releaseTestPublic}, nil), settings: &memoryUpdateSettings{}})
 	code, body := updatesCall(t, h, "POST", "/api/v1/updates/check", "{}")
 	if code != 200 || body["current_version"] != nil || body["channel"] != nil || body["discovery"].(map[string]any)["state"] != "NO_CURRENT_RELEASE" || *hits != 0 {
 		t.Fatalf("no release: %d %v hits=%d", code, body, *hits)
@@ -189,6 +211,51 @@ func TestReleaseIndexConfig(t *testing.T) {
 		cfg, err := loadConfig(func(k string) string { return env[k] })
 		if (err == nil) != test.ok || (test.ok && test.url != "" && cfg.releaseIndexURL.String() != test.url) {
 			t.Fatalf("%+v: %v", test, err)
+		}
+	}
+}
+
+func TestReleaseVerifyKeyConfig(t *testing.T) {
+	const indexURL = "https://releases.arknet.example/node/index.json"
+	keyText, err := os.ReadFile("internal/release/testdata/signature/release-signing.pub")
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := strings.TrimSpace(string(keyText))
+	load := func(env map[string]string) (config, error) {
+		env["DATABASE_URL"] = "postgres://u:***@localhost/db"
+		return loadConfig(func(k string) string { return env[k] })
+	}
+	// Index without key: discovery is not configured (never unverified).
+	cfg, err := load(map[string]string{"ARKNET_RELEASE_INDEX_URL": indexURL})
+	if err != nil || cfg.releaseIndexURL == nil || cfg.releaseVerifyKey != nil || cfg.updateChecker() != nil {
+		t.Fatalf("index without key: %+v %v", cfg.updateChecker(), err)
+	}
+	if !cfg.releaseDiscoveryDisabled() {
+		t.Fatal("index without key must be reported as disabled discovery")
+	}
+	if s := updates.NewMonitor(cfg.updateChecker(), nil).Status(); s.State != updates.NotConfigured {
+		t.Fatalf("index without key state = %s", s.State)
+	}
+	// Index with key: checker pins the key.
+	cfg, err = load(map[string]string{"ARKNET_RELEASE_INDEX_URL": indexURL, "ARKNET_RELEASE_VERIFY_KEY": key + "\n"})
+	checker := cfg.updateChecker()
+	if err != nil || checker == nil || checker.IndexURL.String() != indexURL || base64.StdEncoding.EncodeToString(checker.VerifyKey) != key || cfg.releaseDiscoveryDisabled() {
+		t.Fatalf("index with key: %+v %v", checker, err)
+	}
+	// Key without index: accepted, discovery stays off.
+	cfg, err = load(map[string]string{"ARKNET_RELEASE_VERIFY_KEY": key})
+	if err != nil || cfg.updateChecker() != nil || cfg.releaseDiscoveryDisabled() {
+		t.Fatalf("key without index: %v", err)
+	}
+	raw, _ := base64.StdEncoding.DecodeString(key)
+	for name, value := range map[string]string{
+		"short":      base64.StdEncoding.EncodeToString(raw[:31]),
+		"unpadded":   strings.TrimRight(key, "="),
+		"not base64": "not a key",
+	} {
+		if _, err := load(map[string]string{"ARKNET_RELEASE_INDEX_URL": indexURL, "ARKNET_RELEASE_VERIFY_KEY": value}); err == nil {
+			t.Errorf("%s key accepted", name)
 		}
 	}
 }

@@ -77,11 +77,10 @@ func run(ctx context.Context, cfg config, logger *slog.Logger) error {
 	media := cfg.mediaOptions(database)
 	opts := []handlerOption{media, settingsOpt{database}, localUsersOpt{repository: database}, globalAuthOpt{repository: database, identity: media.identity, login: cfg.globalLogin}, mediaMissOpt{database}, operatorOpt{repository: database, logger: logger}, current,
 		diagnosticsOpt{coreURL: strings.TrimSuffix(cfg.coreURL, "/"), trackerOrigin: cfg.trackerOrigin, mediaDir: cfg.mediaDir}}
-	var checker *updates.Checker
-	if cfg.releaseIndexURL != nil {
-		checker = &updates.Checker{IndexURL: cfg.releaseIndexURL, AllowHTTP: cfg.releaseIndexAllowHTTP}
+	if cfg.releaseDiscoveryDisabled() {
+		logger.Warn("release_discovery_disabled", "reason", "no_release_verify_key")
 	}
-	updateMonitor := updates.NewMonitor(checker, current.manifest)
+	updateMonitor := updates.NewMonitor(cfg.updateChecker(), current.manifest)
 	opts = append(opts, updatesOpt{monitor: updateMonitor, settings: database})
 	updateDone := updateMonitor.Run(workerCtx, updates.CheckInterval, func(err error) { logger.Warn("update_check_failed", "reason", updateFailureReason(err)) })
 	defer func() { stopWorker(); <-updateDone }()
@@ -208,6 +207,8 @@ func updateFailureReason(err error) string {
 	switch {
 	case errors.Is(err, updates.ErrFetch):
 		return "index_unavailable"
+	case errors.Is(err, updates.ErrSignature):
+		return "signature_rejected"
 	case errors.Is(err, updates.ErrIndex):
 		return "index_invalid"
 	case errors.Is(err, updates.ErrManifest):

@@ -21,7 +21,7 @@
     },
     "postgresql": {
       "version": "18",
-      "image": "postgres:18-alpine",
+      "image": "postgres:18-alpine@sha256:123b17998ccaf47e53b502e8c6a1e79afd8f579c6f3eec83c563da026f957395",
       "bundled": true
     },
     "jellyfin": {
@@ -40,7 +40,7 @@
     "files": [
       {
         "path": "compose.yaml",
-        "sha256": "617a1db1de6d125256217ad702667f0bcd8f98b4499630cb364aea97d9bcecf4"
+        "sha256": "7570a51aaf2111f33ca1c9a742ea41c8547cc78904889a13533f2ebadbeb45f6"
       },
       {
         "path": "compose.transfer.yaml",

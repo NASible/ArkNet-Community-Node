@@ -1,8 +1,10 @@
 package main
 
 import (
+	"arknet/node-agent/internal/release"
 	"arknet/node-agent/internal/transfer"
 	"arknet/node-agent/internal/updates"
+	"crypto/ed25519"
 	"fmt"
 	"log/slog"
 	"math"
@@ -33,6 +35,7 @@ type config struct {
 	releaseManifest           string
 	releaseIndexURL           *url.URL
 	releaseIndexAllowHTTP     bool
+	releaseVerifyKey          ed25519.PublicKey
 	trackerOrigin             string
 	globalLogin               *globalLoginConfig
 	relayList                 *relayListConfig
@@ -173,6 +176,13 @@ func loadConfig(getenv func(string) string) (config, error) {
 		}
 		cfg.releaseIndexURL = u
 	}
+	if value := getenv("ARKNET_RELEASE_VERIFY_KEY"); strings.TrimSpace(value) != "" {
+		key, err := release.ParseVerifyKey(value)
+		if err != nil {
+			return config{}, fmt.Errorf("ARKNET_RELEASE_VERIFY_KEY must be canonical padded base64 of a 32-byte Ed25519 public key")
+		}
+		cfg.releaseVerifyKey = key
+	}
 	if value := getenv("ARKNET_TRANSFER_TRACKER_ORIGIN"); value != "" {
 		u, err := url.Parse(value)
 		if err != nil || updates.ValidateURL(u, getenv("ARKNET_TRANSFER_TRACKER_ALLOW_HTTP") == "true") != nil ||
@@ -209,4 +219,18 @@ func validCoreBaseURL(raw string, allowHTTP bool) bool {
 		invalid = invalid || err != nil || port < 1 || port > 65535
 	}
 	return !invalid
+}
+
+// updateChecker returns the discovery checker, or nil (NOT_CONFIGURED) when
+// no index is set or no release verify key pins the publisher.
+func (cfg config) updateChecker() *updates.Checker {
+	if cfg.releaseIndexURL == nil || cfg.releaseVerifyKey == nil {
+		return nil
+	}
+	return &updates.Checker{IndexURL: cfg.releaseIndexURL, AllowHTTP: cfg.releaseIndexAllowHTTP, VerifyKey: cfg.releaseVerifyKey}
+}
+
+// releaseDiscoveryDisabled reports an index configured without a verify key.
+func (cfg config) releaseDiscoveryDisabled() bool {
+	return cfg.releaseIndexURL != nil && cfg.releaseVerifyKey == nil
 }

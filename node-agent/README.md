@@ -90,6 +90,7 @@ explicit exception. Opt-in outbound enrollment is described below.
 | `JELLYFIN_API_URL` | Unset | Local Jellyfin base URL used only for the `/health` probe. |
 | `ARKNET_RELEASE_INDEX_URL` | Unset | HTTPS channel index for read-only [update discovery](../docs/update-discovery.md); unset disables discovery. |
 | `ARKNET_RELEASE_INDEX_ALLOW_HTTP` | `false` | Permit a non-loopback HTTP index (testing only). |
+| `ARKNET_RELEASE_VERIFY_KEY` | Unset | Release-signing Ed25519 public key (canonical padded base64 of 32 raw bytes). Required for discovery: with an index URL but no key, discovery stays `NOT_CONFIGURED` and a `release_discovery_disabled` warning is logged; an invalid key fails startup. |
 | `ARKNET_RELEASE_MANIFEST` | Unset | Clean absolute path of the current whole-stack release manifest; unset or invalid reports `release: null`. |
 
 Unset or empty values use defaults. Invalid configuration or listener failures
@@ -305,6 +306,17 @@ channel and reports it at `GET /api/v1/updates`. It never installs anything.
 Automatic updates (`/api/v1/settings/automatic-updates`) default ON and the
 operator's opt-out persists in PostgreSQL. See
 [update discovery](../docs/update-discovery.md).
+
+Published releases are signed. Next to each manifest URL the Agent fetches
+`<manifest URL>.sig`: canonical padded base64 of a raw 64-byte Ed25519
+signature, optionally followed by one newline, over the ASCII bytes
+`arknet.node-release-signature/v1\n` followed by the exact manifest bytes. It
+verifies this with `ARKNET_RELEASE_VERIFY_KEY` before parsing, and additionally
+requires every bundled image in a published manifest to be pinned by
+`@sha256:<64 hex>` (unbundled Tailscale is exempt). A missing, malformed or
+non-verifying signature, or an unpinned image, yields `CHECK_FAILED`; an update
+is never reported without a verified signature. The locally running manifest is
+not subject to the digest-pin rule.
 
 ## Media-miss events
 

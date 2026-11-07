@@ -37,13 +37,17 @@ The installer goes through these steps:
    - `--no-install-docker` only validates an existing installation.
 3. **Creates `/opt/arknet`.**
    - The directory and `releases/` are 0755, and `backups/` is 0700.
-   - It writes `.env` (0600) with a random PostgreSQL password, your Core URL
-     and the release index URL.
+   - It writes `.env` (0600) with a random PostgreSQL password, your Core URL,
+     the release index URL and the release signing public key
+     (`ARKNET_RELEASE_VERIFY_KEY`) built into this `install.sh`.
    - Existing settings are never overwritten.
 4. **Installs `arknet-node`** to `/usr/local/bin`.
 5. **Downloads the newest stable release.**
    - `arknet-node install` fetches the channel index and checks each SHA-256:
      index → manifest → Compose files.
+   - It verifies the manifest's Ed25519 signature (`release.json.sig`) with
+     the signing key, and requires every bundled image to be pinned by digest.
+     It prints `signature verified (release key SHA256:…)`.
    - It validates the manifest and pulls the pinned images.
 6. **Starts the Node stack** and validates it. The Agent must be healthy and
    running the downloaded release, and Jellyfin must be healthy.
@@ -131,6 +135,9 @@ Every failure prints `INSTALL FAILED: <reason>` and the next step, for example:
 | `--core-url must use https://` | Use Core's HTTPS URL. |
 | `--core-url points at this machine's loopback address` | The Agent runs in a container; use Core's network address. |
 | `FAILED at download: … digest does not match` | The release site content is inconsistent. Do not continue; report it. |
+| `FAILED at download: Release signature rejected` / `unavailable` | The release is not signed by the ArkNet release key. Do not continue; report it. |
+| `OpenSSL 3 or newer is required` | Supported Ubuntu releases ship OpenSSL 3; install the `openssl` package. |
+| `does not contain the ArkNet release signing key` | Download `install.sh` from the release site, not from the repository. |
 | `FAILED at images: Could not pull …` | Check registry access, then re-run. Nothing was started. |
 | After installing: something stops working | Open **Diagnostics** in the setup UI; it names the failing service and what to do. See [Node diagnostics](node-diagnostics.md). |
 | `INSTALL FAILED while starting the Node` | The output includes the `docker compose … logs` command for the failing service. Fix the cause and re-run. |
@@ -140,21 +147,27 @@ Every failure prints `INSTALL FAILED: <reason>` and the next step, for example:
 
 The site serves:
 
-- `install.sh`, with `__ARKNET_RELEASE_URL__` replaced by the site's own URL;
-- `arknet-node`;
-- `index.json`;
-- `releases/<version>/` with `release.json` and its Compose files (see
-  [Node upgrade](node-upgrade.md#publishing-a-release)).
+- `install.sh`, with `__ARKNET_RELEASE_URL__` replaced by the site's own URL
+  and `__ARKNET_RELEASE_VERIFY_KEY__` by the release signing public key;
+- `arknet-node`, `release-signing.pub` and `index.json`;
+- `releases/<version>/` with the signed, digest-pinned `release.json`,
+  `release.json.sig`, its Compose files and `images.json`.
 
-`scripts/check-node-install-vm.py` shows the transformation.
+`scripts/publish-release.py` writes it; see the
+[release process](release-process.md). `scripts/check-node-install-vm.py`
+installs from such a site on a fresh VM.
 
 ## Security notes
 
 - The installer is downloaded first rather than piped into a shell, so you can
   read it before running it as root.
 - `arknet-node` comes from the same HTTPS site as the installer.
-- Every release file is digest-verified against the index. The index itself
-  is protected only by HTTPS until index and manifest signing exists.
+- Every release manifest must be signed by the ArkNet release key, whose
+  public half is built into `install.sh` and stored in `.env`. Compose files
+  are bound to the signed manifest by SHA-256, and every bundled image is
+  pinned by digest. The index is not signed: a hostile release site can
+  withhold updates or point at an older signed release, but `arknet-node`
+  never installs a version older than the running one.
 - Nothing listens publicly. The Agent, UI and Jellyfin are bound to loopback
   by the release Compose file, and enrollment is outbound to Core.
 - The Agent has two loopback ports: management on `127.0.0.1:8082` (operator

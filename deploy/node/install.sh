@@ -12,6 +12,9 @@ ORIGINAL_ARGS="$*"
 
 # Set when publishing a release site; --release-url overrides it.
 RELEASE_URL_DEFAULT="__ARKNET_RELEASE_URL__"
+# The release signing public key, set by the release publisher. Every release
+# arknet-node installs must be signed by it (docs/release-process.md).
+RELEASE_VERIFY_KEY='__ARKNET_RELEASE_VERIFY_KEY__'  # single quotes: never expanded
 
 SUPPORTED_UBUNTU="22.04 24.04 26.04"
 MIN_MEMORY_MIB=1900   # "2 GB" machines report slightly less than 2048 MiB
@@ -75,6 +78,13 @@ case "$RELEASE_URL" in
                 "Download install.sh from your ArkNet release site, or pass --release-url URL." ;;
 esac
 RELEASE_URL="${RELEASE_URL%/}"
+case "$RELEASE_VERIFY_KEY" in
+    __*__) fail "This copy of install.sh does not contain the ArkNet release signing key." \
+                "Download install.sh from your ArkNet release site." ;;
+esac
+# Canonical base64 of a 32-byte Ed25519 key: 43 characters and one '='.
+printf '%s' "$RELEASE_VERIFY_KEY" | grep -Eq '^[A-Za-z0-9+/]{42}[AEIMQUYcgkosw048]=$' \
+    || fail "The release signing key in this install.sh is malformed." "Download install.sh again from your ArkNet release site."
 case "$CHANNEL" in stable|development) ;; *) fail "--channel must be stable or development." ;; esac
 case "$ARKNET_HOME" in /*) ;; *) fail "--home must be an absolute path." ;; esac
 
@@ -205,6 +215,14 @@ if [ -f "$env_file" ]; then
     if [ -n "$CORE_URL" ] && [ "$CORE_URL" != "$existing_core" ]; then
         info "NOTE: --core-url differs from the installed ARKNET_CORE_URL ($existing_core); the installed value is kept."
     fi
+    existing_key=$(sed -n 's/^ARKNET_RELEASE_VERIFY_KEY=//p' "$env_file" | tail -n1)
+    if [ -z "$existing_key" ]; then
+        [ -z "$(tail -c1 "$env_file")" ] || echo >> "$env_file"
+        printf '# Releases must be signed by this key (Ed25519 public key)\nARKNET_RELEASE_VERIFY_KEY=%s\n' "$RELEASE_VERIFY_KEY" >> "$env_file"
+        info "Added the release signing key to $env_file"
+    elif [ "$existing_key" != "$RELEASE_VERIFY_KEY" ]; then
+        info "NOTE: this installer's release signing key differs from the installed ARKNET_RELEASE_VERIFY_KEY; the installed key is kept."
+    fi
 else
     password=$(od -An -N24 -tx1 /dev/urandom | tr -d ' \n')
     [ ${#password} -eq 48 ] || fail "Could not generate a database password."
@@ -216,6 +234,8 @@ else
         echo "ARKNET_CORE_URL=$CORE_URL"
         [ "$ALLOW_HTTP" = "true" ] && echo "ARKNET_CORE_ALLOW_HTTP=true"
         echo "ARKNET_RELEASE_INDEX_URL=$RELEASE_URL/index.json"
+        echo "# Releases must be signed by this key (Ed25519 public key)"
+        echo "ARKNET_RELEASE_VERIFY_KEY=$RELEASE_VERIFY_KEY"
         echo "# Member API loopback port for a TLS reverse proxy"
         echo "ARKNET_MEMBER_PORT=8086"
         [ "$ALLOW_HTTP" = "true" ] && echo "ARKNET_RELEASE_INDEX_ALLOW_HTTP=true"

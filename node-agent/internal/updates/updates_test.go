@@ -2,13 +2,16 @@ package updates
 
 import (
 	"context"
+	"crypto/ed25519"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -18,9 +21,26 @@ import (
 	"arknet/node-agent/internal/release"
 )
 
+// Test-only publisher key; production keys never appear in tests.
+var testPublic, testPrivate, _ = ed25519.GenerateKey(nil)
+
+func sign(priv ed25519.PrivateKey, manifest []byte) []byte {
+	sig := ed25519.Sign(priv, append([]byte(release.SignatureDomain), manifest...))
+	return []byte(base64.StdEncoding.EncodeToString(sig) + "\n")
+}
+
+// manifestJSON builds a publishable manifest: every bundled image is pinned
+// by digest; unbundled tailscale stays tag-only.
 func manifestJSON(version string, channel release.Channel) []byte {
+	return manifestJSONPinned(version, channel, true)
+}
+
+func manifestJSONPinned(version string, channel release.Channel, pinned bool) []byte {
 	digest := strings.Repeat("a", 64)
 	comp := func(v, image string, bundled bool) map[string]any {
+		if bundled && pinned {
+			image += "@sha256:" + strings.Repeat("b", 64)
+		}
 		return map[string]any{"version": v, "image": image, "bundled": bundled}
 	}
 	data, _ := json.Marshal(map[string]any{
@@ -47,7 +67,7 @@ func current(t *testing.T, version string, channel release.Channel) release.Mani
 type publisher struct {
 	mu        sync.Mutex
 	index     func(base string) string
-	manifests map[string][]byte
+	manifests map[string][]byte // also holds detached ".sig" files
 	requests  []*http.Request
 	server    *httptest.Server
 }
@@ -73,10 +93,21 @@ func newPublisher(t *testing.T) *publisher {
 	return p
 }
 
+// publish serves a manifest with a valid detached signature by the test key.
 func (p *publisher) publish(path string, data []byte) string {
+	return p.publishSigned(path, data, sign(testPrivate, data))
+}
+
+// publishSigned serves a manifest with the given signature file (nil: none).
+func (p *publisher) publishSigned(path string, data, sig []byte) string {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.manifests[path] = data
+	if sig != nil {
+		p.manifests[path+".sig"] = sig
+	} else {
+		delete(p.manifests, path+".sig")
+	}
 	sum := sha256.Sum256(data)
 	return hex.EncodeToString(sum[:])
 }
@@ -86,7 +117,7 @@ func (p *publisher) checker(t *testing.T) Checker {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return Checker{IndexURL: u}
+	return Checker{IndexURL: u, VerifyKey: testPublic}
 }
 
 func indexWith(entries string) func(string) string {
@@ -192,7 +223,7 @@ func TestCheckDoesNotFollowRedirects(t *testing.T) {
 	source := httptest.NewServer(http.RedirectHandler(target.URL, http.StatusFound))
 	defer source.Close()
 	u, _ := url.Parse(source.URL + "/index.json")
-	if status, err := (Checker{IndexURL: u}).Check(context.Background(), current(t, "0.0.1-dev", release.Development)); !errors.Is(err, ErrFetch) || status.State != CheckFailed {
+	if status, err := (Checker{IndexURL: u, VerifyKey: testPublic}).Check(context.Background(), current(t, "0.0.1-dev", release.Development)); !errors.Is(err, ErrFetch) || status.State != CheckFailed {
 		t.Fatalf("redirect: %+v %v", status, err)
 	}
 }
@@ -255,7 +286,7 @@ func TestMonitorRunChecksImmediatelyAndStops(t *testing.T) {
 	defer server.Close()
 	u, _ := url.Parse(server.URL + "/i.json")
 	cur := current(t, "0.0.1-dev", release.Development)
-	m := NewMonitor(&Checker{IndexURL: u}, &cur)
+	m := NewMonitor(&Checker{IndexURL: u, VerifyKey: testPublic}, &cur)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := m.Run(ctx, time.Hour, nil)
 	deadline := time.Now().Add(2 * time.Second)
@@ -266,5 +297,98 @@ func TestMonitorRunChecksImmediatelyAndStops(t *testing.T) {
 	<-done
 	if m.Status().State != UpToDate || hits.Load() != 1 {
 		t.Fatalf("run: %s hits=%d", m.Status().State, hits.Load())
+	}
+}
+
+func devEntry(sum string) func(string) string {
+	return indexWith(`"development":{"version":"0.0.2-dev","manifest_url":"m.json","manifest_sha256":"` + sum + `"}`)
+}
+
+func TestCheckRequiresValidReleaseSignature(t *testing.T) {
+	cur := func(t *testing.T) release.Manifest { return current(t, "0.0.1-dev", release.Development) }
+	good := manifestJSON("0.0.2-dev", release.Development)
+	otherPublic, otherPrivate, _ := ed25519.GenerateKey(nil)
+	for name, test := range map[string]struct {
+		setup func(p *publisher)
+		key   ed25519.PublicKey
+		want  error
+	}{
+		"tampered manifest with matching index digest": {func(p *publisher) {
+			tampered := []byte(strings.Replace(string(good), "2026-10-26", "2026-10-27", 1))
+			sum := p.publishSigned("/releases/m.json", tampered, sign(testPrivate, good))
+			p.index = devEntry(sum)
+		}, testPublic, ErrSignature},
+		"signed by another key": {func(p *publisher) {
+			p.index = devEntry(p.publishSigned("/releases/m.json", good, sign(otherPrivate, good)))
+		}, testPublic, ErrSignature},
+		"checker pins another key": {func(p *publisher) {
+			p.index = devEntry(p.publish("/releases/m.json", good))
+		}, otherPublic, ErrSignature},
+		"missing signature": {func(p *publisher) {
+			p.index = devEntry(p.publishSigned("/releases/m.json", good, nil))
+		}, testPublic, ErrSignature},
+		"malformed signature": {func(p *publisher) {
+			p.index = devEntry(p.publishSigned("/releases/m.json", good, append(sign(testPrivate, good), '\n')))
+		}, testPublic, ErrSignature},
+		"oversized signature": {func(p *publisher) {
+			p.index = devEntry(p.publishSigned("/releases/m.json", good, []byte(strings.Repeat("A", 4096))))
+		}, testPublic, ErrSignature},
+		"signed but unpinned bundled image": {func(p *publisher) {
+			p.index = devEntry(p.publish("/releases/m.json", manifestJSONPinned("0.0.2-dev", release.Development, false)))
+		}, testPublic, ErrManifest},
+		"no verify key": {func(p *publisher) {
+			p.index = devEntry(p.publish("/releases/m.json", good))
+		}, nil, ErrSignature},
+	} {
+		t.Run(name, func(t *testing.T) {
+			p := newPublisher(t)
+			test.setup(p)
+			checker := p.checker(t)
+			checker.VerifyKey = test.key
+			status, err := checker.Check(context.Background(), cur(t))
+			if !errors.Is(err, test.want) || status.State != CheckFailed || status.Available != nil {
+				t.Fatalf("want %v: %+v %v", test.want, status, err)
+			}
+		})
+	}
+}
+
+func TestCheckFetchesSignatureNextToManifest(t *testing.T) {
+	p := newPublisher(t)
+	p.index = devEntry(p.publish("/releases/m.json", manifestJSON("0.0.2-dev", release.Development)))
+	status, err := p.checker(t).Check(context.Background(), current(t, "0.0.1-dev", release.Development))
+	if err != nil || status.State != UpdateAvailable {
+		t.Fatalf("%+v %v", status, err)
+	}
+	var paths []string
+	for _, r := range p.requests {
+		paths = append(paths, r.URL.Path)
+	}
+	if strings.Join(paths, ",") != "/releases/index.json,/releases/m.json,/releases/m.json.sig" {
+		t.Fatalf("requests = %v", paths)
+	}
+}
+
+// The OpenSSL-produced vector verifies end to end through discovery.
+func TestCheckAcceptsOpenSSLSignedVector(t *testing.T) {
+	read := func(name string) []byte {
+		data, err := os.ReadFile("../release/testdata/signature/" + name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return data
+	}
+	key, err := release.ParseVerifyKey(string(read("release-signing.pub")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := newPublisher(t)
+	sum := p.publishSigned("/releases/0.1.0.json", read("release.json"), read("release.json.sig"))
+	p.index = indexWith(`"stable":{"version":"0.1.0","manifest_url":"0.1.0.json","manifest_sha256":"` + sum + `"}`)
+	checker := p.checker(t)
+	checker.VerifyKey = key
+	status, err := checker.Check(context.Background(), current(t, "0.0.9", release.Stable))
+	if err != nil || status.State != UpdateAvailable || status.Available.Version != "0.1.0" {
+		t.Fatalf("%+v %v", status, err)
 	}
 }

@@ -2,7 +2,9 @@
 
 The full install is exercised on a fresh VM by scripts/check-node-install-vm.py.
 """
+import os
 import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -10,14 +12,31 @@ HERE = Path(__file__).resolve().parent
 IMAGE = "ubuntu:24.04"
 UBUNTU = 'ID=ubuntu\nVERSION_ID="24.04"\nPRETTY_NAME="Ubuntu 24.04.3 LTS"\n'
 MEMINFO = "MemTotal:        4015148 kB\n"
+KEY = "t7S7sCEzbftgFj3ukmqGKlgfXA70Zkr37xCcOckyWNQ="  # a public test key (node-agent release test vectors)
 
 
-def run(args, os_release=UBUNTU, meminfo=MEMINFO, uid="0"):
+def installer(key=KEY):
+    """install.sh as the release publisher ships it: the signing key substituted."""
+    # Inside the checkout (git-ignored .arknet-*): Colima shares it reliably,
+    # while files under TMPDIR can appear empty to containers.
+    handle = tempfile.NamedTemporaryFile("w", suffix=".sh", prefix=".arknet-install-test-", delete=False, dir=HERE.parent.parent)
+    with handle:
+        handle.write((HERE / "install.sh").read_text().replace("__ARKNET_RELEASE_VERIFY_KEY__", key))
+    os.chmod(handle.name, 0o644)
+    return handle.name
+
+
+def run(args, os_release=UBUNTU, meminfo=MEMINFO, uid="0", key=KEY):
     script = (f"printf '%s' '{os_release}' > /tmp/os-release && printf '%s' '{meminfo}' > /tmp/meminfo && "
               f"ARKNET_INSTALL_OS_RELEASE=/tmp/os-release ARKNET_INSTALL_MEMINFO=/tmp/meminfo ARKNET_INSTALL_ROOT_UID={uid} "
               f"sh /install.sh {args}")
-    result = subprocess.run(["docker", "run", "--rm", "--network", "none", "-v", f"{HERE / 'install.sh'}:/install.sh:ro",
-                             IMAGE, "sh", "-c", script], capture_output=True, text=True, timeout=120)
+    path = installer(key) if key is not None else str(HERE / "install.sh")
+    try:
+        result = subprocess.run(["docker", "run", "--rm", "--network", "none", "-v", f"{path}:/install.sh:ro",
+                                 IMAGE, "sh", "-c", script], capture_output=True, text=True, timeout=120)
+    finally:
+        if key is not None:
+            os.unlink(path)
     return result.returncode, result.stdout + result.stderr
 
 
@@ -57,6 +76,12 @@ class InstallerPreflight(unittest.TestCase):
         self.assertFails(f"{REL} --core-url http://127.0.0.1:8080", "loopback", "cannot reach Core there")
         self.assertFails(f"{REL} --core-url 'https://core.example/\\$(reboot)'", "not allowed")
         self.assertFails(f"{REL} --core-url ftp://core.example", "must be an http(s) URL")
+
+    def test_requires_a_well_formed_release_signing_key(self):
+        self.assertFails(REL, "does not contain the ArkNet release signing key", key=None)
+        for bad in ("c2hvcnQ=", KEY[:-2] + "B=", KEY.rstrip("="), "x" * 43 + "=", "$(reboot)"):
+            with self.subTest(bad=bad):
+                self.assertFails(REL, "release signing key in this install.sh is malformed", key=bad)
 
     def test_rejects_bad_options(self):
         self.assertFails(f"{REL} --channel beta", "--channel must be stable or development")

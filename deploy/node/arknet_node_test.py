@@ -1,10 +1,12 @@
 """Unit tests for deploy/node/arknet-node (no Docker required)."""
 import hashlib
+import base64
 import http.server
 import importlib.machinery
 import importlib.util
 import json
 import os
+import shutil
 import subprocess
 import tempfile
 import threading
@@ -20,13 +22,55 @@ _loader.exec_module(an)
 
 SHIPPED = (HERE / "release.json").read_bytes()
 COMPOSE = b"services: {}\n"
+VECTORS = HERE.parent.parent / "node-agent" / "internal" / "release" / "testdata" / "signature"
+
+
+def _openssl3_dir():
+    """Release signatures need OpenSSL 3 (`pkeyutl -rawin`); macOS ships LibreSSL."""
+    for directory in [None, "/opt/homebrew/opt/openssl@3/bin", "/usr/local/opt/openssl@3/bin"]:
+        binary = shutil.which("openssl", path=directory)
+        if binary and subprocess.run([binary, "version"], capture_output=True, text=True).stdout.startswith("OpenSSL 3"):
+            return str(Path(binary).parent)
+    raise unittest.SkipTest("OpenSSL 3 is required")
+
+
+# arknet-node runs `openssl` from PATH, exactly as on an Ubuntu Node.
+os.environ["PATH"] = _openssl3_dir() + os.pathsep + os.environ["PATH"]
+_KEYS = tempfile.TemporaryDirectory()
+
+
+def keypair(name):
+    key = Path(_KEYS.name) / f"{name}.pem"
+    if not key.exists():
+        subprocess.run(["openssl", "genpkey", "-algorithm", "ed25519", "-out", str(key)], check=True, capture_output=True)
+    der = subprocess.run(["openssl", "pkey", "-in", str(key), "-pubout", "-outform", "DER"], check=True, capture_output=True).stdout
+    return key, base64.b64encode(der[-32:]).decode()
+
+
+SIGNING_KEY, SIGNING_PUB = keypair("release")
+OTHER_KEY, OTHER_PUB = keypair("other")
+
+
+def sign(data, key=SIGNING_KEY):
+    """What the release publisher writes to release.json.sig."""
+    with tempfile.TemporaryDirectory() as work:
+        message, signature = Path(work) / "message", Path(work) / "signature"
+        message.write_bytes(b"arknet.node-release-signature/v1\n" + data)
+        subprocess.run(["openssl", "pkeyutl", "-sign", "-inkey", str(key), "-rawin", "-in", str(message), "-out", str(signature)],
+                       check=True, capture_output=True)
+        return base64.b64encode(signature.read_bytes()) + b"\n"
+
+
+def img(name, version):
+    """Published releases pin every bundled image by digest."""
+    return f"localhost:5000/arknet/{name}:{version}@sha256:{hashlib.sha256((name + version).encode()).hexdigest()}"
 
 
 def manifest(version, channel="development", project="arknet-test", compose=COMPOSE, images=None, extra_files=()):
     m = json.loads(SHIPPED)
     m.update(version=version, channel=channel, published_at="2026-10-25T00:00:00Z")
     for name in an.LOCKSTEP:
-        m["components"][name] = {"version": version, "image": f"localhost:5000/arknet/{name}:{version}", "bundled": True}
+        m["components"][name] = {"version": version, "image": img(name, version), "bundled": True}
     for name, image in (images or {}).items():
         m["components"][name]["image"] = image
     m["compose"] = {"project": project, "files": [{"path": "compose.yaml", "sha256": hashlib.sha256(compose).hexdigest()}] +
@@ -57,8 +101,10 @@ class Publisher:
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
         self.base = f"http://127.0.0.1:{self.server.server_address[1]}"
 
-    def publish(self, version, data, compose=COMPOSE, extra=()):
+    def publish(self, version, data, compose=COMPOSE, extra=(), signature=True, key=None):
         self.files[f"/releases/{version}/release.json"] = data
+        if signature:
+            self.files[f"/releases/{version}/release.json.sig"] = sign(data, key or SIGNING_KEY)
         self.files[f"/releases/{version}/compose.yaml"] = compose
         for name, content in extra:
             self.files[f"/releases/{version}/{name}"] = content
@@ -161,13 +207,14 @@ class UpgradeTests(unittest.TestCase):
         (d / "release.json").write_bytes(manifest(version))
         (d / "compose.yaml").write_bytes(COMPOSE)
         env = self.home / ".env"
-        env.write_text(f"POSTGRES_PASSWORD=secret\nARKNET_RELEASE_INDEX_URL={self.pub.base}/index.json\n")
+        env.write_text(f"POSTGRES_PASSWORD=secret\nARKNET_RELEASE_INDEX_URL={self.pub.base}/index.json\n"
+                       f"ARKNET_RELEASE_VERIFY_KEY={SIGNING_PUB}\n")
         env.chmod(0o600)
         (self.home / "state.json").write_text(json.dumps({"schema": an.STATE_SCHEMA, "release": version, "previous": None,
                                                           "project": "arknet-test", "compose_files": ["compose.yaml"]}))
         self.docker.running = version
         for name in an.LOCKSTEP:
-            self.docker.present.add(f"localhost:5000/arknet/{name}:{version}")
+            self.docker.present.add(img(name, version))
         m = json.loads(manifest(version))
         for name in ("postgresql", "jellyfin"):
             self.docker.present.add(m["components"][name]["image"])
@@ -178,7 +225,7 @@ class UpgradeTests(unittest.TestCase):
         self.pub.index(version, digest)
         if pullable:
             for name in an.LOCKSTEP:
-                self.docker.pullable.add(f"localhost:5000/arknet/{name}:{version}")
+                self.docker.pullable.add(img(name, version))
         return digest
 
     def run_cli(self, *argv):
@@ -208,7 +255,7 @@ class UpgradeTests(unittest.TestCase):
         self.assertEqual(self.state()["previous"], "0.0.2-dev.1")
         self.assertEqual(self.docker.ups(), ["0.0.2-dev.2"])
         pulls = [c[-1] for c in self.docker.calls if c[0] == "pull"]
-        self.assertEqual(sorted(pulls), sorted(f"localhost:5000/arknet/{n}:0.0.2-dev.2" for n in an.LOCKSTEP))
+        self.assertEqual(sorted(pulls), sorted(img(n, "0.0.2-dev.2") for n in an.LOCKSTEP))
         last_pull = max(i for i, c in enumerate(self.docker.calls) if c[0] == "pull")
         dump = next(i for i, c in enumerate(self.docker.calls) if "postgres" in c and "exec" in c)
         up_at = next(i for i, c in enumerate(self.docker.calls) if "up" in c)
@@ -249,6 +296,69 @@ class UpgradeTests(unittest.TestCase):
         self.publish_newer()
         self.pub.files["/releases/0.0.2-dev.2/compose.yaml"] = b"services: {evil: {image: x}}\n"
         self.assert_aborted("download")
+
+    def assert_refused_without_change(self, reason):
+        self.assert_aborted("download")
+        self.assertIn(reason, self.text())
+        self.assertEqual(sorted(p.name for p in (self.home / "releases").iterdir()), ["0.0.2-dev.1"], "release staged or kept")
+        self.assertEqual([c for c in self.docker.calls if c[0] == "pull"], [], "images pulled before verification")
+
+    def test_signed_release_is_verified_and_signature_kept(self):
+        self.publish_newer()
+        self.assertEqual(self.run_cli("upgrade"), an.EXIT_OK, self.text())
+        self.assertIn("signature verified", self.text())
+        installed = self.home / "releases" / "0.0.2-dev.2"
+        self.assertEqual((installed / "release.json.sig").read_bytes(), sign((installed / "release.json").read_bytes()))
+
+    def test_unsigned_release_is_refused(self):
+        self.publish_newer()
+        del self.pub.files["/releases/0.0.2-dev.2/release.json.sig"]
+        self.assert_refused_without_change("signature")
+
+    def test_release_signed_by_another_key_is_refused(self):
+        version = "0.0.2-dev.2"
+        self.pub.index(version, self.pub.publish(version, manifest(version), key=OTHER_KEY))
+        for name in an.LOCKSTEP:
+            self.docker.pullable.add(img(name, version))
+        self.assert_refused_without_change("signature")
+
+    def test_tampered_manifest_matching_the_index_is_refused(self):
+        self.publish_newer()
+        tampered = manifest("0.0.2-dev.2", images={"arknet-agent": "localhost:5000/evil/agent:0.0.2-dev.2@sha256:" + "e" * 64})
+        self.pub.files["/releases/0.0.2-dev.2/release.json"] = tampered  # the attacker also controls the index
+        self.pub.index("0.0.2-dev.2", hashlib.sha256(tampered).hexdigest())
+        self.assert_refused_without_change("signature")
+
+    def test_malformed_signatures_are_refused(self):
+        self.publish_newer()
+        good = self.pub.files["/releases/0.0.2-dev.2/release.json.sig"]
+        for bad in (b"", b"not base64!\n", good.strip() + b"  \n", good + b"\n", base64.b64encode(b"x" * 63) + b"\n",
+                    b"A" * 4096):
+            with self.subTest(bad=bad[:20]):
+                self.output.clear()
+                self.docker.calls.clear()
+                self.pub.files["/releases/0.0.2-dev.2/release.json.sig"] = bad
+                self.assert_refused_without_change("signature")
+
+    def test_missing_or_invalid_verify_key_refuses_upgrade(self):
+        env = self.home / ".env"
+        original = env.read_text()
+        self.publish_newer()
+        for text, reason in ((original.replace(f"ARKNET_RELEASE_VERIFY_KEY={SIGNING_PUB}\n", ""),
+                              "No release verification key is configured"),
+                             (original.replace(SIGNING_PUB, "c2hvcnQ="), "ARKNET_RELEASE_VERIFY_KEY must be canonical")):
+            with self.subTest(reason=reason):
+                self.output.clear()
+                env.write_text(text)
+                env.chmod(0o600)
+                self.assert_refused_without_change(reason)
+                self.assertNotIn("Release manifest", self.text(), "nothing may be downloaded without a key")
+
+    def test_unpinned_published_image_is_refused(self):
+        version = "0.0.2-dev.2"
+        data = manifest(version, images={"arknet-ui": f"localhost:5000/arknet/arknet-ui:{version}"})
+        self.pub.index(version, self.pub.publish(version, data))
+        self.assert_refused_without_change("pinned by digest")
 
     def test_unpullable_image_aborts_before_backup(self):
         self.publish_newer(pullable=False)
@@ -492,7 +602,7 @@ class InstallTests(unittest.TestCase):
         self.home = Path(self.tmp.name) / "arknet"
         self.home.mkdir(mode=0o755)
         env = self.home / ".env"
-        env.write_text("POSTGRES_PASSWORD=secret\nARKNET_CORE_URL=https://core.example\n")
+        env.write_text(f"POSTGRES_PASSWORD=secret\nARKNET_CORE_URL=https://core.example\nARKNET_RELEASE_VERIFY_KEY={SIGNING_PUB}\n")
         env.chmod(0o600)
         self.pub = Publisher()
         self.addCleanup(self.pub.close)
@@ -544,6 +654,14 @@ class InstallTests(unittest.TestCase):
         self.assertEqual(self.docker.ups(), ["0.1.0"])
         self.assertEqual((self.home / ".env").read_bytes(), before_env)
 
+    def test_fresh_install_refuses_unsigned_release_and_records_nothing(self):
+        del self.pub.files["/releases/0.1.0/release.json.sig"]
+        self.assertEqual(self.install(), an.EXIT_ABORTED, self.text())
+        self.assertIn("signature", self.text())
+        self.assertFalse((self.home / "state.json").exists())
+        self.assertFalse((self.home / "releases" / "0.1.0").exists())
+        self.assertEqual(self.docker.calls and [c for c in self.docker.calls if c[0] == "pull"], [])
+
     def test_channel_without_release_is_reported(self):
         self.assertEqual(self.install("development"), an.EXIT_ABORTED)
         self.assertIn("No development ArkNet release is published yet", self.text())
@@ -589,6 +707,23 @@ class ValidationTests(unittest.TestCase):
                 an.validate_manifest(json.dumps(m).encode())
         with self.assertRaises(ValueError):
             an.validate_manifest(b'{"schema":"a","schema":"b"}')
+
+    def test_signature_matches_openssl_vectors_shared_with_the_agent(self):
+        data = (VECTORS / "release.json").read_bytes()
+        signature = (VECTORS / "release.json.sig").read_bytes()
+        key = (VECTORS / "release-signing.pub").read_text().strip()
+        an.verify_release_signature(an.parse_verify_key(key), data, signature)
+        for bad_key, bad_data in (((VECTORS / "other-signing.pub").read_text().strip(), data),
+                                  (key, data.replace(b"0.1.0", b"0.1.1", 1))):
+            with self.assertRaises(ValueError):
+                an.verify_release_signature(an.parse_verify_key(bad_key), bad_data, signature)
+        an.require_pinned_images(an.validate_manifest(data))
+
+    def test_verify_key_must_be_canonical_32_byte_base64(self):
+        self.assertEqual(len(an.parse_verify_key(SIGNING_PUB)), 32)
+        for bad in ("", "c2hvcnQ=", SIGNING_PUB.rstrip("="), " " + SIGNING_PUB, SIGNING_PUB + "\n", "!" * 44):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                an.parse_verify_key(bad)
 
     def test_semver_precedence(self):
         ordered = ["0.0.1-dev", "0.0.1-dev.1", "0.0.1-dev.2", "0.0.1-dev.10", "0.0.1-dev.x", "0.0.1-rc.1", "0.0.1",

@@ -2,7 +2,8 @@ name: arknet-node-dev
 
 services:
   postgres:
-    image: postgres:18-alpine
+    # Pinned by digest (multi-arch index); update deliberately with the release.
+    image: postgres:18-alpine@sha256:123b17998ccaf47e53b502e8c6a1e79afd8f579c6f3eec83c563da026f957395
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-arknet_node}
       POSTGRES_USER: ${POSTGRES_USER:-arknet}
@@ -58,6 +59,9 @@ services:
       # Read-only update discovery; empty disables it. Nothing is installed.
       ARKNET_RELEASE_INDEX_URL: ${ARKNET_RELEASE_INDEX_URL:-}
       ARKNET_RELEASE_INDEX_ALLOW_HTTP: ${ARKNET_RELEASE_INDEX_ALLOW_HTTP:-false}
+      # Release signing public key (canonical base64, from install.sh). Empty
+      # disables discovery: only signed, digest-pinned releases are reported.
+      ARKNET_RELEASE_VERIFY_KEY: ${ARKNET_RELEASE_VERIFY_KEY:-}
     volumes:
       - ./release.json:/etc/arknet/release.json:ro
     ports:
