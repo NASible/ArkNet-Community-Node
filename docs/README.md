@@ -6,6 +6,8 @@ Architecture, development, and operations documentation belongs here.
   implementation tasks, including the repository foundation.
 - [Phase 20 prompt pack](development/hermes-phase20-prompts.md): ordered tasks
   that close the open ARKSEC release blockers, with the user decisions they need.
+- [Phase 21 prompt pack](development/hermes-phase21-prompts.md): production
+  readiness — release pipeline, observability, exposure, recovery and capacity.
 - [Repository overview](../README.md): component map and architecture boundaries.
 - [MVP validation report](mvp-validation-report.md): all 20 Prompt 43 results
   from the 2026-10-27 final-tree run (20 PASS), Phase 19A blockers,
