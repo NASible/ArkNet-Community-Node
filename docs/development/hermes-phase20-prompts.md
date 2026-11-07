@@ -507,6 +507,7 @@ Acceptance criteria:
 
 Done on frozen commit `b232f46` (2026-11-06): gate 18/18, standalone ARKSEC
 checks, and live-test verifiers all passed. Verdict: functionally complete;
-**not yet** ready for hostile multi-operator production (ARKSEC-009 open,
-documented residual windows, private pilot only). See the
+**not yet** ready for hostile multi-operator production. Every ARKSEC item
+is closed (ARKSEC-009 by operator confirmation, 2026-11-06); documented
+residual windows, no external audit and a private pilot only remain. See the
 [validation report](../mvp-validation-report.md).

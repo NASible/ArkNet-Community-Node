@@ -17,13 +17,11 @@ Result: every acceptance check passed on that commit. The Phase 19A report
   the same commit and all three of its verifiers passed.
 - **Is it ready for hostile multi-operator production? No, not yet.**
   ARKSEC-004 is closed, so the remaining risk is not the private-relay gap.
-  Every code-level acceptance criterion for ARKSEC-001 through ARKSEC-008
-  passes on this commit. What remains:
-  1. **ARKSEC-009 is open.** It needs an operator to confirm that credentials
-     which may have escaped through removed local `.env` files and generated
-     artifacts were rotated or were disposable. That is an operator action, not
-     a test. It is done only for the live-test group's application secrets;
-     the live tracker signing key and other environments are not covered.
+  **Every tracked ARKSEC item (001–009) is now closed or fixed.** 001–008 pass
+  their acceptance checks on this commit; ARKSEC-009 was closed on 2026-11-06
+  by operator confirmation (see below). The answer is still "not yet" because
+  of risks that no tracked item covers:
+  1. **No tracked ARKSEC blocker remains.** The verdict rests on items 2 and 3.
   2. **Residual risks.** These are documented, accepted for the first release,
      and still apply to hostile operators:
      - **Grant window.** A malicious Node keeps a bounded authorization window
@@ -123,7 +121,7 @@ check also asserts that the two transfer containers share no network.
 | [ARKSEC-006](security-follow-ups.md#arksec-006) | **Closed for cooperative Nodes** | E item 16: active transfer cancelled, bytes stop, terminal REVOKED. Malicious-Node enforcement is covered by the relay (ARKSEC-004). |
 | [ARKSEC-007](security-follow-ups.md#arksec-007) | **Closed for the supported recipe** | R: verified TLS, real Core/tracker/Agent/UI, raw-log sentinel scan of five sinks, forced errors, and a leak-detecting negative control. L: live ingress request-error sink set to `/dev/null`, and no request logging. |
 | [ARKSEC-008](security-follow-ups.md#arksec-008) | **Closed for the scoped criteria** | N (signed enrollment, generic receipts, restart idempotency). C (rate limit, quota and expiry tests, real PostgreSQL). E passes under the production limits. |
-| [ARKSEC-009](security-follow-ups.md#arksec-009) | **Open** | Needs operator confirmation, which no test can provide. Live-test application secrets were rotated in Prompt 44B; the live tracker signing key and other environments are not covered. Prompt 49 removed the shared development admin bearer from the product (A proves a configured one stops Core). |
+| [ARKSEC-009](security-follow-ups.md#arksec-009) | **Closed** 2026-11-06 | The operator confirmed that the credentials from the removed local `.env` files were throwaway. Live-test application secrets were rotated in Prompt 44B; the live tracker, assertion and relay keys were generated on the VMs, never from a local `.env`. Prompt 49 removed the shared development admin bearer from the product (A proves a configured one stops Core). |
 
 ## Live-test group (L)
 
@@ -186,7 +184,7 @@ No PASS above comes from them.
 Any runtime change after `b232f46` requires rerunning G, H, A, N and L.
 Hostile multi-operator readiness additionally requires:
 
-- ARKSEC-009 to be closed by operator confirmation;
+- an independent security review or penetration test;
 - an explicit decision on the documented residual windows;
 - multi-relay and production deployment evidence beyond the private pilot.
 
