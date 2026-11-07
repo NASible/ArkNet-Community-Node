@@ -15,7 +15,9 @@ explanation.
   every `scripts/*_test.py` and `deploy/node/*_test.py`, the Core and Agent
   PostgreSQL store tests against a throwaway `postgres:18-alpine` (run from a Go
   container that shares the database's clock), and worker tests inside the
-  transfer image (real libtorrent). `--e2e` adds the TLS ingress log-redaction
+  transfer image (real libtorrent), and builds and inspects the shipped Node UI
+  image (`node_ui_image_test.py`: no Vite, dev dependencies, sources, source maps
+  or package managers; serves the build after dropping root). `--e2e` adds the TLS ingress log-redaction
   sentinel check, MVP E2E, Node upgrade and product swarm
   checks; `--vm` adds the fresh-VM install check. Every step runs, step logs
   stay in `DIR`, and the last line is `EXIT <failed steps>`.

@@ -36,7 +36,7 @@ RELAY_ADDRESS = RELAY_HOST + ':7443'
 # Keep the previous rendered files so a failed rollout can be reverted exactly.
 stamp = datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%dT%H%M%SZ')
 backup = ('set -e; cd /opt/arknet; if [ -f compose.json ]; then sudo install -d -m 0700 rollback/' + stamp +
-          '; for f in compose.json compose.yaml runtime.env release.json ui-nginx.conf; do '
+          '; for f in compose.json compose.yaml runtime.env release.json; do '
           'if [ -f $f ]; then sudo cp -a $f rollback/' + stamp + '/; fi; done; fi; true')
 ssh(machine, 'sudo install -d -m 0755 /opt/arknet && sudo install -d -m 0700 /opt/arknet/rollback && ' + backup)
 print('PREVIOUS_CONFIG_RETAINED', args.host, '/opt/arknet/rollback/' + stamp, flush=True)
@@ -186,7 +186,9 @@ else:
     if len(base64.b64decode(list_key, validate=True)) != 32:
         raise RuntimeError('Core relay-list verify key is not a 32-byte Ed25519 public key')
     networks.update({'control': {'internal': True}, 'media-services': {'internal': True}, 'ui-edge': {}})
-    put(machine, base + '/ui-nginx.conf', (HERE / 'ui-nginx.conf').read_bytes())
+    # Prompt 51: the shipped production UI image replaces the pilot's own nginx
+    # build; drop its obsolete config file.
+    ssh(machine, 'sudo rm -f /opt/arknet/ui-nginx.conf')
     volumes.update({'appdata': {}, 'jellyfin-cache': {}, 'transfers': {}, 'transfer-state': {}})
     ssh(machine, 'findmnt -rn /srv/arknet/media >/dev/null && sudo chown 10001:10001 /srv/arknet/media && sudo chmod 0755 /srv/arknet/media')
     services['jellyfin'] = {'image': jellyfin_image, 'restart': 'unless-stopped', 'mem_limit': '768m',
@@ -223,11 +225,14 @@ else:
         'ports': ['127.0.0.1:8082:8081', '127.0.0.1:8086:8082'], 'networks': ['database', 'control', 'media-services', 'egress'],
         'depends_on': {'postgres': {'condition': 'service_healthy'}, 'arknet-transfer': {'condition': 'service_healthy'}},
         'healthcheck': probe(['CMD', 'wget', '-q', '-O', '/dev/null', 'http://127.0.0.1:8082/health'])}
-    services['arknet-ui'] = {'image': images['ui'], 'restart': 'unless-stopped', 'mem_limit': '64m',
+    # The shipped node-ui image (Prompt 51). Host nginx terminates TLS, so no
+    # certificate is mounted and the image's own 8443 listener stays off.
+    services['arknet-ui'] = {**hardening, 'image': images['ui'], 'mem_limit': '128m',
+        'cap_add': ['SETUID', 'SETGID'], 'read_only': True, 'tmpfs': ['/tmp:size=8m,mode=1777'],
+        'environment': {'ARKNET_AGENT_URL': 'http://arknet-agent:8081', 'ARKNET_MEMBER_URL': 'http://arknet-agent:8082'},
         'ports': ['127.0.0.1:5174:5173'], 'networks': ['control', 'ui-edge'],
-        'volumes': ['/opt/arknet/ui-nginx.conf:/etc/nginx/conf.d/default.conf:ro'],
         'depends_on': {'arknet-agent': {'condition': 'service_healthy'}},
-        'healthcheck': probe(['CMD', 'wget', '-q', '-O', '/dev/null', 'http://127.0.0.1:5173/']), 'logging': hardening['logging']}
+        'healthcheck': probe(['CMD', 'wget', '-q', '-O', '/dev/null', 'http://127.0.0.1:5173/'])}
 
 compose = {'name': project, 'services': services, 'networks': networks, 'volumes': volumes}
 encoded = json.dumps(compose, indent=2) + '\n'

@@ -28,8 +28,6 @@ for folder in allowed:
 assert any(rel.parts[:3] == ('core', 'internal', 'media') for rel, _ in files)
 assert any(str(rel) == 'transfer/worker.py' for rel, _ in files)
 assert any(str(rel) == 'relay/Dockerfile' for rel, _ in files)
-for name in ['ui.Dockerfile', 'ui-nginx.conf']:
-    files.append((Path('deploy/live-test') / name, HERE / name))
 hash_state = hashlib.sha256()
 bundle = io.BytesIO()
 with tarfile.open(fileobj=bundle, mode='w:gz') as archive:
@@ -47,8 +45,8 @@ for host, components in [('nodenet-core', ['core', 'tracker', 'relay']), ('noden
     ssh(host, 'sudo install -d -m 0755 /opt/arknet/source && sudo tar -xzpf - -C /opt/arknet/source', bundle.getvalue())
     for component in components:
         tag = 'nodenet-' + component + ':' + revision[:12]
-        context = {'core': 'core', 'tracker': 'tracker', 'relay': 'relay', 'agent': 'node-agent', 'transfer': 'transfer', 'ui': '.'}[component]
-        dockerfile = ' -f deploy/live-test/ui.Dockerfile' if component == 'ui' else ''
+        context = {'core': 'core', 'tracker': 'tracker', 'relay': 'relay', 'agent': 'node-agent', 'transfer': 'transfer', 'ui': 'node-ui'}[component]
+        dockerfile = ''  # every image uses its component's shipped Dockerfile
         command = ('cd /opt/arknet/source && sudo docker build --label org.arknet.source.sha256=' + revision +
                    ' --build-arg GOMAXPROCS=2 -t ' + tag + dockerfile + ' ' + context)
         print('BUILD', host, component, tag, flush=True)

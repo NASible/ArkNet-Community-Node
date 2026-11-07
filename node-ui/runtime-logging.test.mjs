@@ -50,16 +50,18 @@ for (const entrypoint of ['dev', 'serve', 'preview', 'image']) {
       });
       const backendPort = await listen(backend);
       const dockerfile = readFileSync(new URL('./Dockerfile', import.meta.url), 'utf8');
-      // Preview gets a disposable static artifact so tests need no prior build.
-      const previewDir = entrypoint === 'preview' ? mkdtempSync(path.join(os.tmpdir(), 'arknet-preview-')) : null;
+      // Production entrypoints (serve, image) and preview serve a build; give
+      // them a disposable static artifact so tests need no prior build.
+      const previewDir = entrypoint === 'dev' ? null : mkdtempSync(path.join(os.tmpdir(), 'arknet-preview-'));
       if (previewDir) writeFileSync(path.join(previewDir, 'index.html'), '<!doctype html><title>Preview fixture</title>');
       const command = entrypoint === 'image'
         ? JSON.parse(dockerfile.match(/^CMD (\[.*\])$/m)[1])
-        : ['npm', 'run', entrypoint, ...(previewDir ? ['--', '--outDir', previewDir, '--port', '5173', '--strictPort'] : [])];
+        : ['npm', 'run', entrypoint, ...(entrypoint === 'preview' ? ['--', '--outDir', previewDir, '--port', '5173', '--strictPort'] : [])];
       const child = spawn(command[0], command.slice(1), {
         cwd: import.meta.dirname, detached: true,
         env: { ...process.env, ...debug, ARKNET_AGENT_URL: `http://127.0.0.1:${backendPort}`,
           ARKNET_UI_TLS_CERT: `${import.meta.filename}.missing-cert`, ARKNET_UI_HOST: '127.0.0.1',
+          ...(previewDir ? { ARKNET_UI_STATIC_DIR: previewDir } : {}),
           NO_COLOR: '1' }, stdio: ['ignore', 'pipe', 'pipe'],
       });
       let output = '';

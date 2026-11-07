@@ -42,6 +42,8 @@ export default defineConfig(({ mode }) => {
         '/api': { target: env.ARKNET_AGENT_URL || 'http://127.0.0.1:8081' },
       },
     },
+    // The production image must never ship source maps (Prompt 51).
+    build: { sourcemap: false },
     test: { environment: 'jsdom', restoreMocks: true },
   };
 });

@@ -109,9 +109,11 @@ across Linux/macOS. See `backup-proof.json` for results.
 
 The running Compose definition is `/opt/arknet/compose.json`. A byte-identical
 `compose.yaml` is shipped for the strict release manifest; do not edit one
-without regenerating both. Runtime environment files are root-only. The static
-production UI uses a host-mounted Nginx config and Docker's embedded DNS so
-Agent container IP changes do not leave a stale proxy destination.
+without regenerating both. Runtime environment files are root-only. The UI is the
+shipped production `node-ui` image (Prompt 51), read-only with only SETUID/SETGID
+kept; host nginx terminates TLS, so its own HTTPS listener is off. It resolves
+the Agent through Docker's embedded DNS on every request, so Agent container IP
+changes do not leave a stale proxy destination.
 
 Image IDs and the non-secret source SHA-256 are recorded in `build-record.json`.
 Build publication is atomic: `build-progress.json` is not deployable until the

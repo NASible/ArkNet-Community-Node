@@ -152,6 +152,8 @@ for module in $GO_MODULES; do
     step "go-$module" go_module "$module"
 done
 step node-ui node_ui
+# Builds the shipped UI image: production build only, no Vite or source maps.
+step node-ui-image env ARKNET_TEST_UI_IMAGE=1 python3 -m unittest -v scripts.node_ui_image_test
 step harness-tests harness_tests
 step deploy-tests deploy_tests
 step postgres-tests postgres_tests

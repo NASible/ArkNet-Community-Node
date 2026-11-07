@@ -4,7 +4,7 @@ Local development environment for the ArkNet `0.0.1-dev` community-node stack:
 
 | Service | Purpose | Default host access |
 | --- | --- | --- |
-|| `arknet-ui` | React/TypeScript dashboard served by Vite | http://127.0.0.1:5174 |
+|| `arknet-ui` | React/TypeScript dashboard: static production build and API proxy | http://127.0.0.1:5174 |
 || `arknet-agent` | Local Go management API / member API (health, logins) | http://127.0.0.1:8082 / http://127.0.0.1:8086 |
 || `postgres` | PostgreSQL 18 development database | None; stack-only port 5432 |
 || `jellyfin` | Jellyfin media server | http://127.0.0.1:8096 |
@@ -195,9 +195,10 @@ tests, Agent-only restart/recreation identity preservation, and database outage
 and recovery without restarting Agent. It removes **only its disposable test
 project, test volume, and helper test image**, not your development stack or database.
 
-This stack uses Vite's development server, not a production UI server. Jellyfin,
-mesh connectivity, Kubernetes, and production deployment hardening remain
-outside this task.
+The UI container serves a static production build with a dependency-free Node
+server (no Vite at runtime), read-only, with every capability dropped except the
+SETUID/SETGID it needs to leave root after reading its TLS key. Mesh
+connectivity and Kubernetes remain outside this task.
 
 ## Optional mock transfer service
 

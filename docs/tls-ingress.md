@@ -108,12 +108,14 @@ disposable nonsecret probe instead. Startup/configuration validation still
 returns failure status.
 
 The Node UI retains nonsecret proxy-failure diagnostics without including the
-proxied URL or raw error object. That matters when a failed Agent request passes
-through Vite: disabling Nginx access logs alone does not protect those messages.
-Supported UI npm/image entrypoints also clear `DEBUG`, `NODE_DEBUG` and
-`NODE_DEBUG_NATIVE` before Node starts, because those channels bypass Vite's
-logger. Use `npm run dev`, `npm run serve`, `npm run preview` or the image's
-unchanged default command; direct Node/Vite invocation bypasses that guard.
+proxied URL or raw error object. The shipped image's production server
+(`server.mjs`, Prompt 51) logs no request lines at all; the Vite development
+server used by `npm run dev`/`preview` redacts its proxy errors. Disabling Nginx
+access logs alone does not protect those messages. Supported UI npm/image
+entrypoints also clear `DEBUG`, `NODE_DEBUG` and `NODE_DEBUG_NATIVE` before Node
+starts, because those channels bypass any application logger. Use
+`npm run dev`, `npm run serve`, `npm run preview` or the image's unchanged
+default command; direct Node/Vite invocation bypasses that guard.
 
 If another load balancer, CDN, WAF, tunnel, packet recorder or observability
 agent sits in front of this ingress, it is a separate log boundary. Configure

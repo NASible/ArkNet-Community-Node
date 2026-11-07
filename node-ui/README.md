@@ -66,13 +66,22 @@ enroll an authenticator and save the displayed recovery codes. After setup,
 use **Sign in** and **Sign out** in the header. The Agent enforces permissions
 independently of the UI; anonymous/member calls to management routes return 401.
 
-The Docker image starts the guarded `sh ./start-ui.sh` entrypoint: Vite serves
-port 5173, and the HTTPS
-listener serves 8443 when `/etc/arknet/tls/cert.pem` and `key.pem` exist.
+The Docker image is a production build (Prompt 51). Its build stage runs
+`npm run build`; the runtime stage contains only Node, `dist/`, `server.mjs` and
+`start-ui.sh` — no Vite, `node_modules`, sources, source maps or package
+managers. The guarded `sh ./start-ui.sh` entrypoint starts `server.mjs`, a
+dependency-free Node server: it serves the static build on port 5173 (with a
+Content-Security-Policy and an app-shell fallback for client routes), proxies
+`/api` to the Agent's management and member listeners exactly like the Vite
+development proxy, and serves the same on an HTTPS listener (8443) when
+`/etc/arknet/tls/cert.pem` and `key.pem` exist.
 `install.sh` and upgrades generate that certificate; see
 [Node installation](../docs/node-installation.md). Plain HTTP is published only
 on loopback; HTTPS is published to the LAN. Standalone HTTPS development can use
-`ARKNET_UI_TLS_CERT` and `ARKNET_UI_TLS_KEY` with `npm run serve`.
+`ARKNET_UI_TLS_CERT` and `ARKNET_UI_TLS_KEY` with `npm run build && npm run serve`
+(`ARKNET_UI_STATIC_DIR` selects another build directory). The production server
+logs no request URL, header or body; an unreachable Agent produces one constant
+`http proxy error: upstream request failed (details redacted)` line.
 
 Supported `dev`, `serve`, `preview` and image startup paths clear `DEBUG`,
 `NODE_DEBUG` and `NODE_DEBUG_NATIVE` before Node loads any modules: those debug
@@ -211,6 +220,7 @@ The build type-checks all TypeScript and produces ignored static assets in
 reproducible.
 
 `npm run preview` previews the static build and inherits Vite's local Agent proxy
-configuration; it is not a production serving solution. In production, the
-serving layer must route same-origin `/api/v1/*` requests to the local Agent.
+configuration; it is not a production serving solution. Production uses
+`npm run serve` / the Docker image (`server.mjs`), which routes same-origin
+`/api/*` requests to the local Agent.
 For the local container workflow, see the [Node development Compose stack](../deploy/node/README.md).

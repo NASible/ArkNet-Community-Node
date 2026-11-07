@@ -87,6 +87,19 @@ services:
     environment:
       ARKNET_AGENT_URL: http://arknet-agent:8081
       ARKNET_MEMBER_URL: http://arknet-agent:8082
+    # Static production build served by a dependency-free Node server: nothing
+    # is written at runtime. Root is used only to read the mode-0600 TLS key
+    # before dropping to the node user, so only SETUID/SETGID are kept.
+    read_only: true
+    tmpfs:
+      - /tmp:size=8m,mode=1777
+    cap_drop:
+      - ALL
+    cap_add:
+      - SETUID
+      - SETGID
+    security_opt:
+      - no-new-privileges:true
     # Plain HTTP stays on loopback (SSH tunnels). The HTTPS listener serves the
     # LAN with the Node's self-signed certificate, created by arknet-node.
     volumes:
