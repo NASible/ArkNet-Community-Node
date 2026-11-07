@@ -1,30 +1,35 @@
 {
   "nodenet-core": {
-    "old_boot_id": "564a37c9-51dc-434e-ab63-f6ae5017646f",
-    "new_boot_id": "a026a7d0-ae66-4a34-9cb3-089c76363eba",
+    "old_boot_id": "e6e5a954-ccec-4e39-9673-ab77d8291e08",
+    "new_boot_id": "43b92d01-7068-4c17-a5e5-ab5f5f75c528",
     "new_boot_verified": true,
     "all_containers_healthy_after_vm_reboot": true,
-    "nginx_active_after_vm_reboot": true
+    "container_count": 4,
+    "nginx_active_after_vm_reboot": true,
+    "relay_proxy_listening_after_vm_reboot": true
   },
   "nodenet-node-a": {
-    "old_boot_id": "0b89d11c-e814-4c71-8b7e-cb4e5d2c4267",
-    "new_boot_id": "713130c2-b89c-4240-b63a-d89829b472d3",
+    "old_boot_id": "501d0756-dbf1-4484-a334-f8b09b28400e",
+    "new_boot_id": "b690891a-157d-4c5a-8fef-c0e7fa9f0d4f",
     "new_boot_verified": true,
     "all_containers_healthy_after_vm_reboot": true,
+    "container_count": 5,
     "nginx_active_after_vm_reboot": true
   },
   "nodenet-node-b": {
-    "old_boot_id": "e171afb4-5b72-452e-b32d-1338b0985b2d",
-    "new_boot_id": "86206263-0692-4870-9828-11f45b585f40",
+    "old_boot_id": "be1c3e0f-dc3f-4903-9715-5092179270c7",
+    "new_boot_id": "188e6697-e26b-4266-8ea9-5124ba2d088f",
     "new_boot_verified": true,
     "all_containers_healthy_after_vm_reboot": true,
+    "container_count": 5,
     "nginx_active_after_vm_reboot": true
   },
   "nodenet-node-c": {
-    "old_boot_id": "67633f88-36c6-4e15-a48d-f8294843cbf7",
-    "new_boot_id": "991d6945-3a60-4c00-9238-74405439ca81",
+    "old_boot_id": "5e605b37-d4a5-482f-abc5-1dd7c6adbb60",
+    "new_boot_id": "4b5abb1f-84d2-4872-ac13-cc248836e8a6",
     "new_boot_verified": true,
     "all_containers_healthy_after_vm_reboot": true,
+    "container_count": 5,
     "nginx_active_after_vm_reboot": true
   }
 }

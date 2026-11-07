@@ -40,6 +40,11 @@ backup = ('set -e; cd /opt/arknet; if [ -f compose.json ]; then sudo install -d 
           'if [ -f $f ]; then sudo cp -a $f rollback/' + stamp + '/; fi; done; fi; true')
 ssh(machine, 'sudo install -d -m 0755 /opt/arknet && sudo install -d -m 0700 /opt/arknet/rollback && ' + backup)
 print('PREVIOUS_CONFIG_RETAINED', args.host, '/opt/arknet/rollback/' + stamp, flush=True)
+# Rollback copies include runtime.env secrets: keep only the newest few.
+KEEP_ROLLBACKS = 3
+prune = ('cd /opt/arknet/rollback && ls -1d 20[0-9][0-9][01][0-9][0-3][0-9]T[0-9][0-9][0-9][0-9][0-9][0-9]Z 2>/dev/null'
+         ' | sort -r | tail -n +' + str(KEEP_ROLLBACKS + 1) + ' | while read d; do rm -rf -- "$d"; done')
+ssh(machine, 'sudo sh -c ' + shlex.quote(prune))
 # Community Nodes never receive Core administrative credentials (security review
 # requirement); each machine gets only the secrets its own services use.
 env = {'POSTGRES_PASSWORD': local['database_password']}

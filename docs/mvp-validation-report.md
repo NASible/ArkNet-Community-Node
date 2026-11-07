@@ -37,8 +37,7 @@ Result: every acceptance check passed on that commit. The Phase 19A report
      - **No external audit.** No independent security audit or penetration
        test has been done.
   3. **Deployment.** The only deployment is a private, trusted-operator
-     four-VM pilot. Reboot recovery of the new relay listener was not
-     re-verified (see below).
+     four-VM pilot.
 
 ## Evidence rules
 
@@ -142,14 +141,24 @@ check also asserts that the two transfer containers share no network.
   indexed by Jellyfin through the Agent and direct-streamed with matching bytes.
 - **Backups.** Fresh backups were taken after the rollout, pulled off-VM,
   decrypted and restored into disposable databases on all four VMs.
-- **Not rerun:** `verify-reboots.py`. It reboots all four VMs, so it needs an
-  explicit operator decision. Reboot recovery of the relay socket proxy and the
-  relay container is therefore unverified.
+- **Reboots (run after the report, with operator approval, 20:33–20:36 AKST):**
+  `verify-reboots.py` rebooted each VM from its own OS, one at a time. Every VM
+  came back with a new boot ID, active nginx and all containers healthy (Core 4,
+  each Node 5), and the Core relay socket proxy was listening again
+  (`ALL_FOUR_VM_REBOOTS_RECOVERED`, `EXIT 0`). A following `verify-deployment.py`
+  passed again, including relay TLS 1.3 and the certificate pin from every Node
+  (`DEPLOYMENT_AND_ACCESS_BOUNDARY_PROOF_PASS`, `EXIT 0`). Logs:
+  `~/.hermes/cache/scratch/p50/live-reboots/`. The deployed services were the
+  `b232f46` build. The only tooling changes since the freeze are this reboot
+  verifier (no Proxmox credential needed; expects the relay) and bounded
+  rollback-copy retention in `deploy-stack.py`; neither changes deployed images
+  or configuration.
 
 Proof JSONs: [deployment](../deploy/live-test/deployment-proof.json),
 [media](../deploy/live-test/sample-proof.json),
 [backups](../deploy/live-test/backup-proof.json),
-[build](../deploy/live-test/build-record.json).
+[build](../deploy/live-test/build-record.json),
+[reboots](../deploy/live-test/reboot-proof.json).
 
 ## Defects fixed during Prompt 50
 
