@@ -23,6 +23,11 @@ with `install.sh` and `arknet-node` from signed releases, so the pilot scripts
 (which read `machines`) never touch it. SSH uses the same key, as
 `arknet@192.168.0.152`.
 
+VMID 113 `arknet-ci-probe` (host `pve`, LAN 192.168.0.23, no VPN address) is
+also listed under `release_test_machines`, with role `ci-rehearsal`. It
+mirrors a GitHub `ubuntu-24.04` runner for rehearsing the Linux gate; see
+[CI](../../docs/development/ci.md). SSH as `arknet@192.168.0.23` with the same key.
+
 Member APIs (health and member/operator login; Agent loopback port 8086) are
 `https://member-a.nodenet.arknet.media`, `https://member-b.nodenet.arknet.media`
 and `https://member-c.nodenet.arknet.media`; management routes answer 404 there.

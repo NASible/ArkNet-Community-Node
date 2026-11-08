@@ -70,6 +70,11 @@ In GitHub: **Actions → gate → Run workflow**, tick *Also run --e2e --vm*.
 
 ## Rehearsing on your own Linux VM
 
+The kept rehearsal VM is VMID 113 `arknet-ci-probe` (see
+[live-test inventory](../../deploy/live-test/README.md)). To rehearse, copy a
+`git bundle` of the branch to it, then run the same commands as the workflow.
+To build a new one:
+
 On a fresh Ubuntu 24.04 VM with nested virtualisation (Proxmox: CPU type
 `host`): install Docker CE, Go 1.26, Node 26, ffmpeg and `libatomic1`, add the
 user to the `docker` group, then run `scripts/ci/install-lima.sh` and

@@ -12,6 +12,8 @@
   ],
   "release_test_machines": [
     {"vmid":112,"hostname":"nodenet-node-d","role":"release-test","proxmox_node":"pve","lan_ip":"192.168.0.152","cpu":2,"memory_mib":4096,"system_disk_gib":32,
-     "note":"Fresh Ubuntu 24.04 installed only through install.sh/arknet-node from signed releases; not part of the pilot stack, so pilot tools ignore it."}
+     "note":"Fresh Ubuntu 24.04 installed only through install.sh/arknet-node from signed releases; not part of the pilot stack, so pilot tools ignore it."},
+    {"vmid":113,"hostname":"arknet-ci-probe","role":"ci-rehearsal","proxmox_node":"pve","lan_ip":"192.168.0.23","cpu":4,"memory_mib":8192,"system_disk_gib":80,
+     "note":"Ubuntu 24.04 shaped like a GitHub ubuntu-24.04 runner (CPU type host for KVM) to rehearse scripts/check-all.sh --e2e --vm on Linux; see docs/development/ci.md. Not part of the pilot stack."}
   ]
 }
