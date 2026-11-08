@@ -119,6 +119,50 @@ which also deleted the shared local `arknet-transfer:0.0.1-dev` tag. Cleanup
 now removes only test-registry references. The rerun passed, and the local tag
 survived both checks.
 
+## Live pilot: GHCR release on a fresh Proxmox VM (2026-11-07)
+
+**Regression first.** `main` at `188daac` was redeployed to the four pilot VMs.
+All checks passed: deployment and access boundaries, three-Node media proof,
+and backup decrypt-and-restore on every VM. No secrets appeared in the logs.
+
+**Test machine.** `nodenet-node-d` (VMID 112, host `pve`, LAN only; see
+`deploy/live-test/README.md`) is a fresh Ubuntu 24.04 VM with no Docker.
+
+**Test releases.** `0.1.0-pilot.1` and `0.1.0-pilot.2` were published to
+the development channel with `scripts/publish-release.py`. They were built
+from temporary clones of `main` with a throwaway signing key, for
+`linux/amd64`, and pushed to the public `ghcr.io/nasible/arknet-*` packages.
+The release site was served over plain LAN HTTP from the operator Mac
+(`--allow-insecure-http`); the signature check still ran.
+
+| Step | Result |
+| --- | --- |
+| `curl …/install.sh && sudo sh install.sh --channel development --allow-insecure-http` | Installed Docker, printed `signature verified`, pulled all five images by digest from GHCR and Docker Hub, all containers healthy. The Node stays in PROVISIONING because no Core was given (see below). |
+| Agent discovery on pilot.1 | `UP_TO_DATE`; after pilot.2 was published, `UPDATE_AVAILABLE` |
+| Tampered pilot.2 (Agent image digest changed, index digest recomputed so only the signature differs) | Agent `CHECK_FAILED`. `arknet-node upgrade` exit 2: "Release signature rejected … The running Node was not changed." Status, releases directory and running images were identical before and after. |
+| Unsigned pilot.2 (`.sig` removed) | `arknet-node upgrade` exit 2: "Release signature unavailable: HTTP 404". No change. The Agent check was rate-limited, so its result was the cached one from the tampered case. |
+| Genuine `arknet-node upgrade` pilot.1 → pilot.2 | UPGRADED. The Node ID and operator session survived; PostgreSQL and Jellyfin kept running. |
+| `arknet-node rollback` | ROLLED BACK to pilot.1, validated, database backup written. Same Node ID. |
+
+node-d was left on pilot.2.
+
+**Defects found and fixed.**
+
+- **Go crashed under emulation.** Building amd64 images on the arm64 Mac
+  crashed the Go toolchain running under QEMU
+  (`fatal error: found pointer to free object`). All build stages now run on
+  `$BUILDPLATFORM` and cross-compile; a test enforces it.
+- **Private packages crashed the publish script.** GHCR refuses anonymous
+  tokens for private packages with 401, which escaped as a traceback. It is
+  now reported as "not public", and `--wait-public` waits while the operator
+  changes visibility. New GHCR packages start private, and visibility can only
+  be changed in the web UI.
+
+**Gap found (not fixed).** An installed Node cannot trust a private CA, so it
+cannot enroll with the pilot Core (`core.nodenet.arknet.media` uses the
+pilot's private CA). Private deployments need a supported way to add a CA
+bundle to the Agent.
+
 ## Not done (needs the operator)
 
 - No real release is published yet. Generating the production key, committing
