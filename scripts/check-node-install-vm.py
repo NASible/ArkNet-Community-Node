@@ -166,7 +166,7 @@ def main():
         sh("docker", "run", "-d", "--name", REGISTRY_NAME, "-p", f"127.0.0.1:{REGISTRY_PORT}:5000", "registry:latest")
         sh("docker", "build", "-q", "--build-arg", f"ARKNET_VERSION={VERSION}", "-t", image("arknet-agent"), str(ROOT / "node-agent"))
         sh("docker", "build", "-q", "-t", image("arknet-ui"), str(ROOT / "node-ui"))
-        sh("docker", "tag", "arknet-transfer:0.0.1-dev", image("arknet-transfer"))
+        sh("docker", "build", "-q", "--build-arg", f"ARKNET_VERSION={VERSION}", "-t", image("arknet-transfer"), str(ROOT / "transfer"))
         images = {}
         for component in ("arknet-agent", "arknet-ui", "arknet-transfer"):
             for _ in range(10):

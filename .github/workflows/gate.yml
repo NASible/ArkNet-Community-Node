@@ -86,6 +86,8 @@ jobs:
           node-version: "26"
           cache: npm
           cache-dependency-path: node-ui/package-lock.json
+      - name: Install e2e tools
+        run: sudo apt-get update -qq && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq ffmpeg
       - name: Install Lima and QEMU
         run: scripts/ci/install-lima.sh
       - name: Full gate

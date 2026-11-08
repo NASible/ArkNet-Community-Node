@@ -38,6 +38,7 @@ if str(ROOT) not in sys.path:
 
 from scripts.check_multi_node_result import result_document
 from scripts import e2e_diagnostics
+from scripts import harness_scratch
 from scripts import operator_login
 from scripts import relay_acceptance
 
@@ -619,7 +620,7 @@ def main(argv=None):
             if isolated_network in made_network:
                 run(["docker", "network", "rm", isolated_network], check=False, timeout=30)
         for image in images.values(): run(["docker", "image", "rm", "-f", image], check=False, timeout=60)
-        shutil.rmtree(temporary, ignore_errors=False)
+        harness_scratch.remove_tree(temporary)  # Linux containers leave root-owned files
         leftovers = []
         for project in projects:
             for kind, command in (("container", ["docker", "ps", "-aq", "--filter", f"label=com.docker.compose.project={project}"]),

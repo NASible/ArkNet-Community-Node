@@ -38,6 +38,7 @@ import sys  # noqa: E402  (repository root import path for sibling helper module
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 from scripts import e2e_diagnostics  # noqa: E402
+from scripts import harness_scratch  # noqa: E402
 from scripts import operator_login  # noqa: E402
 from scripts import global_login  # noqa: E402
 from scripts import revocation_meter  # noqa: E402
@@ -925,8 +926,11 @@ def main(argv=None):
                                  " including its transfer-control API; separate internal gateway networks expose no direct peer path")
             env = dict(nodes["a"]["env"])
             env["ARKNET_TEST_DATABASE_URL"] = f"postgresql://arknet:{nodes['a']['password']}@postgres:5432/arknet_node?sslmode=disable"
-            env.update(ARKNET_TEST_CORE_URL=f"http://host.docker.internal:{core_port}", ARKNET_TEST_TARGET_NODE_ID=nodes["b"]["node_id"])
-            run(["docker", "run", "--rm", "--network", nodes["a"]["project"] + "_node", "-e", "ARKNET_TEST_DATABASE_URL",
+            # Dial Core exactly as Node A's Agent does: from inside its network
+            # namespace, with its Core URL (portable: no host.docker.internal).
+            a_agent = container(lambda *i, **k: node_compose("a", *i, **k), "arknet-agent")
+            env.update(ARKNET_TEST_CORE_URL=nodes["a"]["env"]["ARKNET_CORE_URL"], ARKNET_TEST_TARGET_NODE_ID=nodes["b"]["node_id"])
+            run(["docker", "run", "--rm", "--network", "container:" + a_agent, "-e", "ARKNET_TEST_DATABASE_URL",
                  "-e", "ARKNET_TEST_CORE_URL", "-e", "ARKNET_TEST_TARGET_NODE_ID", "-e", "CGO_ENABLED=0", "-e", "GOMAXPROCS=2",
                  "-v", str(ROOT / "scripts/node-enrollment-auth-probe.go") + ":/src/probe/main.go:ro", images["agent-build"],
                  "go", "run", "-trimpath", "-p=1", "./probe"], env=env, timeout=600)
@@ -1071,7 +1075,10 @@ def main(argv=None):
                 run(["docker", "network", "rm", network], check=False, timeout=30)
         for image in images.values():
             run(["docker", "image", "rm", "-f", image], check=False, timeout=60)
-        shutil.rmtree(temporary, ignore_errors=True)
+        try:
+            harness_scratch.remove_tree(temporary)  # Linux containers leave root-owned files
+        except OSError:
+            pass  # reported below as a leftover
         leftovers = []
         for project in projects:
             for kind, command in (("container", ["docker", "ps", "-aq", "--filter", f"label=com.docker.compose.project={project}"]),

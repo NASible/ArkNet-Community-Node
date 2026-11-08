@@ -40,7 +40,7 @@ import urllib.request
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from scripts import operator_login, release_site  # noqa: E402
+from scripts import harness_scratch, operator_login, release_site  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 NODE_DIR = ROOT / "deploy" / "node"
@@ -50,6 +50,7 @@ REGISTRY_NAME = "arknet-upgrade-test-registry"
 REGISTRY = "localhost:15039"
 AGENT_PORT, UI_PORT, JELLYFIN_PORT, HTTPS_PORT, MEMBER_PORT = 18110, 18111, 18112, 18113, 18114
 UI_SOURCE_IMAGE = "arknet-ui:upgrade-test-source"
+TRANSFER_SOURCE_IMAGE = "arknet-transfer:upgrade-test-source"
 session = {}  # operator cookie header for agent()
 A, B, BROKEN, UNPULLABLE = "0.0.2-dev.1", "0.0.2-dev.2", "0.0.2-dev.3", "0.0.2-dev.4"
 results = {}
@@ -89,10 +90,19 @@ def served_fingerprint(port):
     """SHA-256 of the certificate the HTTPS listener presents, browser style."""
     import socket
     context = ssl._create_unverified_context()  # compare the self-signed certificate explicitly below
-    with socket.create_connection(("127.0.0.1", port), timeout=10) as connection:
-        with context.wrap_socket(connection, server_hostname="localhost") as secured:
-            digest = hashlib.sha256(secured.getpeercert(binary_form=True)).hexdigest().upper()
-    return ":".join(digest[i:i + 2] for i in range(0, 64, 2))
+    deadline = time.monotonic() + 30
+    while True:
+        # Just after an upgrade the UI may still be starting: Linux Docker's port
+        # proxy accepts the connection and closes it before TLS (SSLEOFError).
+        try:
+            with socket.create_connection(("127.0.0.1", port), timeout=10) as connection:
+                with context.wrap_socket(connection, server_hostname="localhost") as secured:
+                    digest = hashlib.sha256(secured.getpeercert(binary_form=True)).hexdigest().upper()
+            return ":".join(digest[i:i + 2] for i in range(0, 64, 2))
+        except (ssl.SSLError, OSError):
+            if time.monotonic() > deadline:
+                raise
+            time.sleep(1)
 
 
 def image(name, version):
@@ -156,6 +166,7 @@ def main():
         sh("docker", "run", "-d", "--name", REGISTRY_NAME, "-p", f"127.0.0.1:{REGISTRY.split(':')[1]}:5000", "registry:latest")
         # The UI image under test (HTTPS listener) is built from this checkout.
         sh("docker", "build", "-q", "-t", UI_SOURCE_IMAGE, str(ROOT / "node-ui"))
+        sh("docker", "build", "-q", "-t", TRANSFER_SOURCE_IMAGE, str(ROOT / "transfer"))
         for version, build in ((A, True), (B, True), (BROKEN, False)):
             agent_ref = image("arknet-agent", version)
             if build:
@@ -163,7 +174,7 @@ def main():
             else:
                 sh("docker", "tag", image("arknet-agent", B), agent_ref)
             sh("docker", "tag", UI_SOURCE_IMAGE, image("arknet-ui", version))
-            sh("docker", "tag", "arknet-transfer:0.0.1-dev", image("arknet-transfer", version))
+            sh("docker", "tag", TRANSFER_SOURCE_IMAGE, image("arknet-transfer", version))
             for component in ("arknet-agent", "arknet-ui", "arknet-transfer"):
                 ref = image(component, version)
                 for attempt in range(10):
@@ -193,12 +204,14 @@ def main():
             def log_message(self, *args):
                 pass
         handler = functools.partial(Quiet, directory=str(site))
-        server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
+        # The Agent container reaches this host-side release site through
+        # host.docker.internal on Docker Desktop/Colima (Prompt 38 discovery)
+        # and through the Docker bridge gateway on Linux.
+        bind_host, container_host = harness_scratch.host_for_containers()
+        server = http.server.ThreadingHTTPServer((bind_host, 0), handler)
         threading.Thread(target=server.serve_forever, daemon=True).start()
-        index_url = f"http://127.0.0.1:{server.server_address[1]}/index.json"
-        # The Agent container reaches the same host-loopback release host via
-        # Docker Desktop's host.docker.internal (Prompt 38 discovery).
-        agent_index_url = f"http://host.docker.internal:{server.server_address[1]}/index.json"
+        index_url = f"http://{bind_host}:{server.server_address[1]}/index.json"
+        agent_index_url = f"http://{container_host}:{server.server_address[1]}/index.json"
 
         def publish(version):
             digest = hashlib.sha256((site / "releases" / version / "release.json").read_bytes()).hexdigest()
@@ -251,8 +264,14 @@ def main():
 
         def tool(*args):
             started = time.monotonic()
-            result = sh(sys.executable, "-I", str(TOOL), "--home", str(home), *args, check=False,
-                        env=release_site.with_openssl_on_path(openssl))
+            env = release_site.with_openssl_on_path(openssl)
+            prefix = harness_scratch.as_operator(env)
+            result = sh(*prefix, sys.executable, "-I", str(TOOL), "--home", str(home), *args, check=False, env=env)
+            if prefix:
+                # Let this unprivileged harness inspect what root wrote, but keep
+                # the TLS key root-owned: that is what the UI container can read.
+                sh("sudo", "-n", "chown", "-R", f"{os.getuid()}:{os.getgid()}", str(home))
+                sh("sudo", "-n", "chown", "0:0", str(home / "tls" / "key.pem"), check=False)
             # Setup codes are secrets shown once: never echo them into the check's own output.
             print("\n".join("    | " + l for l in operator_login.redact_codes(result.stdout).splitlines()), flush=True)
             return result.returncode, result.stdout, time.monotonic() - started
@@ -379,7 +398,7 @@ def main():
             server.shutdown()
             server.server_close()
         sh("docker", "rm", "-f", "-v", REGISTRY_NAME, check=False)
-        sh("docker", "rmi", UI_SOURCE_IMAGE, check=False)
+        sh("docker", "rmi", UI_SOURCE_IMAGE, TRANSFER_SOURCE_IMAGE, check=False)
         # Tagged and digest-pulled copies alike. Remove references, never image
         # IDs: an ID would also delete shared tags such as arknet-transfer:0.0.1-dev.
         listing = sh("docker", "image", "ls", "--digests", "--format", "{{.Repository}} {{.Tag}} {{.Digest}}",
@@ -393,7 +412,10 @@ def main():
                 refs.add(f"{repo}@{digest}")
         if refs:
             sh("docker", "rmi", *sorted(refs), check=False)
-        shutil.rmtree(work, ignore_errors=True)
+        try:
+            harness_scratch.remove_tree(work)  # arknet-node ran as root on Linux
+        except OSError as error:
+            print(f"WARNING: could not remove {work}: {error}", flush=True)
     print("ALL PASS" if results and all(results.values()) else "INCOMPLETE")
     return 0 if results and all(results.values()) else 1
 
