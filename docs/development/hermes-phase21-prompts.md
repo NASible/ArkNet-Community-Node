@@ -184,8 +184,8 @@ Acceptance criteria:
 - A deliberately failing branch shows a failed run with the failing step.
 
 Implemented 2026-11-08 (D13 = GitHub-hosted runners). The workflow's commands
-passed on a GitHub-like Ubuntu VM, including `--e2e --vm`. The two real-run
-criteria need the operator to push. See
+passed on a GitHub-like Ubuntu VM, including `--e2e --vm`. Both real-run criteria
+passed on GitHub-hosted runners the same day. See
 [Prompt 51B validation](prompt51b-validation.md) and [CI](ci.md).
 
 ---

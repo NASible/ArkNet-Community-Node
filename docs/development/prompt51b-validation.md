@@ -42,9 +42,18 @@ A throwaway Proxmox VM (`arknet-ci-probe`, VMID 113: Ubuntu 24.04, 4 vCPU,
 The macOS full gate also passed on `9f9032d` (18/18, logs clean), so the Linux
 changes did not break the Mac path.
 
-## Acceptance (needs the operator to push)
+## Acceptance (2026-11-08)
 
-- [ ] One real GitHub runner execution of the component gate ends `EXIT 0`.
-  Link: _to be added_.
-- [ ] A deliberately failing branch shows a failed run with the failing step.
-  Link: _to be added_.
+Both runs were started by pull requests on GitHub-hosted `ubuntu-24.04` runners.
+
+- [x] Component gate on `phase21/51b-ci` (PR #3): **success**, `SUMMARY: 14
+  passed, 0 failed`. Logs scanned clean and uploaded.
+  <https://github.com/NASible/ArkNet-Community-Node/actions/runs/42530719842>
+- [x] Deliberately failing branch `ci/deliberate-failure` (draft PR #4, closed
+  unmerged): **failure** at step *Component gate*, `STEP harness-tests FAIL`,
+  `SUMMARY: 13 passed, 1 failed (harness-tests)`. Logs scanned clean and uploaded.
+  <https://github.com/NASible/ArkNet-Community-Node/actions/runs/42530722037>
+
+Open: branch pushes did not start runs (pull requests did). The repository's
+default branch was also stale (`phase21/51-production-ui`) and is now `main`.
+Check that the next push to `main` starts the gate.
