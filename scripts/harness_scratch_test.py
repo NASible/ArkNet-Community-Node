@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-import harness_scratch
+from scripts import harness_scratch
 
 ROOT = Path(__file__).resolve().parent.parent
 

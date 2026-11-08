@@ -18,7 +18,7 @@ import time
 import urllib.parse
 import urllib.request
 
-import harness_scratch
+from scripts import harness_scratch
 
 
 def temporary_root():

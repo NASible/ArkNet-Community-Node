@@ -7,7 +7,7 @@ import tempfile
 from pathlib import Path
 import unittest
 
-import harness_scratch
+from scripts import harness_scratch
 
 
 SCRIPT = Path(__file__).with_name("check-multi-node-swarm-stack.py")

@@ -23,9 +23,7 @@ import urllib.error
 import urllib.request
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from scripts import operator_login
-
-import harness_scratch
+from scripts import harness_scratch, operator_login  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 BASE = ROOT / 'deploy/node/compose.yaml'

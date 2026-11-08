@@ -1,7 +1,7 @@
 """Offline regression tests for the real-container ingress acceptance checker."""
 import importlib.util
 
-import harness_scratch
+from scripts import harness_scratch
 from pathlib import Path
 import unittest
 import urllib.parse

@@ -12,8 +12,10 @@ from pathlib import Path
 import subprocess
 import ssl
 import shutil
+import sys
 
-import harness_scratch
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from scripts import harness_scratch  # noqa: E402
 
 OPENSSL = (os.environ.get('ARKNET_TEST_OPENSSL') or
            next((p for p in ('/opt/homebrew/opt/openssl@3/bin/openssl',
