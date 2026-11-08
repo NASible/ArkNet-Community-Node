@@ -47,16 +47,19 @@ version.
 - Untagged development trees carry a `-dev` version in `VERSION` (currently
   `0.0.1-dev`). Development Compose files build `arknet-*:<version>` images
   from this checkout and are never published.
-- A release drops `-dev`. Bump `VERSION` to exactly the release version in its
-  own commit, then tag that commit `v<VERSION>`:
+- A release drops `-dev`: the annotated tag `v<version>` sets the release
+  version, and the tree is not edited.
   - `v1.2.3` (no pre-release suffix) publishes to the **stable** channel;
   - `v1.2.3-rc.1`, `v1.2.3-beta.2` and similar publish to the
     **development** channel.
-- `scripts/publish-release.py` refuses a tag whose `VERSION` differs. It stamps
-  the same version into every image, the image labels and the signed manifest.
-  Published images are `ghcr.io/nasible/arknet-<component>:<version>` and are
-  always referenced by digest.
-- After tagging, set `VERSION` to the next `-dev` version.
+- `scripts/publish-release.py` stamps the tag's version into every binary
+  (`-ldflags -X main.version`, enforced by a test), the image labels and the
+  signed manifest. It refuses a tree whose `VERSION` is a different release
+  version. Published images are `ghcr.io/nasible/arknet-<component>:<version>`
+  and are always referenced by digest.
+- Raise the `-dev` marker (in `VERSION`, the Go `version` defaults, the
+  development manifest and Compose tags) only when development moves to a new
+  line. That is a separate change with its own tests, not part of releasing.
 
 See the [release process](../release-process.md).
 

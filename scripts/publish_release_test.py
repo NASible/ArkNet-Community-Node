@@ -60,6 +60,23 @@ class AnonymousPullTests(unittest.TestCase):
             self.assertFalse(publish.anonymous_pull_ok("ghcr.io/nasible/arknet-core", "sha256:" + "0" * 64))
 
 
+class TreeVersionTests(unittest.TestCase):
+    """The tag sets the release version; the tagged tree keeps its -dev marker."""
+
+    def test_development_tree_or_exact_version_is_accepted(self):
+        publish = load_publish()
+        for tree in ("0.0.1-dev", "0.1.0-dev", "0.1.0"):
+            with self.subTest(tree=tree):
+                publish.check_tree_version(tree, "0.1.0")
+
+    def test_a_different_release_version_in_the_tree_is_refused(self):
+        publish = load_publish()
+        for tree in ("0.0.9", "0.1.1", "0.1.0-rc.1", ""):
+            with self.subTest(tree=tree):
+                with self.assertRaises(SystemExit):
+                    publish.check_tree_version(tree, "0.1.0")
+
+
 @unittest.skipUnless(ENABLED, "set ARKNET_TEST_RELEASE_PUBLISH=1 to build and publish a throwaway release")
 class PublishReleaseTest(unittest.TestCase):
     def test_publish_builds_pushes_signs_and_verifies(self):

@@ -75,6 +75,18 @@ def registry_host(repository: str) -> tuple[str, str]:
     return host, path
 
 
+def check_tree_version(tree: str, version: str) -> None:
+    """The tag sets the release version and the build stamps it everywhere.
+
+    The tagged tree normally still says `<x>-dev` (its development manifest and
+    tests use that marker); an exact match is also fine. Any other release
+    version in the tree means the wrong commit was tagged.
+    """
+    if tree != version and not (tree.endswith("-dev") and len(tree) > 4):
+        raise SystemExit(f"VERSION in the tagged tree is {tree!r}, not {version!r} or a -dev version: "
+                         "was the right commit tagged?")
+
+
 def anonymous_pull_ok(repository: str, digest: str) -> bool:
     """HEAD the manifest with no credentials, using an anonymous bearer token if offered."""
     host, path = registry_host(repository)
@@ -152,8 +164,7 @@ def publish(args) -> int:
         source = work / "source"
         commit = export_tag(repo, tag, source)
         say(f"[1/5] Exported {tag} ({commit[:12]}): ArkNet {version} ({channel} channel)")
-        if (source / "VERSION").read_text().strip() != version:
-            raise SystemExit(f"VERSION in {tag} is not {version}; bump it in the tagged commit")
+        check_tree_version((source / "VERSION").read_text().strip(), version)
         shipped_key = source / "deploy" / "node" / "release-signing.pub"
         if not shipped_key.is_file() or shipped_key.read_text().strip() != signing_public:
             raise SystemExit(f"deploy/node/release-signing.pub in {tag} does not match the signing key "

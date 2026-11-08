@@ -57,9 +57,10 @@ They were produced by OpenSSL 3, and both verifiers test against them.
 
 ## Cutting a release
 
-1. **Bump the version** in its own commit: set `VERSION` to the release version,
-   for example `0.1.0`. The development manifest in `deploy/node/release.json`
-   keeps local tags; published manifests are generated.
+1. **Pick the commit** to release (normally `main`). Do not edit `VERSION`: the
+   tag sets the release version, and the build stamps it into every binary,
+   image label and the signed manifest. The tree keeps its `-dev` marker,
+   which the development manifest and tests rely on.
 2. **Run the gate** on that commit: `scripts/check-all.sh --e2e`.
 3. **Tag it**: `git tag -a v0.1.0 -m "ArkNet 0.1.0"`.
 4. **Publish**:
@@ -72,7 +73,9 @@ They were produced by OpenSSL 3, and both verifiers test against them.
 
    The script:
    - exports the tag with `git archive`, so no working-tree file is used;
-   - checks `VERSION` and that `release-signing.pub` matches the key;
+   - refuses a tree whose `VERSION` is a different release version (it may be
+     the exact version or any `-dev` version) and checks that
+     `release-signing.pub` matches the key;
    - builds all six images for both platforms and pushes them;
    - records the digests and checks that each image can be pulled anonymously;
    - writes and signs the Node release, then verifies the site exactly as
