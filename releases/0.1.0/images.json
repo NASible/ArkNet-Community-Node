@@ -1,0 +1,18 @@
+{
+  "version": "0.1.0",
+  "tag": "v0.1.0",
+  "commit": "4c39f109c7957bcda1095f48d76198c8de8370a3",
+  "platforms": [
+    "linux/amd64",
+    "linux/arm64"
+  ],
+  "published_at": "2026-11-08T02:12:29Z",
+  "images": {
+    "arknet-core": "ghcr.io/nasible/arknet-core:0.1.0@sha256:fc35bdcf46727663809f05ed91090c88064b95616c7d2118a0a6be7c32cb2674",
+    "arknet-tracker": "ghcr.io/nasible/arknet-tracker:0.1.0@sha256:5a96d97148b7626200425b7822db6bb88fe3b8a46672c2c5a968a83bab7a250d",
+    "arknet-relay": "ghcr.io/nasible/arknet-relay:0.1.0@sha256:e49a3a2f8c175b2e8b819e12db8a5f8ddc12d67fe8eb47ba10e3195e5b0fa513",
+    "arknet-agent": "ghcr.io/nasible/arknet-agent:0.1.0@sha256:f931cf5e7c2ddbd22a5a0c2d0844e28884cfdbed2ab64299641b228d77ff2ef6",
+    "arknet-transfer": "ghcr.io/nasible/arknet-transfer:0.1.0@sha256:7c2f334dd100f4e37394cac38af780a8c787445d5f3801dbc14571dac6170e32",
+    "arknet-ui": "ghcr.io/nasible/arknet-ui:0.1.0@sha256:a0b450a69f49e88bd78052bcb23560c3bc31d39b5032ef57da3387a2348d83a8"
+  }
+}

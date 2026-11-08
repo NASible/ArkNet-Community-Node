@@ -1,0 +1,155 @@
+name: arknet-node
+
+services:
+  postgres:
+    # Pinned by digest (multi-arch index); update deliberately with the release.
+    image: postgres:18-alpine@sha256:123b17998ccaf47e53b502e8c6a1e79afd8f579c6f3eec83c563da026f957395
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-arknet_node}
+      POSTGRES_USER: ${POSTGRES_USER:-arknet}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in your local .env}
+    volumes:
+      - postgres-data:/var/lib/postgresql
+    networks:
+      - node
+    healthcheck:
+      test: ["CMD-SHELL", 'pg_isready -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"']
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
+
+  arknet-agent:
+    image: ghcr.io/nasible/arknet-agent:0.1.0@sha256:f931cf5e7c2ddbd22a5a0c2d0844e28884cfdbed2ab64299641b228d77ff2ef6
+    environment:
+      ARKNET_AGENT_ADDR: :8081
+      ARKNET_MEMBER_ADDR: :8082
+      ARKNET_AGENT_LOG_LEVEL: ${ARKNET_AGENT_LOG_LEVEL:-INFO}
+      ARKNET_AGENT_SHUTDOWN_TIMEOUT: 10s
+      # Empty by default: outbound enrollment is opt-in.
+      ARKNET_CORE_URL: ${ARKNET_CORE_URL:-}
+      ARKNET_CORE_ALLOW_HTTP: ${ARKNET_CORE_ALLOW_HTTP:-false}
+      # Core-bound global login (docs/global-login-assertions.md). Empty
+      # disables it. List the member UI callback URL(s), for example
+      # https://<node-host>:8443/login/callback. ARKNET_CORE_LOGIN_URL is the
+      # Core URL browsers use when it differs from ARKNET_CORE_URL.
+      ARKNET_GLOBAL_LOGIN_CALLBACK_URLS: ${ARKNET_GLOBAL_LOGIN_CALLBACK_URLS:-}
+      ARKNET_CORE_LOGIN_URL: ${ARKNET_CORE_LOGIN_URL:-}
+      # Core's relay-list public key (canonical base64). Empty: the relay list
+      # is not fetched. Peer transfers through relays follow in Prompt 48D.
+      ARKNET_RELAY_LIST_VERIFY_KEY: ${ARKNET_RELAY_LIST_VERIFY_KEY:-}
+      ARKNET_HEARTBEAT_INTERVAL: ${ARKNET_HEARTBEAT_INTERVAL:-30s}
+      # Whole GiB allocation: 0 (unset default) disables new selections; -1 is unlimited.
+      ARKNET_MEDIA_STORAGE_ALLOCATION_GIB: ${ARKNET_MEDIA_STORAGE_ALLOCATION_GIB:-}
+      # Legacy byte setting is fallback-only; do not set both allocation variables.
+      ARKNET_MEDIA_STORAGE_ALLOCATION_BYTES: ${ARKNET_MEDIA_STORAGE_ALLOCATION_BYTES:-}
+      # Agent initializes and reads persistent local state at startup.
+      PGHOST: postgres
+      PGSSLMODE: ${PGSSLMODE:-disable}
+      PGPORT: "5432"
+      PGDATABASE: ${POSTGRES_DB:-arknet_node}
+      PGUSER: ${POSTGRES_USER:-arknet}
+      PGPASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in your local .env}
+      # Agent polls Jellyfin health via Docker-internal hostname.
+      JELLYFIN_API_URL: http://jellyfin:8096
+      # Whole-stack release manifest shipped beside this Compose file.
+      ARKNET_RELEASE_MANIFEST: /etc/arknet/release.json
+      # Read-only update discovery; empty disables it. Nothing is installed.
+      ARKNET_RELEASE_INDEX_URL: ${ARKNET_RELEASE_INDEX_URL:-}
+      ARKNET_RELEASE_INDEX_ALLOW_HTTP: ${ARKNET_RELEASE_INDEX_ALLOW_HTTP:-false}
+      # Release signing public key (canonical base64, from install.sh). Empty
+      # disables discovery: only signed, digest-pinned releases are reported.
+      ARKNET_RELEASE_VERIFY_KEY: ${ARKNET_RELEASE_VERIFY_KEY:-}
+    volumes:
+      - ./release.json:/etc/arknet/release.json:ro
+    ports:
+      # Management never publishes beyond host loopback. LAN management uses
+      # the UI's authenticated HTTPS reverse proxy below.
+      - "127.0.0.1:${ARKNET_AGENT_PORT:-8082}:8081"
+      # Member login/session API: separate loopback endpoint for a TLS ingress.
+      - "127.0.0.1:${ARKNET_MEMBER_PORT:-8086}:8082"
+    networks:
+      - node
+      - media-services
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8082/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
+    stop_grace_period: 15s
+
+  arknet-ui:
+    image: ghcr.io/nasible/arknet-ui:0.1.0@sha256:a0b450a69f49e88bd78052bcb23560c3bc31d39b5032ef57da3387a2348d83a8
+    environment:
+      ARKNET_AGENT_URL: http://arknet-agent:8081
+      ARKNET_MEMBER_URL: http://arknet-agent:8082
+    # Static production build served by a dependency-free Node server: nothing
+    # is written at runtime. Root is used only to read the mode-0600 TLS key
+    # before dropping to the node user, so only SETUID/SETGID are kept.
+    read_only: true
+    tmpfs:
+      - /tmp:size=8m,mode=1777
+    cap_drop:
+      - ALL
+    cap_add:
+      - SETUID
+      - SETGID
+    security_opt:
+      - no-new-privileges:true
+    # Plain HTTP stays on loopback (SSH tunnels). The HTTPS listener serves the
+    # LAN with the Node's self-signed certificate, created by arknet-node.
+    volumes:
+      - ${ARKNET_TLS_DIR:-./tls}:/etc/arknet/tls:ro
+    ports:
+      - "127.0.0.1:${ARKNET_UI_PORT:-5174}:5173"
+      - "${ARKNET_UI_HTTPS_BIND:-0.0.0.0:8443}:8443"
+    networks:
+      - node
+    depends_on:
+      arknet-agent:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:5173/').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
+
+  jellyfin:
+    # Pinned by the release manifest; never a floating tag.
+    image: jellyfin/jellyfin:12.2@sha256:357724bf0ae27a672c7cbaa899db2d9abeb13dbd8657ccce750258a4c059d037
+    environment:
+      - TZ=${TZ:-UTC}
+    volumes:
+      - appdata:/config
+      - jellyfin-cache:/cache
+      - media:/srv/arknet/media:ro
+    ports:
+      - "${JELLYFIN_BIND:-127.0.0.1:8096}:8096"
+    networks:
+      - media-services
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl --noproxy 'localhost' -Lk -fsS \"$${HEALTHCHECK_URL}\" || exit 1"]
+      interval: 30s
+      timeout: 30s
+      retries: 3
+      start_period: 10s
+    stop_grace_period: 30s
+
+volumes:
+  postgres-data:
+  appdata:
+  jellyfin-cache:
+  media:
+  transfers:
+
+networks:
+  node:
+    driver: bridge
+  media-services:
+    driver: bridge

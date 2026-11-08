@@ -1,0 +1,10 @@
+{
+  "schema": "arknet.node-release-index/v1",
+  "channels": {
+    "stable": {
+      "version": "0.1.0",
+      "manifest_url": "releases/0.1.0/release.json",
+      "manifest_sha256": "08a90047e9e23339c40af698857e50133e3e06f39ed25685fd278c45be7a6c37"
+    }
+  }
+}

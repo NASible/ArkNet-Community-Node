@@ -1,0 +1,51 @@
+{
+  "schema": "arknet.node-release/v1",
+  "version": "0.1.0",
+  "channel": "stable",
+  "published_at": "2026-11-08T02:12:29Z",
+  "components": {
+    "arknet-agent": {
+      "version": "0.1.0",
+      "image": "ghcr.io/nasible/arknet-agent:0.1.0@sha256:f931cf5e7c2ddbd22a5a0c2d0844e28884cfdbed2ab64299641b228d77ff2ef6",
+      "bundled": true
+    },
+    "arknet-ui": {
+      "version": "0.1.0",
+      "image": "ghcr.io/nasible/arknet-ui:0.1.0@sha256:a0b450a69f49e88bd78052bcb23560c3bc31d39b5032ef57da3387a2348d83a8",
+      "bundled": true
+    },
+    "arknet-transfer": {
+      "version": "0.1.0",
+      "image": "ghcr.io/nasible/arknet-transfer:0.1.0@sha256:7c2f334dd100f4e37394cac38af780a8c787445d5f3801dbc14571dac6170e32",
+      "bundled": true
+    },
+    "postgresql": {
+      "version": "18",
+      "image": "postgres:18-alpine@sha256:123b17998ccaf47e53b502e8c6a1e79afd8f579c6f3eec83c563da026f957395",
+      "bundled": true
+    },
+    "jellyfin": {
+      "version": "12.2",
+      "image": "jellyfin/jellyfin:12.2@sha256:357724bf0ae27a672c7cbaa899db2d9abeb13dbd8657ccce750258a4c059d037",
+      "bundled": true
+    },
+    "tailscale": {
+      "version": "1.104.2",
+      "image": "tailscale/tailscale:v1.104.2",
+      "bundled": false
+    }
+  },
+  "compose": {
+    "project": "arknet-node",
+    "files": [
+      {
+        "path": "compose.yaml",
+        "sha256": "e65387a86f95b00395c4732bb522571ce9709ce9766783bbb7ce474747a67776"
+      },
+      {
+        "path": "compose.transfer.yaml",
+        "sha256": "c740fc08c62a7a88e4511208e2ab455fff2869764c1acc52a680b10020745620"
+      }
+    ]
+  }
+}
