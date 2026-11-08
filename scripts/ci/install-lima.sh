@@ -6,6 +6,7 @@ set -euo pipefail
 
 LIMA_VERSION=2.3.0
 LIMA_SHA256=cc8ba97f1c801b899f7c9eda9919dfc4ce4fa2c140c53e5add15aa2d0a1936f9
+LIMA_ASSET_ID=717479697 # same file through the REST API, if the download CDN fails
 archive="lima-${LIMA_VERSION}-Linux-x86_64.tar.gz"
 
 [ "$(uname -s)-$(uname -m)" = "Linux-x86_64" ] || { echo "install-lima.sh supports Linux x86_64 only" >&2; exit 1; }
@@ -25,7 +26,12 @@ fi
 
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
-curl -fsSL --retry 6 --retry-delay 10 --retry-all-errors -o "$work/$archive" "https://github.com/lima-vm/lima/releases/download/v${LIMA_VERSION}/${archive}"
+if ! curl -fsSL --retry 3 --retry-delay 10 --retry-all-errors -o "$work/$archive" \
+        "https://github.com/lima-vm/lima/releases/download/v${LIMA_VERSION}/${archive}"; then
+    echo "release download failed; trying the REST API asset endpoint" >&2
+    curl -fsSL --retry 3 --retry-delay 10 --retry-all-errors -H "Accept: application/octet-stream" -o "$work/$archive" \
+        "https://api.github.com/repos/lima-vm/lima/releases/assets/${LIMA_ASSET_ID}"
+fi
 echo "${LIMA_SHA256}  $work/$archive" | sha256sum -c --quiet
 sudo tar -C /usr/local -xzf "$work/$archive"
 limactl --version
