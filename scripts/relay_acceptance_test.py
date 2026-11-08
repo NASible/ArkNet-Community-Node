@@ -107,6 +107,37 @@ class CaptureTests(unittest.TestCase):
                     with self.assertRaisesRegex(AssertionError, 'counterpart address'):
                         proof.inspect_capture(packets, {'127.0.0.1'}, {'10.233.0.20'})
 
+    def test_binary_address_by_chance_inside_known_media_bytes_is_not_a_leak(self):
+        # Compressed media is near-random: any 4-byte value appears in it by chance.
+        import os
+        media = os.urandom(4096) + socket.inet_aton('10.233.0.20') + os.urandom(4096)
+        chunk = media[3000:6000]  # one peer-wire piece slice containing the chance match
+        packets = proof.read_pcap(pcap(packet(b'\x00\x00\x0b\xc1\x07' + chunk)))
+        with self.assertRaisesRegex(AssertionError, 'counterpart address'):
+            proof.inspect_capture(packets, {'127.0.0.1'}, {'10.233.0.20'})
+        result = proof.inspect_capture(packets, {'127.0.0.1'}, {'10.233.0.20'}, known_content=[media])
+        self.assertEqual(result['received_payload_bytes'], 3005)
+
+    def test_known_media_never_excuses_a_protocol_or_text_leak(self):
+        import os
+        address = socket.inet_aton('10.233.0.20')
+        # The known media itself contains the address by chance at offset 4096.
+        media = os.urandom(4096) + address + os.urandom(4096)
+        chance = media[3000:6000]
+        texted = media[:2000] + b'10.233.0.20' + media[2011:4000]
+        leaks = {
+            'BEP10 handshake next to media': b'd6:yourip4:' + address + b'e' + media[:2000],
+            'chance match, then a real leak': chance + b'd6:yourip4:' + address + b'e',
+            'binary address spliced into other media bytes': media[5000:6000] + address + media[6100:7000],
+            'match at stream start without full context': media[4096:4096 + 40],
+            'match at stream end without full context': media[4000:4100],
+            'text form inside known media bytes': texted,
+        }
+        for name, payload in leaks.items():
+            with self.subTest(name), self.assertRaisesRegex(AssertionError, 'counterpart address'):
+                proof.inspect_capture(proof.read_pcap(pcap(packet(payload))), {'127.0.0.1'}, {'10.233.0.20'},
+                                      known_content=[media, texted])
+
     def test_own_frame_address_is_not_scanned_as_application_data(self):
         packets = proof.read_pcap(pcap(packet(b'\0' * 4096, src='10.233.0.20', dst='10.232.0.20')))
         result = proof.inspect_capture(packets, {'10.232.0.20'}, {'10.233.0.20'})

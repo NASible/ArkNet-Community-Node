@@ -138,26 +138,59 @@ def _received(packet, own_addresses):
     return dst.version == 6 and (dst.is_multicast or dst.is_link_local or dst.is_loopback)
 
 
-def inspect_capture(packets, own_addresses, counterpart_addresses):
+MEDIA_CONTEXT = 28  # bytes on each side of a binary match that must be known media
+
+
+def _inside_known_content(payload, index, width, known_content):
+    """True when a binary match sits inside bytes the harness itself generated.
+
+    Compressed media is near-random, so a 4-byte address appears in ~150 MB of
+    it by chance. Excuse a match only if the full window around it (the match
+    plus MEDIA_CONTEXT bytes on each side) occurs verbatim in a known file;
+    anything shorter or not verbatim still counts as a leak.
+    """
+    start, end = index - MEDIA_CONTEXT, index + width + MEDIA_CONTEXT
+    if start < 0 or end > len(payload):
+        return False
+    window = payload[start:end]
+    return any(window in content for content in known_content)
+
+
+def _binary_leak(payload, needle, known_content):
+    index = payload.find(needle)
+    while index != -1:
+        if not _inside_known_content(payload, index, len(needle), known_content):
+            return True
+        index = payload.find(needle, index + 1)
+    return False
+
+
+def inspect_capture(packets, own_addresses, counterpart_addresses, known_content=()):
     """Scan received application bytes, including TCP segment boundaries.
 
     Headers are not application data. Reassemble each TCP direction by sequence,
     refusing missing stream bytes instead of yielding a false absence proof.
     Scan UDP individually; TCP re-transmissions are deduplicated. No payload is
     included in errors (grants and endpoint tokens must not reach logs).
+
+    Text addresses are refused everywhere. A binary (packed) address is excused
+    only when it is a chance match inside `known_content`: the media files the
+    harness generated and transferred.
     """
     if not counterpart_addresses:
         raise AssertionError('missing counterpart inventory: cannot prove absence of leaks')
     received = [p for p in packets if _received(p, own_addresses)]
-    needles = []
+    texts, packed = [], []
     for address in counterpart_addresses:
         ip = ipaddress.ip_address(address)
-        needles.extend((str(ip).encode(), ip.packed))
+        texts.append(str(ip).encode())
+        packed.append(ip.packed)
     payloads, stream_count = reassemble_payloads(received)
     if not payloads:
         raise AssertionError('no received application payload captured')
     for payload in payloads:
-        if any(needle in payload for needle in needles):
+        if any(needle in payload for needle in texts) or \
+                any(_binary_leak(payload, needle, known_content) for needle in packed):
             raise AssertionError('counterpart address found in received application bytes')
     return dict(packets=len(packets), received_payload_bytes=sum(map(len, payloads)),
                 tcp_streams=stream_count, counterpart_addresses_checked=len(counterpart_addresses))

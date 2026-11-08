@@ -277,13 +277,24 @@ def main(argv=None):
                 active_captures.append((label, service, capture, counters))
         return active_captures
 
+    media_cache = {}
+
+    def generated_media():
+        # The media files this run generated: chance binary address matches
+        # inside their (near-random) bytes are not leaks. Text forms always are.
+        for path in sorted(source.glob("media_*")):
+            if path.suffix != ".torrent" and path not in media_cache:
+                media_cache[path] = path.read_bytes()
+        return list(media_cache.values())
+
     def finish_captures(active_captures, criterion):
         decoded = {}
         for label, service, capture, counters in active_captures:
             blocked = relay_acceptance.assert_no_blocked_attempts(counters, capture.firewall_counters()) if counters is not None else None
             packets = capture.stop()
             own = addresses(label, service) | {"127.0.0.1", "127.0.0.11"}
-            verdict = relay_acceptance.inspect_capture(packets, own, addresses("b" if label == "a" else "a"))
+            verdict = relay_acceptance.inspect_capture(packets, own, addresses("b" if label == "a" else "a"),
+                                                       known_content=generated_media())
             if service == "arknet-transfer":
                 assert blocked is not None
                 allowed = {(gateway_ips[label][key], port) for key, port in (("relay", 7443), ("tracker", 6969), ("core", 8080))}

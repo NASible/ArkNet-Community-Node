@@ -28,7 +28,8 @@ class MVPHarnessTests(unittest.TestCase):
                        'ARKNET_RELAY_LIST_SIGNING_KEY_FILE', 'ARKNET_TRANSFER_RELAY_EGRESS',
                        'ARKNET_TRACKER_RELAY_VERIFY_KEYS_FILE', 'connections_closed',
                        'assert_no_direct_attempts(', '"pause", b_agent',
-                       '"--internal"', 'all relays down', 'inspect_capture('):
+                       '"--internal"', 'all relays down', 'inspect_capture(',
+                       'known_content=generated_media()', 'source.glob("media_*")'):
             self.assertIn(needle, source)
         self.assertNotIn('allowed = {"arknet-transfer@" + wan}', source)
 
