@@ -1,0 +1,104 @@
+# ArkNet gate on GitHub-hosted runners (D13, Prompt 51B).
+#
+# - component gate: every branch push and pull request;
+# - full gate (--e2e --vm): nightly, on release tags, and on demand.
+#
+# No repository secrets are used: every harness creates and destroys its own
+# throwaway credentials. Logs are scanned for secret-shaped values before they
+# are uploaded, because artifacts of a public repository are public.
+name: gate
+
+on:
+  push:
+    branches: ["**"]
+    tags: ["v*"]
+  pull_request:
+  schedule:
+    - cron: "0 11 * * *" # 02:00 AKST
+  workflow_dispatch:
+    inputs:
+      full:
+        description: "Also run --e2e --vm"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gate-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: ${{ github.event_name != 'schedule' && !startsWith(github.ref, 'refs/tags/') }}
+
+jobs:
+  component:
+    name: component gate
+    if: github.event_name == 'push' || github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.26"
+          cache-dependency-path: "*/go.sum"
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "26"
+          cache: npm
+          cache-dependency-path: node-ui/package-lock.json
+      - name: Tool versions
+        run: go version && node --version && python3 --version && openssl version && docker version --format '{{.Server.Version}}' && docker compose version
+      - name: Component gate
+        run: scripts/check-all.sh --logs "$RUNNER_TEMP/gate-logs"
+      - name: Scan logs for secrets
+        id: scan
+        if: always()
+        run: python3 scripts/check-log-secrets.py "$RUNNER_TEMP/gate-logs"
+      - name: Upload logs
+        if: always() && steps.scan.outcome != 'failure'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: component-gate-logs
+          path: ${{ runner.temp }}/gate-logs
+          retention-days: 14
+          if-no-files-found: warn
+
+  full:
+    name: full gate (--e2e --vm)
+    if: >-
+      github.event_name == 'schedule' ||
+      (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) ||
+      (github.event_name == 'workflow_dispatch' && inputs.full)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.26"
+          cache-dependency-path: "*/go.sum"
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "26"
+          cache: npm
+          cache-dependency-path: node-ui/package-lock.json
+      - name: Install Lima and QEMU
+        run: scripts/ci/install-lima.sh
+      - name: Full gate
+        run: scripts/check-all.sh --e2e --vm --logs "$RUNNER_TEMP/gate-logs"
+      - name: Scan logs for secrets
+        id: scan
+        if: always()
+        run: python3 scripts/check-log-secrets.py "$RUNNER_TEMP/gate-logs"
+      - name: Upload logs
+        if: always() && steps.scan.outcome != 'failure'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: full-gate-logs
+          path: ${{ runner.temp }}/gate-logs
+          retention-days: 14
+          if-no-files-found: warn
