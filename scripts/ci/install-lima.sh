@@ -25,7 +25,7 @@ fi
 
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
-curl -fsSL -o "$work/$archive" "https://github.com/lima-vm/lima/releases/download/v${LIMA_VERSION}/${archive}"
+curl -fsSL --retry 6 --retry-delay 10 --retry-all-errors -o "$work/$archive" "https://github.com/lima-vm/lima/releases/download/v${LIMA_VERSION}/${archive}"
 echo "${LIMA_SHA256}  $work/$archive" | sha256sum -c --quiet
 sudo tar -C /usr/local -xzf "$work/$archive"
 limactl --version
