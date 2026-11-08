@@ -6,7 +6,8 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY *.go ./
 COPY internal ./internal
-RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -o /arknet-core .
+ARG ARKNET_VERSION=
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags "${ARKNET_VERSION:+-X main.version=$ARKNET_VERSION}" -o /arknet-core .
 
 FROM alpine:3.23
 RUN addgroup -g 10001 arknet && adduser -D -u 10001 -G arknet arknet

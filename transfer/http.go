@@ -10,7 +10,9 @@ import (
 	"strings"
 )
 
-const version = "0.0.1-dev"
+// version is the whole-stack release marker. Release builds override it with
+// -ldflags "-X main.version=<tag version>".
+var version = "0.0.1-dev"
 
 func writeJSON(w http.ResponseWriter, code int, value any) {
 	w.Header().Set("Content-Type", "application/json")

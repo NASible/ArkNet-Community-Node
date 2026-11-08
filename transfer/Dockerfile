@@ -6,7 +6,8 @@ COPY go.mod ./
 COPY *.go ./
 COPY backend ./backend
 COPY engine ./engine
-RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags="-s -w" -o /arknet-transfer .
+ARG ARKNET_VERSION=
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags="-s -w ${ARKNET_VERSION:+-X main.version=$ARKNET_VERSION}" -o /arknet-transfer .
 
 FROM ubuntu:24.04
 ENV DEBIAN_FRONTEND=noninteractive \

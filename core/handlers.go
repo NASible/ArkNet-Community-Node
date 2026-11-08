@@ -18,7 +18,8 @@ import (
 )
 
 // version is the whole-stack release marker; TestVersionMatchesStack guards drift.
-const version = "0.0.1-dev"
+// Release builds override it with -ldflags "-X main.version=<tag version>".
+var version = "0.0.1-dev"
 
 type databaseHealth interface{ Ping(context.Context) error }
 

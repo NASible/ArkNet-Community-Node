@@ -140,6 +140,22 @@ class DockerfileTests(unittest.TestCase):
                     self.assertRegex(text, r"(?m)^ARG TARGETOS TARGETARCH$")
 
 
+class VersionStampTests(unittest.TestCase):
+    """Released binaries report the tag's version, not the source default."""
+
+    SOURCES = {"core": "core/handlers.go", "agent": "node-agent/handlers.go", "transfer": "transfer/http.go"}
+
+    def test_versioned_services_take_the_release_version_at_build_time(self):
+        for component, source in self.SOURCES.items():
+            context = release_site.COMPONENTS["arknet-" + component]
+            dockerfile = (ROOT / context / "Dockerfile").read_text()
+            with self.subTest(component=component):
+                self.assertRegex((ROOT / source).read_text(), r'(?m)^var version = "[^"]+"$',
+                                 "-X main.version cannot override a const")
+                self.assertRegex(dockerfile, r"(?m)^ARG ARKNET_VERSION=")
+                self.assertIn("${ARKNET_VERSION:+-X main.version=$ARKNET_VERSION}", dockerfile)
+
+
 class ComposePinningTests(unittest.TestCase):
     """No Compose file references an unpinned image (Prompt 51A).
 
