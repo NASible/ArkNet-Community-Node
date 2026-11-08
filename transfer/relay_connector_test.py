@@ -1,5 +1,6 @@
 """Network-level tests for the product relay connector (no libtorrent needed)."""
 import base64
+import os
 import time
 import socket
 
@@ -37,8 +38,7 @@ from cryptography.x509.oid import NameOID
 
 class FakeRelay:
     def __init__(self):
-        scratch = Path.home() / ".hermes/cache/scratch"
-        self.temp = tempfile.TemporaryDirectory(dir=scratch if scratch.is_dir() else None)
+        self.temp = tempfile.TemporaryDirectory(dir=os.environ.get("ARKNET_SCRATCH"))
         key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
         name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "localhost")])
         now = datetime.datetime.now(datetime.timezone.utc)

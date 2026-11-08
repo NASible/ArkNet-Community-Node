@@ -7,6 +7,8 @@ import tempfile
 from pathlib import Path
 import unittest
 
+import harness_scratch
+
 
 SCRIPT = Path(__file__).with_name("check-multi-node-swarm-stack.py")
 spec = importlib.util.spec_from_file_location("check_multi_node_swarm_stack", SCRIPT)
@@ -194,8 +196,7 @@ class RelayTransportTests(unittest.TestCase):
     @unittest.skipUnless(shutil.which("docker"), "docker CLI not installed")
     def test_core_compose_interpolates_with_generated_relay_env(self):
         """Reproduces the gate failure: tracker requires relay endpoint verify keys."""
-        with tempfile.TemporaryDirectory(dir=Path.home() / ".hermes" / "cache" / "scratch"
-                                         if (Path.home() / ".hermes" / "cache" / "scratch").is_dir() else None) as root:
+        with tempfile.TemporaryDirectory(dir=harness_scratch.scratch_root()) as root:
             layout = self.layout(root)
             for directory in (layout["core_config"], layout["relay_secrets"], layout["revocation_public"].parent,
                               layout["endpoint_private"].parent, layout["list_public"].parent):

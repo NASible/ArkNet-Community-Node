@@ -1,5 +1,7 @@
 """Offline regression tests for the real-container ingress acceptance checker."""
 import importlib.util
+
+import harness_scratch
 from pathlib import Path
 import unittest
 import urllib.parse
@@ -52,7 +54,7 @@ class RedactionTests(unittest.TestCase):
     def test_compose_always_uses_empty_envfile_and_separate_project(self):
         import tempfile
         checker = self.load()
-        with tempfile.TemporaryDirectory(prefix='arknet-ingress-offline-', dir=Path.home() / '.hermes/cache/scratch') as directory:
+        with tempfile.TemporaryDirectory(prefix='arknet-ingress-offline-', dir=harness_scratch.scratch_root()) as directory:
             stack = checker.Stack('private-test-core', Path(directory), {'POSTGRES_PASSWORD': 'test-only'}, ['compose.yaml'])
             command = stack.command('config')
             self.assertEqual(command[:2], ['docker', 'compose'])
@@ -66,7 +68,7 @@ class RedactionTests(unittest.TestCase):
         import ssl
         import tempfile
         checker = self.load()
-        with tempfile.TemporaryDirectory(prefix='arknet-ingress-offline-', dir=Path.home() / '.hermes/cache/scratch') as directory:
+        with tempfile.TemporaryDirectory(prefix='arknet-ingress-offline-', dir=harness_scratch.scratch_root()) as directory:
             root = Path(directory)
             checker.make_tls(root)
             context = checker.tls_context(root)

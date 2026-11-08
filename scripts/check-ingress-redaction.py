@@ -13,6 +13,8 @@ import subprocess
 import ssl
 import shutil
 
+import harness_scratch
+
 OPENSSL = (os.environ.get('ARKNET_TEST_OPENSSL') or
            next((p for p in ('/opt/homebrew/opt/openssl@3/bin/openssl',
                              '/usr/local/opt/openssl@3/bin/openssl') if Path(p).is_file()), None) or
@@ -186,8 +188,7 @@ def inspect_container(stack, service):
 
 
 def main():
-    scratch = Path.home() / '.hermes/cache/scratch'
-    scratch.mkdir(parents=True, exist_ok=True)
+    scratch = harness_scratch.scratch_root()
     prefix = 'arknet-ingress-test-' + uuid.uuid4().hex[:12]
     root = Path(tempfile.mkdtemp(prefix=prefix + '-', dir=scratch))
     root.chmod(0o755)  # Core's unprivileged UID must traverse bind sources.

@@ -25,6 +25,8 @@ import urllib.request
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from scripts import operator_login
 
+import harness_scratch
+
 ROOT = Path(__file__).resolve().parents[1]
 BASE = ROOT / 'deploy/node/compose.yaml'
 
@@ -142,8 +144,7 @@ def main():
     args = parser.parse_args()
     project = 'arknet-https-' + secrets.token_hex(5)
     # macOS system TMPDIR is not necessarily shared with Docker Desktop.
-    scratch = Path.home() / '.hermes/cache/scratch'
-    scratch.mkdir(parents=True, exist_ok=True)
+    scratch = harness_scratch.scratch_root()
     work = Path(tempfile.mkdtemp(prefix=project + '-', dir=scratch))
     logs = args.log_dir or scratch / (project + '-logs')
     logs.mkdir(parents=True, exist_ok=True)

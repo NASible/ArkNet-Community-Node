@@ -18,11 +18,11 @@ import time
 import urllib.parse
 import urllib.request
 
+import harness_scratch
+
 
 def temporary_root():
-    # Hermes' runtime may inherit macOS' system TMPDIR: keep probes in scratch.
-    scratch = Path.home() / ".hermes/cache/scratch"
-    return str(scratch if scratch.is_dir() else Path(os.environ.get("TMPDIR", tempfile.gettempdir())))
+    return str(harness_scratch.scratch_root())
 
 
 class EnrollmentSigner:
