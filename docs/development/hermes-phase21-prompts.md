@@ -77,7 +77,7 @@ must stop and ask, not assume.
 | --- | --- | --- | --- |
 | D11 | Image registry and naming | **Confirmed 2026-11-07:** public GitHub Container Registry `ghcr.io/nasible`, anonymous pulls, `ghcr.io/nasible/arknet-<component>:<version>@sha256:<digest>`. | 51A |
 | D12 | Release signing | **Confirmed 2026-11-07:** one offline Ed25519 key signs `release.json` (detached `.sig`); the Agent (Go) and `arknet-node` (OpenSSL 3) verify against the key shipped in `install.sh`. No cosign/minisign. | 51A |
-| D13 | CI runner | A self-hosted runner on infrastructure you own that can run Docker and Lima; runs `check-all.sh` on every branch and `--e2e --vm` nightly and before tags. | 51B |
+| D13 | CI runner | **Confirmed 2026-11-08:** GitHub-hosted runners (the repository is public, so a self-hosted runner would run untrusted pull-request code on owned hardware); `check-all.sh` on every push and pull request, `--e2e --vm` nightly, on `v*` tags and on demand. No secrets on the runner. | 51B |
 | D14 | Monitoring stack | Prometheus-format metrics scraped by your existing self-hosted monitoring; alerts to Gotify or Discord; 14-day log retention on hosts. No hosted SaaS. | 52 |
 | D15 | Public exposure model | Core, tracker and relay behind your owned ingress (Traefik/Cloudflare Tunnel) with publicly trusted certificates; relay needs a raw TLS/TCP path, so decide whether it bypasses the tunnel. | 53 |
 | D16 | Certificate issuance | ACME (Let's Encrypt) DNS-01 through your DNS provider for Core/tracker; relay keeps its SPKI-pinned self-signed certificate. | 53A |
@@ -182,6 +182,11 @@ Acceptance criteria:
 - One real runner execution of the component gate ends `EXIT 0`, with its log
   linked from the prompt's validation note.
 - A deliberately failing branch shows a failed run with the failing step.
+
+Implemented 2026-11-08 (D13 = GitHub-hosted runners). The workflow's commands
+passed on a GitHub-like Ubuntu VM, including `--e2e --vm`. The two real-run
+criteria need the operator to push. See
+[Prompt 51B validation](prompt51b-validation.md) and [CI](ci.md).
 
 ---
 

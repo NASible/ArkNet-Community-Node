@@ -8,6 +8,8 @@ Architecture, development, and operations documentation belongs here.
   that close the open ARKSEC release blockers, with the user decisions they need.
 - [Phase 21 prompt pack](development/hermes-phase21-prompts.md): production
   readiness — release pipeline, observability, exposure, recovery and capacity.
+- [Continuous integration](development/ci.md): the GitHub-hosted gate
+  workflow, runner capabilities and why no secrets reach it.
 - [Repository overview](../README.md): component map and architecture boundaries.
 - [Validation report](mvp-validation-report.md): Phase 20 results on frozen
   commit `b232f46` (gate 18/18, ARKSEC status, live-test pilot, verdicts), with
